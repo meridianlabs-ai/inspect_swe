@@ -10,7 +10,7 @@ authors = [{ name = "Meridian Labs" }]
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT License" }
-dependencies = ["inspect_ai", "typing_extensions>=4.9.0"]
+dependencies = ["inspect_ai>=0.3.125", "typing_extensions>=4.9.0"]
 
 [project.urls]
 Documentation = "https://meridianlabs-ai.github.io/inspect_swe/"
@@ -19,7 +19,7 @@ Documentation = "https://meridianlabs-ai.github.io/inspect_swe/"
 
 
 [project.optional-dependencies]
-dev = ["ruff", "mypy", "pytest", "anthropic", "openai"]
+dev = ["ruff", "mypy", "pytest", "anthropic", "openai", "pytest-dotenv"]
 doc = ["quarto-cli==1.7.31"]
 
 [tool.hatch.build]
