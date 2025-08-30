@@ -10,7 +10,13 @@ authors = [{ name = "Meridian Labs" }]
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT License" }
-dependencies = ["inspect_ai>=0.3.125", "typing_extensions>=4.9.0"]
+dependencies = [
+    "httpx",
+    "inspect_ai>=0.3.125",
+    "platformdirs",
+    "pydantic>=2.11.4",
+    "typing_extensions>=4.9.0",
+]
 
 [project.urls]
 Documentation = "https://meridianlabs-ai.github.io/inspect_swe/"
