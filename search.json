@@ -1,16 +1,30 @@
 [
   {
-    "objectID": "about.html",
-    "href": "about.html",
-    "title": "About",
-    "section": "",
-    "text": "About this site"
-  },
-  {
     "objectID": "index.html",
     "href": "index.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "This is a Quarto website.\nTo learn more about Quarto websites visit https://quarto.org/docs/websites."
+    "text": "The inspect_swe package makes software engineering agents like Claude Code available as standard Inspect Agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge(). Agents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents and that features like token and time limits and log transcripts work as normal with the agents."
+  },
+  {
+    "objectID": "index.html#overview",
+    "href": "index.html#overview",
+    "title": "Inspect SWE",
+    "section": "",
+    "text": "The inspect_swe package makes software engineering agents like Claude Code available as standard Inspect Agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge(). Agents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents and that features like token and time limits and log transcripts work as normal with the agents."
+  },
+  {
+    "objectID": "index.html#getting-started",
+    "href": "index.html#getting-started",
+    "title": "Inspect SWE",
+    "section": "Getting Started",
+    "text": "Getting Started\nInspect SWE is currently under active development and also requires the development version of Inspect AI. To get started, install both development versions from GitHub:\npip install git+https://github.com/UKGovernmentBEIS/inspect_ai\npip install git+https://github.com/meridianlabs-ai/inspect_swe\nRead on below to learn about using the available agents (currently only Claude Code, but soon to include OpenAI Codex, Cline, and perhaps others)."
+  },
+  {
+    "objectID": "index.html#claude-code",
+    "href": "index.html#claude-code",
+    "title": "Inspect SWE",
+    "section": "Claude Code",
+    "text": "Claude Code\nWhile Claude Code is typically used in an interactive loop by developers, it can also run in an unattended mode where it works on a solution to the prompt without user feedback. The claude_code() agent runs in this mode within the sandbox, and its model API calls are proxied back to Inspect for handling by the model provider for the current task.\n\nRequirements\nThe claude_code() agent has a couple of requirements that must be met by the sandbox container:\n\nIt must have a version of Python &gt;= 3.10 (this is used for proxying model API calls from the container to Inspect).\nIt must have a version of Claude Code installed and available on the path of the default user.\n\nHere is a minimal Dockerfile that fulfills these requirements:\nFROM python:3.12-bookworm\n\nRUN wget -qO- https://claude.ai/install.sh | bash\nENV PATH=\"/root/.local/bin:${PATH}\"\n\nCMD [\"/bin/bash\"]\n\n\nUsing the Agent\nUse the claude_code() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nIf you want to try this out, the system_explorer example includes the referenced dataset.json and Dockerfile.\n\n\nLog Viewer\nOne important productivity tip for working with the Claude Code agent is that the Messages view in the Log Viewer will provide the most coherent view of the agent’s path to the solution:\n\nWhile the Transcript view includes all of the same information, Claude Code makes many model requests for routine tasks like extracting the file paths from bash commands which tend to distract from understanding the agent’s actions at a high level."
   }
 ]
