@@ -1,0 +1,19 @@
+{
+    "editor.formatOnSave": true,
+    "[markdown]": {
+      "editor.formatOnSave": false
+    },
+    "[quarto]": {
+      "editor.formatOnSave": false
+    },
+    "[html]": {
+      "editor.formatOnSave": false
+    },
+    "[python]": {
+      "editor.defaultFormatter": "charliermarsh.ruff"
+    },
+    "search.exclude": {
+      "logs/**": true
+    },
+    "quarto.render.renderOnSave": true,
+  }
