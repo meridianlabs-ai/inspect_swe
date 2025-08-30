@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Optional
 
 # Constants
-GCS_BUCKET = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
+INSTALL_SCRIPT_URL = "https://claude.ai/install.sh"
 CACHE_DIR = Path.home() / ".claude" / "downloads"
+# Fallback GCS bucket in case we can't fetch from install.sh
+FALLBACK_GCS_BUCKET = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
 
 
 def run_docker_exec(container_name: str, command: str) -> str:
@@ -68,19 +70,46 @@ def download_file(url: str) -> bytes:
         return response.read()
 
 
+def get_gcs_bucket_from_install_script() -> str:
+    """
+    Fetch the install.sh script and extract the GCS_BUCKET URL.
+    Falls back to hardcoded URL if extraction fails.
+    """
+    try:
+        print("Fetching install script to discover GCS bucket...")
+        script_content = download_file(INSTALL_SCRIPT_URL).decode('utf-8')
+        
+        # Look for GCS_BUCKET= line in the script
+        # Pattern matches: GCS_BUCKET="https://storage.googleapis.com/..."
+        pattern = r'GCS_BUCKET="(https://storage\.googleapis\.com/[^"]+)"'
+        match = re.search(pattern, script_content)
+        
+        if match:
+            gcs_bucket = match.group(1)
+            print(f"Discovered GCS bucket: {gcs_bucket}")
+            return gcs_bucket
+        else:
+            print("Could not extract GCS bucket from install script, using fallback")
+            return FALLBACK_GCS_BUCKET
+            
+    except Exception as e:
+        print(f"Error fetching install script: {e}, using fallback")
+        return FALLBACK_GCS_BUCKET
+
+
 def validate_target(target: str) -> bool:
     """Validate the target parameter format."""
     pattern = r'^(stable|latest|[0-9]+\.[0-9]+\.[0-9]+(-[^[:space:]]+)?)$'
     return bool(re.match(pattern, target))
 
 
-def get_version(target: str = 'stable') -> str:
+def get_version(gcs_bucket: str, target: str = 'stable') -> str:
     """Get the actual version to install based on the target."""
     if not validate_target(target):
         raise ValueError(f"Invalid target: {target}")
     
     # Always download stable version first (it has the most up-to-date installer)
-    stable_url = f"{GCS_BUCKET}/stable"
+    stable_url = f"{gcs_bucket}/stable"
     stable_version = download_file(stable_url).decode('utf-8').strip()
     
     if target == 'stable' or target == stable_version:
@@ -228,7 +257,7 @@ def install_claude(container_name: str, binary_path: str) -> None:
         print(f"Claude installed successfully: {version_output}")
         
         # Initialize config files/directories by running config list
-        config_output = run_docker_exec(container_name, "claude config list")
+        run_docker_exec(container_name, "claude config list")
         print("Claude configuration initialized")
         
     except subprocess.CalledProcessError as e:
@@ -241,6 +270,9 @@ def main(container_name: str, target: str = 'stable') -> None:
     print(f"Installing Claude Code in container: {container_name}")
     print(f"Target: {target}")
     
+    # Step 0: Get GCS bucket URL
+    gcs_bucket = get_gcs_bucket_from_install_script()
+    
     # Step 1: Detect platform
     print("Detecting platform...")
     platform = detect_platform(container_name)
@@ -248,12 +280,12 @@ def main(container_name: str, target: str = 'stable') -> None:
     
     # Step 2: Get version
     print("Determining version...")
-    version = get_version(target)
+    version = get_version(gcs_bucket, target)
     print(f"Version: {version}")
     
     # Step 3: Download and parse manifest
     print("Downloading manifest...")
-    manifest_url = f"{GCS_BUCKET}/{version}/manifest.json"
+    manifest_url = f"{gcs_bucket}/{version}/manifest.json"
     manifest_json = download_file(manifest_url).decode('utf-8')
     
     # Step 4: Get checksum for platform
@@ -266,7 +298,7 @@ def main(container_name: str, target: str = 'stable') -> None:
     if binary_data is None:
         # Not in cache or invalid, need to download
         print(f"Downloading Claude binary for {platform}...")
-        binary_url = f"{GCS_BUCKET}/{version}/{platform}/claude"
+        binary_url = f"{gcs_bucket}/{version}/{platform}/claude"
         binary_data = download_file(binary_url)
         
         # Step 6: Verify checksum
