@@ -2,6 +2,92 @@
 title: "Inspect SWE"
 ---
 
-This is a Quarto website.
+## Overview
 
-To learn more about Quarto websites visit <https://quarto.org/docs/websites>.
+The `inspect_swe` package makes software engineering agents like [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) available as standard Inspect [Agents](https://inspect.aisi.org.uk/agents.html). For example, here we use the `claude_code()` agent as the solver in an Inspect task:
+
+```python
+from inspect_ai import Task, task
+from inspect_ai.dataset import json_dataset
+from inspect_ai.scorer import model_graded_qa
+
+from inspect_swe import claude_code
+
+@task
+def system_explorer() -> Task:
+    return Task(
+        dataset=json_dataset("dataset.json"),
+        solver=claude_code(),
+        scorer=model_graded_qa(),
+        sandbox=("docker", "Dockerfile"),
+    )
+```
+
+Inspect SWE agents are implemented using the Inspect [`sandbox_agent_bridge()`](https://inspect.aisi.org.uk/agent-bridge.html#sandbox-bridge). Agents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents and that features like token and time limits and log transcripts work as normal with the agents.
+
+## Getting Started
+
+Inspect SWE is currently under active development and also requires the development version of Inspect AI. To get started, install both development versions from GitHub:
+
+```bash
+pip install git+https://github.com/UKGovernmentBEIS/inspect_ai
+pip install git+https://github.com/meridianlabs-ai/inspect_swe
+```
+
+Read on below to learn about using the available agents (currently only Claude Code, but soon to include OpenAI Codex, Cline, and perhaps others).
+
+## Claude Code
+
+While Claude Code is typically used in an interactive loop by developers, it can also run in an unattended mode where it works on a solution to the prompt without user feedback. The `claude_code()` agent runs in this mode within the sandbox, and its model API calls are proxied back to Inspect for handling by the model provider for the current task.
+
+### Requirements
+
+The `claude_code()` agent has a couple of requirements that must be met by the sandbox container:
+
+1. It must have a version of Python >= 3.10 (this is used for proxying model API calls from the container to Inspect).
+
+2. It must have a version of Claude Code installed and available on the path of the default user.
+
+Here is a minimal Dockerfile that fulfills these requirements:
+
+```Dockerfile
+FROM python:3.12-bookworm
+
+RUN wget -qO- https://claude.ai/install.sh | bash
+ENV PATH="/root/.local/bin:${PATH}"
+
+CMD ["/bin/bash"]
+```
+
+### Using the Agent
+
+Use the `claude_code()` agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:
+
+```python
+from inspect_ai import Task, task
+from inspect_ai.dataset import json_dataset
+from inspect_ai.scorer import model_graded_qa
+
+from inspect_swe import claude_code
+
+@task
+def system_explorer() -> Task:
+    return Task(
+        dataset=json_dataset("dataset.json"),
+        solver=claude_code(),
+        scorer=model_graded_qa(),
+        sandbox=("docker", "Dockerfile"),
+    )
+```
+
+If you want to try this out, the [system_explorer](https://github.com/meridianlabs-ai/inspect_swe/examples/system_explorer) example includes the referenced `dataset.json` and `Dockerfile`.
+
+### Log Viewer
+
+One important productivity tip for working with the Claude Code agent is that the **Messages** view in the Log Viewer will provide the most coherent view of the agent's path to the solution:
+
+![](images/inspect-view-messages.png){.border}
+
+While the **Transcript** view includes all of the same information, Claude Code makes many model requests for routine tasks like extracting the file paths from bash commands which tend to distract from understanding the agent's actions at a high level.
+
+

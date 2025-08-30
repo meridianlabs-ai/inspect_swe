@@ -1,5 +1,6 @@
 Welcome to Inspect SWE, a suite of software engineering agents for [Inspect AI](https://inspect.aisi.org.uk/).
 
+For details on using Inspect SWE, please visit <https://meridianlabs-ai.github.io/inspect_swe/>.
 
 ## Installation
 

@@ -19,7 +19,7 @@ Documentation = "https://meridianlabs-ai.github.io/inspect_swe/"
 
 
 [project.optional-dependencies]
-dev = ["ruff", "mypy", "pytest"]
+dev = ["ruff", "mypy", "pytest", "anthropic", "openai"]
 doc = ["quarto-cli==1.7.31"]
 
 [tool.hatch.build]

@@ -4,10 +4,13 @@ project:
 website:
   title: "Inspect SWE"
   navbar:
+    search: false
     left:
-      - href: index.qmd
-        text: Home
-      - about.qmd
+      - text: "Software Engineering Agents for Inspect AI"
+    right:
+      - icon: github
+        href: https://github.com/meridianlabs-ai/inspect_swe
+        aria-label: GitHub
 
 format:
   html:

@@ -208,3 +208,9 @@ __marimo__/
 
 # Dynamic version
 src/inspect_swe/_version.py
+
+# Inspect logs
+logs/
+
+# MacOS
+.DS_Store
