@@ -1,4 +1,3 @@
-
 from ._claude_code.claude_code import claude_code
 
 try:
@@ -7,8 +6,4 @@ except ImportError:
     __version__ = "unknown"
 
 
-__all__ = [
-    "claude_code",
-    "__version__"
-]
-
+__all__ = ["claude_code", "__version__"]
