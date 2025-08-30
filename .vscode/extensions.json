@@ -1,0 +1,10 @@
+{
+    "recommendations": [
+        "ms-python.python",
+        "ms-python.mypy-type-checker",
+        "quarto.quarto",
+        "ukaisi.inspect-ai",
+        "charliermarsh.ruff"
+    ]
+}
+
