@@ -11,6 +11,16 @@ from inspect_ai.util import sandbox as sandbox_env
 
 from inspect_swe._claude_code.install.install import ensure_claude_code_installed
 
+# TODO: CLAUDE.md
+# TODO: Subagents
+# TODO: System message
+# TODO: Configuration
+# TODO: MCP Servers
+# TODO: AgentAttempts
+# TODO: AgentContinue
+# TODO: name and description (a la react())
+# TODO: model and small_model
+
 
 @agent
 def claude_code(
