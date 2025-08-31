@@ -10,5 +10,5 @@ def system_explorer() -> Task:
         dataset=json_dataset("dataset.json"),
         solver=claude_code(),
         scorer=model_graded_qa(),
-        sandbox=("docker", "Dockerfile"),
+        sandbox="docker",
     )

@@ -35,7 +35,7 @@ def write_cached_claude_code_binary(
     _cleanup_claude_code_binary_cache(keep_count=3)
 
 
-def _cleanup_claude_code_binary_cache(keep_count: int = 3) -> None:
+def _cleanup_claude_code_binary_cache(keep_count: int = 5) -> None:
     # get all cached binaries
     cache_files = list(_claude_code_cached_binary_dir().glob("claude-*"))
     if len(cache_files) <= keep_count:

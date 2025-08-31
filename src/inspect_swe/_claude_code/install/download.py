@@ -6,6 +6,7 @@ from inspect_swe._claude_code.install.cache import (
     write_cached_claude_code_binary,
 )
 from inspect_swe._util.checksum import verify_checksum
+from inspect_swe._util.trace import trace
 from pydantic import BaseModel
 
 from ..._util.download import download_file, download_text_file
@@ -31,6 +32,11 @@ async def download_claude_code_binary(
 
         # save to cache
         write_cached_claude_code_binary(binary_data, version, platform)
+
+        # trace
+        trace(f"Downloaded claude code binary: {version} ({platform})")
+    else:
+        trace(f"Used claude code binary from cache: {version} ({platform})")
 
     # return data
     return binary_data
