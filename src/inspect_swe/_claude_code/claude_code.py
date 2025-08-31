@@ -21,7 +21,9 @@ from inspect_swe._util.sandbox import sandbox_exec
 
 # TODO: AgentAttempts
 # TODO: AgentContinue
-# TODO: generate config merging
+# TODO: generate config merging (they are passing max_tokens=32000)
+# TODO: Test subagents (scorer)
+# TODO: Test mcp_servers
 
 
 class ClaudeCodeOptions(BaseModel):
@@ -39,14 +41,14 @@ class ClaudeCodeOptions(BaseModel):
     mcp_servers: Sequence[MCPServerConfig] | None = Field(default=None)
     """MCP servers to make available to the agent."""
 
-    config: dict[str, str] | None = Field(default=None)
-    """Custom config values to be passed to `claude config set`."""
-
     model: str | None = Field(default=None)
     """ Model name to use for Opus and Sonnet calls (defaults to main model for task)."""
 
     small_model: str | None = Field(default=None)
     """Model to use for Haiku calls (defaults to main model for task)."""
+
+    env: dict[str, str] | None = Field(default=None)
+    """Environment variables to set for claude code."""
 
 
 @agent
@@ -150,24 +152,19 @@ def claude_code(
                     raise ValueError("Subagents must have a name.")
                 await sbox.write_file(f"{AGENTS_DIR}/{name}.md", subagent)
 
-            # set config
-            if options.config:
-                for key, value in options.config.items():
-                    await sandbox_exec(
-                        sbox, f"{claude_binary} config set -g {key} {value}"
-                    )
-
             # execute the agent
             result = await sbox.exec(
                 cmd=cmd,
                 env={
                     "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
                     "ANTHROPIC_API_KEY": "sk-ant-api03-DOq5tyLPrk9M4hPE",
+                    "ANTHROPIC_MODEL": model,
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL": small_model,
                     "ANTHROPIC_SMALL_FAST_MODEL": small_model,
                     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                     "IS_SANDBOX": "1",
-                },
+                }
+                | (options.env or {}),
                 user=user,
             )
 
