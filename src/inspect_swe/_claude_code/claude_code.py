@@ -24,6 +24,7 @@ from inspect_swe._util.sandbox import sandbox_exec
 # TODO: generate config merging (they are passing max_tokens=32000)
 # TODO: Test subagents (scorer)
 # TODO: Test mcp_servers
+# TODO: Test cross model web search
 
 
 class ClaudeCodeOptions(BaseModel):

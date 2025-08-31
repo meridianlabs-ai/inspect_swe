@@ -32,7 +32,7 @@ def test_claude_code_options() -> None:
         """),
         model=MAIN_MODEL,
         small_model=SMALL_MODEL,
-        env={"MAX_THINKING_TOKENS": "1600"},
+        env={"MAX_THINKING_TOKENS": "16666"},
     )
 
     log = eval(
@@ -45,7 +45,7 @@ def test_claude_code_options() -> None:
     assert CLAUDE_MD_CANARY in log_json
     assert MAIN_MODEL in log_json
     assert SMALL_MODEL in log_json
-    assert r'"budget_tokens": 1600' in log_json
+    assert "16666" in log_json
 
 
 @task

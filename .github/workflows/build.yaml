@@ -99,6 +99,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install build
+      - name: Install development version of inspect_ai
+        run: |
+          # Install the development version of inspect_ai from GitHub
+          python -m pip install git+https://github.com/UKGovernmentBEIS/inspect_ai.git@main
       - name: Build package
         run: python -m build
       - name: Verify package
