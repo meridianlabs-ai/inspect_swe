@@ -13,8 +13,10 @@ license = { text = "MIT License" }
 dependencies = [
     "httpx",
     "inspect_ai>=0.3.125",
+    "nest_asyncio",
     "platformdirs",
     "pydantic>=2.11.4",
+    "sniffio",
     "typing_extensions>=4.9.0",
 ]
 

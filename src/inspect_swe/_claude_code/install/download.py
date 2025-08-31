@@ -1,16 +1,33 @@
 import re
 from typing import Literal
 
-from inspect_swe._claude_code.install.cache import (
+from pydantic import BaseModel
+
+from ..._util._async import run_coroutine
+from ..._util.checksum import verify_checksum
+from ..._util.download import download_file, download_text_file
+from ..._util.sandbox import SandboxPlatform
+from ..._util.trace import trace
+from .cache import (
     read_cached_claude_code_binary,
     write_cached_claude_code_binary,
 )
-from inspect_swe._util.checksum import verify_checksum
-from inspect_swe._util.sandbox import SandboxPlatform
-from inspect_swe._util.trace import trace
-from pydantic import BaseModel
 
-from ..._util.download import download_file, download_text_file
+
+def download_claude_code(
+    version: Literal["stable", "latest"] | str, platform: SandboxPlatform
+) -> None:
+    """Download Claude Code.
+
+    Download a version of Claude Code. This version will be added to the cache of downloaded versions (which retains the 5 most recently downloaded versions).
+
+    Use this if you need to ensure that a specific version of Claude Code is downloaded in advance (e.g. if you are going to run your evaluations offline). After downloading, explicit requests for the downloaded version (e.g. `claude_code(version="1.0.98")`) will not require network access.
+
+    Args:
+        version: Version to download ("stable", "latest", or an explicit version number).
+        platform: Target platform ("linux-x64", "linux-arm64", "linux-x64-musl", or "linux-arm64-musl")
+    """
+    run_coroutine(download_claude_code_async(version, platform))
 
 
 async def download_claude_code_async(

@@ -27,10 +27,10 @@ def claude_code(
     Args:
         version: Version of claude code to use. One of:
             - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
-            - "sandbox": Use the version of claude code in the sandbox (raises `RuntimeError` if there is claude available in the sandbox)
+            - "sandbox": Use the version of claude code in the sandbox (raises `RuntimeError` if claude is not available in the sandbox)
             - "stable": Download and use the current stable version of claude code.
             - "latest": Download and use the very latest version of claude code.
-            - "x.x.x.": Download and use an specific version of claude code.
+            - "x.x.x": Download and use a specific version of claude code.
         user: User to execute claude code with.
         sandbox: Optional sandbox environment name.
     """

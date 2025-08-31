@@ -1,10 +1,7 @@
 from logging import getLogger
 
-from inspect_ai.util import trace_message
-
 logger = getLogger(__file__)
 
 
 def trace(message: str) -> None:
-    logger.setLevel("TRACE")
-    trace_message(logger, "Inspect SWE", message)
+    logger.info(f"[Inspect SWE] {message}")
