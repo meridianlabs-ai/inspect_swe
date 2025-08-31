@@ -1,12 +1,16 @@
+from typing import Literal, TypeAlias, cast
+
 from inspect_ai.util import SandboxEnvironment
 
+SandboxPlatform: TypeAlias = Literal[
+    "linux-x64", "linux-arm64", "linux-x64-musl", "linux-arm64-musl"
+]
 
-async def detect_sandbox_platform(sandbox: SandboxEnvironment) -> str:
+
+async def detect_sandbox_platform(sandbox: SandboxEnvironment) -> SandboxPlatform:
     # Get OS
     os_name = await sandbox_exec(sandbox, "uname -s")
-    if os_name == "Darwin":
-        os_type = "darwin"
-    elif os_name == "Linux":
+    if os_name == "Linux":
         os_type = "linux"
     else:
         raise ValueError(f"Unsupported OS: {os_name}")
@@ -37,7 +41,7 @@ async def detect_sandbox_platform(sandbox: SandboxEnvironment) -> str:
     else:
         platform = f"{os_type}-{arch_type}"
 
-    return platform
+    return cast(SandboxPlatform, platform)
 
 
 def bash_command(cmd: str) -> list[str]:

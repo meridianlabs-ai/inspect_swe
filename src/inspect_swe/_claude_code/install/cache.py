@@ -1,11 +1,13 @@
 from pathlib import Path
 
+from inspect_swe._util.sandbox import SandboxPlatform
+
 from ..._util.appdirs import package_cache_dir
 from ..._util.checksum import verify_checksum
 
 
 def read_cached_claude_code_binary(
-    version: str, platform: str, expected_checksum: str
+    version: str, platform: SandboxPlatform, expected_checksum: str | None
 ) -> bytes | None:
     # no cached binary
     cache_path = _claude_code_cached_binary(version, platform)
@@ -16,7 +18,7 @@ def read_cached_claude_code_binary(
     with open(cache_path, "rb") as f:
         binary_data = f.read()
 
-    if verify_checksum(binary_data, expected_checksum):
+    if expected_checksum is None or verify_checksum(binary_data, expected_checksum):
         cache_path.touch()
         return binary_data
     else:
@@ -25,7 +27,7 @@ def read_cached_claude_code_binary(
 
 
 def write_cached_claude_code_binary(
-    binary_data: bytes, version: str, platform: str
+    binary_data: bytes, version: str, platform: SandboxPlatform
 ) -> None:
     binary_path = _claude_code_cached_binary(version, platform)
 
@@ -52,5 +54,5 @@ def _claude_code_cached_binary_dir() -> Path:
     return package_cache_dir("claude-code-downloads")
 
 
-def _claude_code_cached_binary(version: str, platform: str) -> Path:
+def _claude_code_cached_binary(version: str, platform: SandboxPlatform) -> Path:
     return _claude_code_cached_binary_dir() / f"claude-{version}-{platform}"

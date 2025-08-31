@@ -1,19 +1,21 @@
 import re
 from typing import Literal
 
+import httpx
 from inspect_swe._claude_code.install.cache import (
     read_cached_claude_code_binary,
     write_cached_claude_code_binary,
 )
 from inspect_swe._util.checksum import verify_checksum
+from inspect_swe._util.sandbox import SandboxPlatform
 from inspect_swe._util.trace import trace
 from pydantic import BaseModel
 
 from ..._util.download import download_file, download_text_file
 
 
-async def download_claude_code_binary(
-    version: Literal["stable", "latest"] | str, platform: str
+async def download_claude_code_async(
+    version: Literal["stable", "latest"] | str, platform: SandboxPlatform
 ) -> bytes:
     # determine version and checksum
     gcs_bucket = await _claude_code_gcs_bucket()
@@ -87,7 +89,7 @@ async def _claude_code_manifest(gcs_bucket: str, version: str) -> Manifest:
     return Manifest.model_validate_json(manifest_json)
 
 
-def _checksum_for_platform(manifest: Manifest, platform: str) -> str:
+def _checksum_for_platform(manifest: Manifest, platform: SandboxPlatform) -> str:
     if platform not in manifest.platforms:
         raise RuntimeError(f"Platform '{platform}' not found in manifest.")
     return manifest.platforms[platform].checksum
