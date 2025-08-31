@@ -5,7 +5,7 @@ import yaml
 
 def read_front_matter_name(content: str) -> str | None:
     # front-matter
-    frontmatter_match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+    frontmatter_match = re.match(r"^\s*---\s*\n(.*?)\n---", content, re.DOTALL)
     if not frontmatter_match:
         return None
     frontmatter = frontmatter_match.group(1)
