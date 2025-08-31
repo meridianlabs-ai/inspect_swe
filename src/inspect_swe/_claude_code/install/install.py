@@ -2,6 +2,7 @@ from typing import Literal
 
 from inspect_ai.util import SandboxEnvironment, concurrency
 from inspect_ai.util import sandbox as sandbox_env
+
 from inspect_swe._claude_code.install.cache import read_cached_claude_code_binary
 from inspect_swe._util.trace import trace
 
