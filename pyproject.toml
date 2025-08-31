@@ -16,6 +16,7 @@ dependencies = [
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.11.4",
+    "pyyaml",
     "sniffio",
     "typing_extensions>=4.9.0",
 ]
@@ -30,7 +31,15 @@ inspect_swe = "inspect_swe._registry"
 
 
 [project.optional-dependencies]
-dev = ["ruff", "mypy", "pytest", "anthropic", "openai", "pytest-dotenv"]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "anthropic",
+    "openai",
+    "pytest-dotenv",
+    "types-PyYAML",
+]
 doc = ["quarto-cli==1.7.31"]
 
 [tool.hatch.build]

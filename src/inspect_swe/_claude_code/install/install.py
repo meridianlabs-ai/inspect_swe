@@ -45,6 +45,8 @@ async def ensure_claude_code_installed(
             )
             if claude_binary_bytes is not None:
                 trace(f"Used claude code binary from cache: {version} ({platform})")
+        else:
+            claude_binary_bytes = None
 
         # download the binary
         if claude_binary_bytes is None:
