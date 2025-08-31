@@ -1,7 +1,6 @@
 import re
 from typing import Literal
 
-import httpx
 from inspect_swe._claude_code.install.cache import (
     read_cached_claude_code_binary,
     write_cached_claude_code_binary,
