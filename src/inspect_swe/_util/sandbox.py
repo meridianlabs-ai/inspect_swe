@@ -40,8 +40,14 @@ async def detect_sandbox_platform(sandbox: SandboxEnvironment) -> str:
     return platform
 
 
-async def sandbox_exec(sandbox: SandboxEnvironment, cmd: str) -> str:
-    result = await sandbox.exec(["bash", "--login", "-c", cmd])
+def bash_command(cmd: str) -> list[str]:
+    return ["bash", "--login", "-c", cmd]
+
+
+async def sandbox_exec(
+    sandbox: SandboxEnvironment, cmd: str, user: str | None = None
+) -> str:
+    result = await sandbox.exec(bash_command(cmd), user=user)
     if not result.success:
         raise RuntimeError(
             f"Error executing sandbox command {','.join(cmd)}: {result.stderr}"

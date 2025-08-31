@@ -1,7 +1,6 @@
 import re
 from typing import Literal
 
-from inspect_ai.util import concurrency
 from inspect_swe._claude_code.install.cache import (
     read_cached_claude_code_binary,
     write_cached_claude_code_binary,
@@ -21,27 +20,20 @@ async def download_claude_code_binary(
     manifest = await _claude_code_manifest(gcs_bucket, version)
     expected_checksum = _checksum_for_platform(manifest, platform)
 
-    # use concurrency here so multiple samples don't attempt
-    # the same download all at once
-    async with concurrency(
-        "claude-download", 1, key=f"{version}{manifest}{expected_checksum}"
-    ):
-        # check the cache
-        binary_data = read_cached_claude_code_binary(
-            version, platform, expected_checksum
-        )
-        if binary_data is None:
-            # not in cache, download and verify checksum
-            binary_url = f"{gcs_bucket}/{version}/{platform}/claude"
-            binary_data = await download_file(binary_url)
-            if not verify_checksum(binary_data, expected_checksum):
-                raise ValueError("Checksum verification failed")
+    # check the cache
+    binary_data = read_cached_claude_code_binary(version, platform, expected_checksum)
+    if binary_data is None:
+        # not in cache, download and verify checksum
+        binary_url = f"{gcs_bucket}/{version}/{platform}/claude"
+        binary_data = await download_file(binary_url)
+        if not verify_checksum(binary_data, expected_checksum):
+            raise ValueError("Checksum verification failed")
 
-            # save to cache
-            write_cached_claude_code_binary(binary_data, version, platform)
+        # save to cache
+        write_cached_claude_code_binary(binary_data, version, platform)
 
-        # return data
-        return binary_data
+    # return data
+    return binary_data
 
 
 async def _claude_code_gcs_bucket() -> str:
