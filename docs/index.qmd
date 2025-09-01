@@ -27,11 +27,10 @@ Inspect SWE agents are implemented using the Inspect [`sandbox_agent_bridge()`](
 
 ## Getting Started
 
-Inspect SWE is currently under active development and also requires the development version of Inspect AI. To get started, install both development versions from GitHub:
+Install the `inspect-swe` package with:
 
 ``` bash
-pip install git+https://github.com/UKGovernmentBEIS/inspect_ai
-pip install git+https://github.com/meridianlabs-ai/inspect_swe
+pip install inspect-swe
 ```
 
 Read on below to learn about using the available agents (currently only Claude Code, but soon to include OpenAI Codex).
