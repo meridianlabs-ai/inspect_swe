@@ -17,9 +17,7 @@ from pydantic_core import to_json
 
 from .install.install import ensure_claude_code_installed
 
-# TODO: AgentAttempts
-# TODO: AgentContinue
-# TODO: generate config merging (they are passing max_tokens=32000, temperature=1)
+# TODO: AgentAttemptsx
 
 
 class ClaudeCodeOptions(BaseModel):
