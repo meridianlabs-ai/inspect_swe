@@ -53,7 +53,5 @@ async def sandbox_exec(
 ) -> str:
     result = await sandbox.exec(bash_command(cmd), user=user)
     if not result.success:
-        raise RuntimeError(
-            f"Error executing sandbox command {','.join(cmd)}: {result.stderr}"
-        )
+        raise RuntimeError(f"Error executing sandbox command {cmd}: {result.stderr}")
     return result.stdout.strip()

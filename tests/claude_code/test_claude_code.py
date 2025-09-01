@@ -19,17 +19,11 @@ def test_claude_code_example() -> None:
 @skip_if_no_docker
 def test_claude_code_options() -> None:
     SYSTEM_PROMPT_CANARY = "32C507F0-9347-4DB2-8061-907682DD34EB"
-    CLAUDE_MD_CANARY = "50A93ED6-EA11-4001-91EA-A6A0210A15E4"
     PASSED_MODEL = "anthropic/claude-sonnet-4-0"
     MAIN_MODEL = "anthropic/claude-3-7-sonnet-20250219"
     SMALL_MODEL = "anthropic/claude-3-5-haiku-20241022"
     options = ClaudeCodeOptions(
         system_prompt=f"This is a part of the system prompt {SYSTEM_PROMPT_CANARY}. When solving this task you should use a mix of the main model and the smaller model that you typically use for backgrounds tasks.",
-        claude_md=dedent(f"""
-            ## Instructions
-
-            You are an expert computer user. {CLAUDE_MD_CANARY}
-        """),
         model=MAIN_MODEL,
         small_model=SMALL_MODEL,
         env={"MAX_THINKING_TOKENS": "16666"},
@@ -42,7 +36,6 @@ def test_claude_code_options() -> None:
     assert log.status == "success"
     log_json = log.model_dump_json(exclude_none=True)
     assert SYSTEM_PROMPT_CANARY in log_json
-    assert CLAUDE_MD_CANARY in log_json
     assert MAIN_MODEL in log_json
     assert SMALL_MODEL in log_json
     assert "16666" in log_json

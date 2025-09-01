@@ -1,5 +1,6 @@
+import uuid
 from textwrap import dedent
-from typing import Any, Literal, Sequence
+from typing import Literal, Sequence
 
 from inspect_ai.agent import (
     Agent,
@@ -10,10 +11,9 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser
 from inspect_ai.tool import MCPServerConfig
-from inspect_ai.util import resource
+from inspect_ai.util import SandboxEnvironment, resource
 from inspect_ai.util import sandbox as sandbox_env
 from pydantic import BaseModel, Field
-from pydantic_core import to_json
 
 from inspect_swe._claude_code.install.install import ensure_claude_code_installed
 from inspect_swe._util._yaml import read_front_matter_name
@@ -22,7 +22,6 @@ from inspect_swe._util.sandbox import sandbox_exec
 # TODO: AgentAttempts
 # TODO: AgentContinue
 # TODO: generate config merging (they are passing max_tokens=32000)
-# TODO: Test subagents (scorer)
 # TODO: Test mcp_servers
 # TODO: Test cross model web search
 
@@ -32,9 +31,6 @@ class ClaudeCodeOptions(BaseModel):
 
     system_prompt: str | None = Field(default=None)
     """Additional system prompt to append to default system prompt."""
-
-    claude_md: str | None = Field(default=None)
-    """CLAUDE.md file to provide additional project-specific instructions (can be a file path or a string containing the contents directly)."""
 
     subagents: list[str] | None = Field(default=None)
     """Subagent definitions (see the [subagents](https://docs.anthropic.com/en/docs/claude-code/sub-agents) documentation for details on defining subagents). Can be file path(s) or strings containing subagent definitions directly."""
@@ -83,10 +79,8 @@ def claude_code(
         user: User to execute claude code with.
         sandbox: Optional sandbox environment name.
     """
-    # resolve claude_md and subagents (they might be resources)
+    # resolve subagents (they might be resources)
     options = options.model_copy(deep=True) if options else ClaudeCodeOptions()
-    if options.claude_md:
-        options.claude_md = resource(options.claude_md)
     subagents = [resource(subagent) for subagent in (options.subagents or [])]
 
     # resolve models
@@ -104,9 +98,14 @@ def claude_code(
                 version, user, sandbox_env(sandbox)
             )
 
+            # allocate session_id
+            session_id = str(uuid.uuid4())
+
             # base options
             cmd = [
                 claude_binary,
+                "--session-id",
+                session_id,
                 "--print",  # run without interactions
                 "--dangerously-skip-permissions",
                 "--model",
@@ -122,10 +121,6 @@ def claude_code(
             if system_messages:
                 cmd.extend(["--append-system-prompt", "\n\n".join(system_messages)])
 
-            # mcp servers
-            if options.mcp_servers:
-                cmd.extend(mcp_server_args(options.mcp_servers))
-
             # user prompt
             prompt = "\n\n".join(
                 [m.text for m in state.messages if isinstance(m, ChatMessageUser)]
@@ -136,9 +131,9 @@ def claude_code(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
-            # if there is a claude_md file then write it
-            if options.claude_md:
-                await sbox.write_file("CLAUDE.md", options.claude_md)
+            # mcp servers
+            if options.mcp_servers:
+                await add_mcp_servers(sbox, user, claude_binary, options.mcp_servers)
 
             # if there are subagents then write them
             AGENTS_DIR = ".claude/agents"
@@ -183,34 +178,29 @@ def claude_code(
     return agent_with(execute, name=name, description=description)
 
 
-def mcp_server_args(mcp_servers: Sequence[MCPServerConfig]) -> list[str]:
-    # build servers and allowed tools
-    mcp_servers_json: dict[str, dict[str, Any]] = {}
-    allowed_tools: list[str] = []
+async def add_mcp_servers(
+    sandbox: SandboxEnvironment,
+    user: str | None,
+    claude_binary: str,
+    mcp_servers: Sequence[MCPServerConfig],
+) -> None:
     for mcp_server in mcp_servers:
-        mcp_servers_json[mcp_server.name] = mcp_server.model_dump(
-            exclude={"name", "tools"}
+        mcp_server_json = mcp_server.model_dump_json(
+            exclude={"name", "tools"}, exclude_none=True
         )
-        if mcp_server.tools == "all":
-            allowed_tools.append(f"mcp__{mcp_server.name}_*")
-        elif isinstance(mcp_server.tools, list):
-            allowed_tools.extend(
-                [f"mcp__{mcp_server.name}__{tool}" for tool in mcp_server.tools]
-            )
-        else:
-            raise ValueError(
-                f"Unexpected value for mcp server tools: {mcp_server.tools}"
-            )
-
-    # map to cli args
-    cmds: list[str] = []
-    if len(mcp_servers_json) > 0:
-        cmds.append("--mcp-config")
-        cmds.append(
-            to_json({"mcpServers": mcp_servers_json}, exclude_none=True).decode()
+        result = await sandbox.exec(
+            cmd=[
+                claude_binary,
+                "mcp",
+                "add-json",
+                mcp_server.name,
+                "--scope",
+                "user",
+                mcp_server_json,
+            ],
+            user=user,
         )
-    if len(allowed_tools):
-        cmds.append("--allowed-tools")
-        cmds.append(",".join(allowed_tools))
-
-    return cmds
+        if not result.success:
+            raise RuntimeError(
+                f"Error adding mcp server {mcp_server.name}: {result.stderr}"
+            )
