@@ -17,8 +17,6 @@ from pydantic_core import to_json
 
 from .install.install import ensure_claude_code_installed
 
-# TODO: AgentAttemptsx
-
 
 class ClaudeCodeOptions(BaseModel):
     """Claude Code options."""

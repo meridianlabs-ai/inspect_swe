@@ -34,7 +34,7 @@ pip install git+https://github.com/UKGovernmentBEIS/inspect_ai
 pip install git+https://github.com/meridianlabs-ai/inspect_swe
 ```
 
-Read on below to learn about using the available agents (currently only Claude Code, but soon to include OpenAI Codex, Cline, and perhaps others).
+Read on below to learn about using the available agents (currently only Claude Code, but soon to include OpenAI Codex).
 
 ## Claude Code
 
