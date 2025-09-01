@@ -19,9 +19,7 @@ from inspect_swe._claude_code.install.install import ensure_claude_code_installe
 
 # TODO: AgentAttempts
 # TODO: AgentContinue
-# TODO: generate config merging (they are passing max_tokens=32000)
-# TODO: Test mcp_servers
-# TODO: Test cross model web search
+# TODO: generate config merging (they are passing max_tokens=32000, temperature=1)
 
 
 class ClaudeCodeOptions(BaseModel):
