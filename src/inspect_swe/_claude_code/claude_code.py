@@ -1,6 +1,6 @@
 import uuid
 from textwrap import dedent
-from typing import Literal, Sequence
+from typing import Any, Literal, Sequence
 
 from inspect_ai.agent import (
     Agent,
@@ -11,9 +11,10 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser
 from inspect_ai.tool import MCPServerConfig
-from inspect_ai.util import SandboxEnvironment, resource
+from inspect_ai.util import resource
 from inspect_ai.util import sandbox as sandbox_env
 from pydantic import BaseModel, Field
+from pydantic_core import to_json
 
 from inspect_swe._claude_code.install.install import ensure_claude_code_installed
 from inspect_swe._util._yaml import read_front_matter_name
@@ -121,6 +122,10 @@ def claude_code(
             if system_messages:
                 cmd.extend(["--append-system-prompt", "\n\n".join(system_messages)])
 
+            # mcp servers
+            if options.mcp_servers:
+                cmd.extend(mcp_server_args(options.mcp_servers))
+
             # user prompt
             prompt = "\n\n".join(
                 [m.text for m in state.messages if isinstance(m, ChatMessageUser)]
@@ -130,10 +135,6 @@ def claude_code(
 
             # resolve sandbox
             sbox = sandbox_env(sandbox)
-
-            # mcp servers
-            if options.mcp_servers:
-                await add_mcp_servers(sbox, user, claude_binary, options.mcp_servers)
 
             # if there are subagents then write them
             AGENTS_DIR = ".claude/agents"
@@ -178,29 +179,34 @@ def claude_code(
     return agent_with(execute, name=name, description=description)
 
 
-async def add_mcp_servers(
-    sandbox: SandboxEnvironment,
-    user: str | None,
-    claude_binary: str,
-    mcp_servers: Sequence[MCPServerConfig],
-) -> None:
+def mcp_server_args(mcp_servers: Sequence[MCPServerConfig]) -> list[str]:
+    # build servers and allowed tools
+    mcp_servers_json: dict[str, dict[str, Any]] = {}
+    allowed_tools: list[str] = []
     for mcp_server in mcp_servers:
-        mcp_server_json = mcp_server.model_dump_json(
+        mcp_servers_json[mcp_server.name] = mcp_server.model_dump(
             exclude={"name", "tools"}, exclude_none=True
         )
-        result = await sandbox.exec(
-            cmd=[
-                claude_binary,
-                "mcp",
-                "add-json",
-                mcp_server.name,
-                "--scope",
-                "user",
-                mcp_server_json,
-            ],
-            user=user,
-        )
-        if not result.success:
-            raise RuntimeError(
-                f"Error adding mcp server {mcp_server.name}: {result.stderr}"
+        if mcp_server.tools == "all":
+            allowed_tools.append(f"mcp__{mcp_server.name}_*")
+        elif isinstance(mcp_server.tools, list):
+            allowed_tools.extend(
+                [f"mcp__{mcp_server.name}__{tool}" for tool in mcp_server.tools]
             )
+        else:
+            raise ValueError(
+                f"Unexpected value for mcp server tools: {mcp_server.tools}"
+            )
+
+    # map to cli args
+    cmds: list[str] = []
+    if len(mcp_servers_json) > 0:
+        cmds.append("--mcp-config")
+        cmds.append(
+            to_json({"mcpServers": mcp_servers_json}, exclude_none=True).decode()
+        )
+    if len(allowed_tools):
+        cmds.append("--allowed-tools")
+        cmds.append(",".join(allowed_tools))
+
+    return cmds
