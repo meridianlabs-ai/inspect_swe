@@ -11,14 +11,11 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser
 from inspect_ai.tool import MCPServerConfig
-from inspect_ai.util import resource
 from inspect_ai.util import sandbox as sandbox_env
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
 from inspect_swe._claude_code.install.install import ensure_claude_code_installed
-from inspect_swe._util._yaml import read_front_matter_name
-from inspect_swe._util.sandbox import sandbox_exec
 
 # TODO: AgentAttempts
 # TODO: AgentContinue
@@ -32,9 +29,6 @@ class ClaudeCodeOptions(BaseModel):
 
     system_prompt: str | None = Field(default=None)
     """Additional system prompt to append to default system prompt."""
-
-    subagents: list[str] | None = Field(default=None)
-    """Subagent definitions (see the [subagents](https://docs.anthropic.com/en/docs/claude-code/sub-agents) documentation for details on defining subagents). Can be file path(s) or strings containing subagent definitions directly."""
 
     mcp_servers: Sequence[MCPServerConfig] | None = Field(default=None)
     """MCP servers to make available to the agent."""
@@ -80,9 +74,8 @@ def claude_code(
         user: User to execute claude code with.
         sandbox: Optional sandbox environment name.
     """
-    # resolve subagents (they might be resources)
-    options = options.model_copy(deep=True) if options else ClaudeCodeOptions()
-    subagents = [resource(subagent) for subagent in (options.subagents or [])]
+    # provide default options if none specified
+    options = options or ClaudeCodeOptions()
 
     # resolve models
     model = f"inspect/{options.model}" if options.model is not None else "inspect"
@@ -117,7 +110,7 @@ def claude_code(
             system_messages = [
                 m.text for m in state.messages if isinstance(m, ChatMessageSystem)
             ]
-            if options.system_prompt:
+            if options.system_prompt is not None:
                 system_messages.append(options.system_prompt)
             if system_messages:
                 cmd.extend(["--append-system-prompt", "\n\n".join(system_messages)])
@@ -135,19 +128,6 @@ def claude_code(
 
             # resolve sandbox
             sbox = sandbox_env(sandbox)
-
-            # if there are subagents then write them
-            AGENTS_DIR = ".claude/agents"
-            for subagent in subagents:
-                await sandbox_exec(
-                    sbox,
-                    f"mkdir -p {AGENTS_DIR}",
-                    user=user,
-                )
-                name = read_front_matter_name(subagent)
-                if name is None:
-                    raise ValueError("Subagents must have a name.")
-                await sbox.write_file(f"{AGENTS_DIR}/{name}.md", subagent)
 
             # execute the agent
             result = await sbox.exec(

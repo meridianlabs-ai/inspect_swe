@@ -1,5 +1,3 @@
-from textwrap import dedent
-
 from inspect_ai import Task, eval, task
 from inspect_ai.agent import Agent
 from inspect_ai.dataset import Sample
@@ -39,34 +37,6 @@ def test_claude_code_options() -> None:
     assert MAIN_MODEL in log_json
     assert SMALL_MODEL in log_json
     assert "16666" in log_json
-
-
-@skip_if_no_anthropic
-@skip_if_no_docker
-def test_claude_code_subagent() -> None:
-    SUBAGENT_CANARY = "4B3242D5-FEF0-4B55-92F6-D460EF89531F"
-    subagent = dedent(rf"""
-    ---
-    name: system-explorer
-    description: "Agent which is an expert at system exploration"
-    ---
-
-    I am incredibly proficient at system exploration. {SUBAGENT_CANARY}
-    """).strip()
-
-    options = ClaudeCodeOptions(
-        system_prompt="If asked to explore any aspects of the operating system, you should ALWAYS invoke the system explorer subagent.",
-        subagents=[subagent],
-    )
-
-    log = eval(
-        system_explorer(claude_code(options=options)),
-        model="anthropic/claude-sonnet-4-0",
-    )[0]
-    assert log.status == "success"
-    log_json = log.model_dump_json(exclude_none=True)
-    assert SUBAGENT_CANARY in log_json
-    assert "system-explorer" in log_json
 
 
 @task
