@@ -1,5 +1,6 @@
 import asyncio
-from typing import Coroutine, Literal, TypeVar, cast
+import inspect
+from typing import Any, Coroutine, Literal, TypeVar, cast
 
 import nest_asyncio  # type: ignore
 import sniffio
@@ -7,6 +8,14 @@ import sniffio
 from .platform import running_in_notebook
 
 T = TypeVar("T")
+
+
+def is_callable_coroutine(func_or_cls: Any) -> bool:
+    if inspect.iscoroutinefunction(func_or_cls):
+        return True
+    elif callable(func_or_cls):
+        return inspect.iscoroutinefunction(func_or_cls.__call__)
+    return False
 
 
 def run_coroutine(coroutine: Coroutine[None, None, T]) -> T:

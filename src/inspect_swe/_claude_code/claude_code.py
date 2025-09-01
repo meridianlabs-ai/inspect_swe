@@ -4,17 +4,20 @@ from typing import Any, Literal, Sequence
 
 from inspect_ai.agent import (
     Agent,
+    AgentAttempts,
     AgentState,
     agent,
     agent_with,
     sandbox_agent_bridge,
 )
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser
+from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import sandbox as sandbox_env
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
+from .._util._async import is_callable_coroutine
 from .install.install import ensure_claude_code_installed
 
 
@@ -44,6 +47,7 @@ def claude_code(
        Autonomous coding agent capable of writing, testing, debugging,
        and iterating on code across multiple languages.
     """),
+    attempts: int | AgentAttempts = 1,
     options: ClaudeCodeOptions | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
     user: str | None = None,
@@ -55,9 +59,13 @@ def claude_code(
 
     The agent can either use a version of Claude Code installed in the sandbox, or can download a version and install it in the sandbox (see docs on `version` option below for details).
 
+    Use the `attempts` option to enable additional submissions if the initial
+    submission(s) are incorrect (by default, no additional attempts are permitted).
+
     Args:
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
+        attempts: Configure agent to make multiple attempts.
         options: Claude code options.
         version: Version of claude code to use. One of:
             - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
@@ -79,6 +87,9 @@ def claude_code(
         else "inspect"
     )
 
+    # resolve attempts
+    attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
+
     async def execute(state: AgentState) -> AgentState:
         async with sandbox_agent_bridge(state) as bridge:
             # ensure claude is installed and get binary location
@@ -91,9 +102,6 @@ def claude_code(
 
             # base options
             cmd = [
-                claude_binary,
-                "--session-id",
-                session_id,
                 "--print",  # run without interactions
                 "--dangerously-skip-permissions",
                 "--model",
@@ -117,37 +125,69 @@ def claude_code(
             prompt = "\n\n".join(
                 [m.text for m in state.messages if isinstance(m, ChatMessageUser)]
             )
-            cmd.append("--")
-            cmd.append(prompt)
 
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
             # execute the agent
-            result = await sbox.exec(
-                cmd=cmd,
-                env={
-                    "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
-                    "ANTHROPIC_API_KEY": "sk-ant-api03-DOq5tyLPrk9M4hPE",
-                    "ANTHROPIC_MODEL": model,
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
-                    "CLAUDE_CODE_SUBAGENT_MODEL": model,
-                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": small_model,
-                    "ANTHROPIC_SMALL_FAST_MODEL": small_model,
-                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                    "IS_SANDBOX": "1",
-                }
-                | (options.env or {}),
-                user=user,
-            )
+            agent_prompt = prompt
+            attempt_count = 0
+            while True:
+                # either starting a new session or resuming one
+                id_param = "--session-id" if attempt_count == 0 else "--resume"
+                agent_cmd = (
+                    [claude_binary, id_param, session_id] + cmd + ["--", agent_prompt]
+                )
 
-        if result.success:
-            return bridge.state
-        else:
-            raise RuntimeError(
-                f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
-            )
+                # run agent
+                result = await sbox.exec(
+                    cmd=agent_cmd,
+                    env={
+                        "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
+                        "ANTHROPIC_API_KEY": "sk-ant-api03-DOq5tyLPrk9M4hPE",
+                        "ANTHROPIC_MODEL": model,
+                        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+                        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+                        "CLAUDE_CODE_SUBAGENT_MODEL": model,
+                        "ANTHROPIC_DEFAULT_HAIKU_MODEL": small_model,
+                        "ANTHROPIC_SMALL_FAST_MODEL": small_model,
+                        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                        "IS_SANDBOX": "1",
+                    }
+                    | (options.env or {}),
+                    user=user,
+                )
+
+                # raise for error
+                if not result.success:
+                    f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
+
+                # exit if we are at max_attempts
+                attempt_count += 1
+                if attempt_count >= attempts.attempts:
+                    break
+
+                # score this attempt
+                answer_scores = await score(state)
+
+                # break if we score 'correct'
+                if attempts.score_value(answer_scores[0].value) == 1.0:
+                    break
+
+                # otherwise update prompt with incorrect message and continue
+                else:
+                    if callable(attempts.incorrect_message):
+                        if not is_callable_coroutine(attempts.incorrect_message):
+                            raise ValueError(
+                                "The incorrect_message function must be async."
+                            )
+                        agent_prompt = await attempts.incorrect_message(
+                            state, answer_scores
+                        )
+                    else:
+                        agent_prompt = attempts.incorrect_message
+
+        return bridge.state
 
     # return agent with specified name and descritpion
     return agent_with(execute, name=name, description=description)
