@@ -254,7 +254,7 @@ Claude Code Installation
 </section>
 <section id="options" class="level3">
 <h3 class="anchored" data-anchor-id="options">Options</h3>
-<p>Use <code>ClaudeCodeOptions</code> to specify various options for the agent (system prompt, MCP servers, etc.). The following options are supported:</p>
+<p>The following options are supported for customizing the behavior of the agent:</p>
 <table class="caption-top table">
 <colgroup>
 <col style="width: 25%">
@@ -276,16 +276,24 @@ Claude Code Installation
 <td>MCP servers (see <a href="#mcp-servers">MCP Servers</a> below for details).</td>
 </tr>
 <tr class="odd">
+<td><code>attempts</code></td>
+<td>Allow the agent to have multiple scored attempts at solving the task.</td>
+</tr>
+<tr class="even">
 <td><code>model</code></td>
 <td>Model name to use for Opus and Sonnet calls (defaults to main model for task).</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>small_model</code></td>
 <td>Model to use for Haiku calls (defaults to main model for task).</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>env</code></td>
-<td>Environment variables to set for claude code.</td>
+<td>Environment variables to set for Claude Code.</td>
+</tr>
+<tr class="odd">
+<td><code>version</code></td>
+<td>Version of Claude Code to use (see <a href="#installation">Installation</a> below for details)</td>
 </tr>
 </tbody>
 </table>
@@ -314,7 +322,7 @@ Claude Code Installation
 <div class="sourceCode" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_ai <span class="im">import</span> Task, task</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_ai.dataset <span class="im">import</span> Sample</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_ai.tool <span class="im">import</span> MCPServerConfigStdio</span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_swe <span class="im">import</span> ClaudeCodeOptions, claude_code</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_swe <span class="im">import</span> claude_code</span>
 <span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="at">@task</span></span>
 <span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> web_search() <span class="op">-&gt;</span> Task:</span>
@@ -326,24 +334,22 @@ Claude Code Installation
 <span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>            )</span>
 <span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>        ],</span>
 <span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>        solver<span class="op">=</span>claude_code(</span>
-<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>            options<span class="op">=</span>ClaudeCodeOptions(</span>
-<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>                system_prompt<span class="op">=</span><span class="st">"Please use the WebSearch tool to "</span></span>
-<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>                <span class="op">+</span> <span class="st">"research this question and the memory tools "</span></span>
-<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>                <span class="op">+</span> <span class="st">"to keep track of your research."</span>,</span>
-<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>                mcp_servers<span class="op">=</span>[</span>
-<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>                    MCPServerConfigStdio(</span>
-<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a>                        name<span class="op">=</span><span class="st">"memory"</span>,</span>
-<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a>                        command<span class="op">=</span><span class="st">"npx"</span>,</span>
-<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>                        args<span class="op">=</span>[</span>
-<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a>                            <span class="st">"--offline"</span>, </span>
-<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>                            <span class="st">"@modelcontextprotocol/server-memory"</span></span>
-<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a>                        ],</span>
-<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a>                    )</span>
-<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a>                ],</span>
-<span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a>            )</span>
-<span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a>        ),</span>
-<span id="cb5-32"><a href="#cb5-32" aria-hidden="true" tabindex="-1"></a>        sandbox<span class="op">=</span>(<span class="st">"docker"</span>, <span class="st">"Dockerfile"</span>),</span>
-<span id="cb5-33"><a href="#cb5-33" aria-hidden="true" tabindex="-1"></a>    )</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>            system_prompt<span class="op">=</span><span class="st">"Please use the WebSearch tool to "</span></span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>            <span class="op">+</span> <span class="st">"research this question and the memory tools "</span></span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>            <span class="op">+</span> <span class="st">"to keep track of your research."</span>,</span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>            mcp_servers<span class="op">=</span>[</span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>                MCPServerConfigStdio(</span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>                    name<span class="op">=</span><span class="st">"memory"</span>,</span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a>                    command<span class="op">=</span><span class="st">"npx"</span>,</span>
+<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a>                    args<span class="op">=</span>[</span>
+<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>                        <span class="st">"--offline"</span>, </span>
+<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a>                        <span class="st">"@modelcontextprotocol/server-memory"</span></span>
+<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>                    ],</span>
+<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a>                )</span>
+<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a>            ] </span>
+<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a>        ),</span>
+<span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a>        sandbox<span class="op">=</span>(<span class="st">"docker"</span>, <span class="st">"Dockerfile"</span>),</span>
+<span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a>    )</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <p>Note that we run the MCP server using the <code>--offline</code> option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).</p>
 </section>
 <section id="installation" class="level3">
