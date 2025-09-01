@@ -2,7 +2,7 @@ from inspect_ai import Task, eval, task
 from inspect_ai.agent import Agent
 from inspect_ai.dataset import Sample
 from inspect_ai.model import ChatMessageAssistant
-from inspect_swe import ClaudeCodeOptions, claude_code
+from inspect_swe import claude_code
 
 from tests.conftest import run_example, skip_if_no_anthropic, skip_if_no_docker
 
@@ -21,15 +21,16 @@ def test_claude_code_options() -> None:
     PASSED_MODEL = "anthropic/claude-sonnet-4-0"
     MAIN_MODEL = "anthropic/claude-3-7-sonnet-20250219"
     SMALL_MODEL = "anthropic/claude-3-5-haiku-20241022"
-    options = ClaudeCodeOptions(
-        system_prompt=f"This is a part of the system prompt {SYSTEM_PROMPT_CANARY}. When solving this task you should use a mix of the main model and the smaller model that you typically use for backgrounds tasks.",
-        model=MAIN_MODEL,
-        small_model=SMALL_MODEL,
-        env={"MAX_THINKING_TOKENS": "16666"},
-    )
 
     log = eval(
-        system_explorer(claude_code(options=options)),
+        system_explorer(
+            claude_code(
+                system_prompt=f"This is a part of the system prompt {SYSTEM_PROMPT_CANARY}. When solving this task you should use a mix of the main model and the smaller model that you typically use for backgrounds tasks.",
+                model=MAIN_MODEL,
+                small_model=SMALL_MODEL,
+                env={"MAX_THINKING_TOKENS": "16666"},
+            )
+        ),
         model=PASSED_MODEL,
     )[0]
     assert log.status == "success"

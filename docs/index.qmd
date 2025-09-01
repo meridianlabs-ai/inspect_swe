@@ -78,15 +78,17 @@ While the **Transcript** view includes all of the same information, it also incl
 
 ### Options
 
-Use `ClaudeCodeOptions` to specify various options for the agent (system prompt, MCP servers, etc.). The following options are supported:
+The following options are supported for customizing the behavior of the agent:
 
 | Option | Description |
 |------------------------------------|------------------------------------|
 | `system_prompt` | Additional system prompt to append to default system prompt. |
 | `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
+| `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for Opus and Sonnet calls (defaults to main model for task). |
 | `small_model` | Model to use for Haiku calls (defaults to main model for task). |
-| `env` | Environment variables to set for claude code. |
+| `env` | Environment variables to set for Claude Code. |
+| `version` | Version of Claude Code to use (see [Installation](#installation) below for details) |
 
 : {tbl-colwidths=\[25,75\]}
 
@@ -122,7 +124,7 @@ We can then use this MCP server in a task as follows:
 from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 from inspect_ai.tool import MCPServerConfigStdio
-from inspect_swe import ClaudeCodeOptions, claude_code
+from inspect_swe import claude_code
 
 @task
 def web_search() -> Task:
@@ -134,21 +136,19 @@ def web_search() -> Task:
             )
         ],
         solver=claude_code(
-            options=ClaudeCodeOptions(
-                system_prompt="Please use the WebSearch tool to "
-                + "research this question and the memory tools "
-                + "to keep track of your research.",
-                mcp_servers=[
-                    MCPServerConfigStdio(
-                        name="memory",
-                        command="npx",
-                        args=[
-                            "--offline", 
-                            "@modelcontextprotocol/server-memory"
-                        ],
-                    )
-                ],
-            )
+            system_prompt="Please use the WebSearch tool to "
+            + "research this question and the memory tools "
+            + "to keep track of your research.",
+            mcp_servers=[
+                MCPServerConfigStdio(
+                    name="memory",
+                    command="npx",
+                    args=[
+                        "--offline", 
+                        "@modelcontextprotocol/server-memory"
+                    ],
+                )
+            ] 
         ),
         sandbox=("docker", "Dockerfile"),
     )
