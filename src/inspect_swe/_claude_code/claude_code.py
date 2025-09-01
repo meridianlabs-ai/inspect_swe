@@ -15,7 +15,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
-from inspect_swe._claude_code.install.install import ensure_claude_code_installed
+from .install.install import ensure_claude_code_installed
 
 # TODO: AgentAttempts
 # TODO: AgentContinue
