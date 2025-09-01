@@ -182,8 +182,8 @@ If you don't ever want to rely on automatic downloads of Claude Code (e.g. if yo
 2.  Download the version of Claude Code you want to use into the cache, then specify that version explicitly:
 
     ``` python
-    # download the desired version during installation/configuration
-    download_claude_code(version="1.0.98", platform="linux-x64")
+    # download the agent binary during installation/configuration
+    download_agent_binary("claude_code", "1.0.98", "linux-x64")
 
     # reference that version in your task (no download will occur)
     claude_code(version="1.0.98")

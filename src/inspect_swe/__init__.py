@@ -1,5 +1,5 @@
 from ._claude_code.claude_code import ClaudeCodeOptions, claude_code
-from ._claude_code.install.download import download_claude_code
+from ._tools.download import download_agent_binary
 from ._util.sandbox import SandboxPlatform
 
 try:
@@ -11,7 +11,7 @@ except ImportError:
 __all__ = [
     "claude_code",
     "ClaudeCodeOptions",
-    "download_claude_code",
+    "download_agent_binary",
     "SandboxPlatform",
     "__version__",
 ]
