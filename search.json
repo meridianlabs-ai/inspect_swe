@@ -18,7 +18,7 @@
     "href": "index.html#getting-started",
     "title": "Inspect SWE",
     "section": "Getting Started",
-    "text": "Getting Started\nInspect SWE is currently under active development and also requires the development version of Inspect AI. To get started, install both development versions from GitHub:\npip install git+https://github.com/UKGovernmentBEIS/inspect_ai\npip install git+https://github.com/meridianlabs-ai/inspect_swe\nRead on below to learn about using the available agents (currently only Claude Code, but soon to include OpenAI Codex, Cline, and perhaps others)."
+    "text": "Getting Started\nInstall the inspect-swe package with:\npip install inspect-swe\nRead on below to learn about using the available agents (currently only Claude Code, but soon to include OpenAI Codex)."
   },
   {
     "objectID": "index.html#claude-code",
