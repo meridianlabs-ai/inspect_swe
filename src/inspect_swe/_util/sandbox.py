@@ -45,7 +45,7 @@ async def detect_sandbox_platform(sandbox: SandboxEnvironment) -> SandboxPlatfor
 
 
 def bash_command(cmd: str) -> list[str]:
-    return ["bash", "--login", "-c", cmd]
+    return ["bash", "-c", cmd]
 
 
 async def sandbox_exec(
