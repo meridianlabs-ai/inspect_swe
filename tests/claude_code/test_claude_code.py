@@ -57,6 +57,20 @@ def test_claude_code_tools() -> None:
     )
 
 
+@skip_if_no_anthropic
+@skip_if_no_docker
+def test_claude_code_attempts() -> None:
+    log = run_example("multiple_attempts", "anthropic/claude-sonnet-4-0")[0]
+
+
+@skip_if_no_anthropic
+@skip_if_no_docker
+def test_claude_code_disallowed_tools() -> None:
+    log = eval(system_explorer(claude_code(disallowed_tools=["WebSearch"])))[0]
+    log_json = log.model_dump_json(exclude_none=True)
+    assert "WebSearch" not in log_json
+
+
 @task
 def system_explorer(agent: Agent) -> Task:
     return Task(

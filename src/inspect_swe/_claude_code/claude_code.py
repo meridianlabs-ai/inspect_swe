@@ -29,6 +29,8 @@ def claude_code(
     """),
     system_prompt: str | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
+    allowed_tools: list[str] | None = None,
+    disallowed_tools: list[str] | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     small_model: str | None = None,
@@ -43,6 +45,8 @@ def claude_code(
 
     The agent can either use a version of Claude Code installed in the sandbox, or can download a version and install it in the sandbox (see docs on `version` option below for details).
 
+    Use `allowed_tools` and `disallowed_tools` to control access to tools. See [Tools available to Claude](https://docs.anthropic.com/en/docs/claude-code/settings#tools-available-to-claude) for the list of built-in tools and [How to use Allowed Tools in Claude Code](https://www.instructa.ai/blog/claude-code/how-to-use-allowed-tools-in-claude-code) for details on the supported syntax. Note that `allowed_tools` enables you to filter allowed parameter values and `disallowed_tools` enables you to remove tools entirely. In other words, `allowed_tools` is not a complete list of what tools are available but rather just filters on tool parameters---to remove tools you need to explicitly set `disallowed_tools`.
+
     Use the `attempts` option to enable additional submissions if the initial
     submission(s) are incorrect (by default, no additional attempts are permitted).
 
@@ -51,6 +55,8 @@ def claude_code(
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
         system_prompt: Additional system prompt to append to default system prompt.
         mcp_servers: MCP servers to make available to the agent.
+        allowed_tools: Parameter filters for built-in tools.
+        disallowed_tools: List of tool names to disallow entirely.
         attempts: Configure agent to make multiple attempts.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
         small_model: Model to use for Haiku calls (defaults to main model for task).
@@ -99,8 +105,19 @@ def claude_code(
                 cmd.extend(["--append-system-prompt", "\n\n".join(system_messages)])
 
             # mcp servers
+            cmd_allowed_tools = allowed_tools or []
             if mcp_servers:
-                cmd.extend(mcp_server_args(mcp_servers))
+                mcp_server_args, mcp_allowed_tools = resolve_mcp_servers(mcp_servers)
+                cmd.extend(mcp_server_args)
+                cmd_allowed_tools.extend(mcp_allowed_tools)
+
+            # add allowed and disallowed tools
+            if len(cmd_allowed_tools) > 0:
+                cmd.append("--allowed-tools")
+                cmd.append(",".join(cmd_allowed_tools))
+            if disallowed_tools is not None and len(disallowed_tools) > 0:
+                cmd.append("--disallowed-tools")
+                cmd.append(",".join(disallowed_tools))
 
             # user prompt
             prompt = "\n\n".join(
@@ -174,7 +191,9 @@ def claude_code(
     return agent_with(execute, name=name, description=description)
 
 
-def mcp_server_args(mcp_servers: Sequence[MCPServerConfig]) -> list[str]:
+def resolve_mcp_servers(
+    mcp_servers: Sequence[MCPServerConfig],
+) -> tuple[list[str], list[str]]:
     # build servers and allowed tools
     mcp_servers_json: dict[str, dict[str, Any]] = {}
     allowed_tools: list[str] = []
@@ -194,14 +213,11 @@ def mcp_server_args(mcp_servers: Sequence[MCPServerConfig]) -> list[str]:
             )
 
     # map to cli args
-    cmds: list[str] = []
+    mcp_config_cmds: list[str] = []
     if len(mcp_servers_json) > 0:
-        cmds.append("--mcp-config")
-        cmds.append(
+        mcp_config_cmds.append("--mcp-config")
+        mcp_config_cmds.append(
             to_json({"mcpServers": mcp_servers_json}, exclude_none=True).decode()
         )
-    if len(allowed_tools):
-        cmds.append("--allowed-tools")
-        cmds.append(",".join(allowed_tools))
 
-    return cmds
+    return mcp_config_cmds, allowed_tools
