@@ -85,3 +85,11 @@ strict = true
 mypy_path = "src"
 namespace_packages = true
 explicit_package_bases = true
+
+[tool.uv.sources]
+aisitools = { git = "ssh://git@github.com/AI-Safety-Institute/aisi-inspect-tools" }
+
+[dependency-groups]
+aisi = [
+    "aisitools",
+]

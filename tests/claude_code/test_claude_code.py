@@ -56,7 +56,6 @@ def test_claude_code_tools() -> None:
         (tc for tc in tool_calls if tc.function == "mcp__memory__create_entities"), None
     )
 
-
 @task
 def system_explorer(agent: Agent) -> Task:
     return Task(
