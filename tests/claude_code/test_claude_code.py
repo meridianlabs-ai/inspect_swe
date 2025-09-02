@@ -1,6 +1,7 @@
 from inspect_ai import Task, eval, task
 from inspect_ai.agent import Agent
 from inspect_ai.dataset import Sample
+from inspect_ai.log import ScoreEvent
 from inspect_ai.model import ChatMessageAssistant
 from inspect_swe import claude_code
 
@@ -61,6 +62,11 @@ def test_claude_code_tools() -> None:
 @skip_if_no_docker
 def test_claude_code_attempts() -> None:
     log = run_example("multiple_attempts", "anthropic/claude-sonnet-4-0")[0]
+    assert log.samples
+    score_events = [
+        event for event in log.samples[0].events if isinstance(event, ScoreEvent)
+    ]
+    assert len(score_events) == 2
 
 
 @skip_if_no_anthropic
