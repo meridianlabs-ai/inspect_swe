@@ -34,10 +34,11 @@ def claude_code(
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     small_model: str | None = None,
+    cwd: str | None = None,
     env: dict[str, str] | None = None,
-    version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
     user: str | None = None,
     sandbox: str | None = None,
+    version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
 ) -> Agent:
     """Claude Code agent.
 
@@ -60,15 +61,16 @@ def claude_code(
         attempts: Configure agent to make multiple attempts.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
         small_model: Model to use for Haiku calls (defaults to main model for task).
+        cwd: Working directory to run claude code within.
         env: Environment variables to set for claude code.
+        user: User to execute claude code with.
+        sandbox: Optional sandbox environment name.
         version: Version of claude code to use. One of:
             - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
             - "sandbox": Use the version of claude code in the sandbox (raises `RuntimeError` if claude is not available in the sandbox)
             - "stable": Download and use the current stable version of claude code.
             - "latest": Download and use the very latest version of claude code.
             - "x.x.x": Download and use a specific version of claude code.
-        user: User to execute claude code with.
-        sandbox: Optional sandbox environment name.
     """
     # resolve models
     model = f"inspect/{model}" if model is not None else "inspect"
@@ -140,6 +142,7 @@ def claude_code(
                 # run agent
                 result = await sbox.exec(
                     cmd=agent_cmd,
+                    cwd=cwd,
                     env={
                         "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
                         "ANTHROPIC_API_KEY": "sk-ant-api03-DOq5tyLPrk9M4hPE",
