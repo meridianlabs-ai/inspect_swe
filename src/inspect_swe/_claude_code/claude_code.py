@@ -21,6 +21,11 @@ from .install.install import ensure_claude_code_installed
 
 
 @agent
+def wrapped_claude() -> Agent:
+    return claude_code()
+
+
+@agent
 def claude_code(
     name: str = "Claude Code",
     description: str = dedent("""
