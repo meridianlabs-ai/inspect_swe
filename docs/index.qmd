@@ -66,7 +66,7 @@ def system_explorer() -> Task:
     )
 ```
 
-If you want to try this out locally, see the [system_explorer](https://github.com/meridianlabs-ai/inspect_swe/examples/system_explorer) example.
+If you want to try this out locally, see the [system_explorer](https://github.com/meridianlabs-ai/inspect_swe/tree/main/examples/system_explorer/task.py) example.
 
 ### Log Viewer
 
