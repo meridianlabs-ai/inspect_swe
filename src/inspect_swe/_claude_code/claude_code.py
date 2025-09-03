@@ -162,6 +162,7 @@ def claude_code(
                     }
                     | (env or {}),
                     user=user,
+                    concurrency=False,
                 )
 
                 # track debug output
