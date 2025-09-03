@@ -1,13 +1,14 @@
 from typing import Literal
 
 from .._claude_code.agentbinary import claude_code_binary_source
+from .._codex_cli.agentbinary import codex_cli_binary_source
 from .._util._async import run_coroutine
 from .._util.agentbinary import download_agent_binary_async
 from .._util.sandbox import SandboxPlatform
 
 
 def download_agent_binary(
-    binary: Literal["claude_code"],
+    binary: Literal["claude_code", "codex_cli"],
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform,
 ) -> None:
@@ -22,9 +23,12 @@ def download_agent_binary(
         version: Version to download ("stable", "latest", or an explicit version number).
         platform: Target platform ("linux-x64", "linux-arm64", "linux-x64-musl", or "linux-arm64-musl")
     """
-    if binary == "claude_code":
-        source = claude_code_binary_source()
-    else:
-        raise ValueError(f"Unsuported agent binary type: {binary}")
+    match binary:
+        case "claude_code":
+            source = claude_code_binary_source()
+        case "codex_cli":
+            source = codex_cli_binary_source()
+        case _:
+            raise ValueError(f"Unsuported agent binary type: {binary}")
 
     run_coroutine(download_agent_binary_async(source, version, platform))
