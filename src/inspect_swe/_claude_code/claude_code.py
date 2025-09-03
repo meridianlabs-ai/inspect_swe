@@ -146,7 +146,7 @@ def claude_code(
 
                 # run agent
                 result = await sbox.exec(
-                    cmd=agent_cmd,
+                    cmd=["bash", "-c", 'exec "$@"', "bash"] + agent_cmd,
                     cwd=cwd,
                     env={
                         "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
