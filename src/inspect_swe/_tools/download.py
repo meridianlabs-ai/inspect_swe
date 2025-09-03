@@ -1,7 +1,8 @@
 from typing import Literal
 
-from .._claude_code.install.download import download_claude_code_async
+from .._claude_code.agentbinary import claude_code_binary_source
 from .._util._async import run_coroutine
+from .._util.agentbinary import download_agent_binary_async
 from .._util.sandbox import SandboxPlatform
 
 
@@ -22,6 +23,8 @@ def download_agent_binary(
         platform: Target platform ("linux-x64", "linux-arm64", "linux-x64-musl", or "linux-arm64-musl")
     """
     if binary == "claude_code":
-        run_coroutine(download_claude_code_async(version, platform))
+        source = claude_code_binary_source()
     else:
         raise ValueError(f"Unsuported agent binary type: {binary}")
+
+    run_coroutine(download_agent_binary_async(source, version, platform))

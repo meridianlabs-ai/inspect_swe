@@ -16,10 +16,10 @@ from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import sandbox as sandbox_env
 from pydantic_core import to_json
 
-from inspect_swe._util.trace import trace
-
 from .._util._async import is_callable_coroutine
-from .install.install import ensure_claude_code_installed
+from .._util.agentbinary import ensure_agent_binary_installed
+from .._util.trace import trace
+from .agentbinary import claude_code_binary_source
 
 
 @agent
@@ -84,8 +84,8 @@ def claude_code(
     async def execute(state: AgentState) -> AgentState:
         async with sandbox_agent_bridge(state) as bridge:
             # ensure claude is installed and get binary location
-            claude_binary = await ensure_claude_code_installed(
-                version, user, sandbox_env(sandbox)
+            claude_binary = await ensure_agent_binary_installed(
+                claude_code_binary_source(), version, user, sandbox_env(sandbox)
             )
 
             # allocate session_id
