@@ -1,12 +1,11 @@
 import re
-from typing import Literal
+from typing import Callable, Literal
 
 from pydantic import BaseModel
 
 from ..._util.checksum import verify_checksum
 from ..._util.download import download_file, download_text_file
 from ..._util.sandbox import SandboxPlatform
-from ..._util.trace import trace
 from .cache import (
     read_cached_claude_code_binary,
     write_cached_claude_code_binary,
@@ -14,8 +13,13 @@ from .cache import (
 
 
 async def download_claude_code_async(
-    version: Literal["stable", "latest"] | str, platform: SandboxPlatform
+    version: Literal["stable", "latest"] | str,
+    platform: SandboxPlatform,
+    logger: Callable[[str], None] | None = None,
 ) -> bytes:
+    # resovle logger
+    logger = logger or print
+
     # determine version and checksum
     gcs_bucket = await _claude_code_gcs_bucket()
     version = await _claude_code_version(gcs_bucket, version)
@@ -35,9 +39,9 @@ async def download_claude_code_async(
         write_cached_claude_code_binary(binary_data, version, platform)
 
         # trace
-        trace(f"Downloaded claude code binary: {version} ({platform})")
+        logger(f"Downloaded claude code binary: {version} ({platform})")
     else:
-        trace(f"Used claude code binary from cache: {version} ({platform})")
+        logger(f"Used claude code binary from cache: {version} ({platform})")
 
     # return data
     return binary_data

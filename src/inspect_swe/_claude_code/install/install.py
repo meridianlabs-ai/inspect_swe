@@ -50,7 +50,9 @@ async def ensure_claude_code_installed(
 
         # download the binary
         if claude_binary_bytes is None:
-            claude_binary_bytes = await download_claude_code_async(version, platform)
+            claude_binary_bytes = await download_claude_code_async(
+                version, platform, trace
+            )
 
         # write it into the container and return it
         claude_binary = f"/opt/claude-{version}-{platform}"

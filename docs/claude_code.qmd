@@ -178,3 +178,12 @@ If you don't ever want to rely on automatic downloads of Claude Code (e.g. if yo
     ```
 
     Note that the 5 most recently downloaded versions are retained in the cache.
+
+
+## Troubleshooting
+
+If Claude Code doesn't appear to be working or working as expected, you can troubleshoot by dumping the Claude Code debug log after an evaluation task is complete. You can do this with:
+
+```bash
+inspect trace dump --filter "Claude Code"
+```

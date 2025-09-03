@@ -16,6 +16,8 @@ from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import sandbox as sandbox_env
 from pydantic_core import to_json
 
+from inspect_swe._util.trace import trace
+
 from .._util._async import is_callable_coroutine
 from .install.install import ensure_claude_code_installed
 
@@ -93,6 +95,8 @@ def claude_code(
             cmd = [
                 "--print",  # run without interactions
                 "--dangerously-skip-permissions",
+                "--debug",
+                "--verbose",
                 "--model",
                 model,
             ]
@@ -129,7 +133,8 @@ def claude_code(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
-            # execute the agent
+            # execute the agent (track debug output)
+            debug_output: list[str] = []
             agent_prompt = prompt
             attempt_count = 0
             while True:
@@ -159,6 +164,10 @@ def claude_code(
                     user=user,
                 )
 
+                # track debug output
+                debug_output.append(result.stdout)
+                debug_output.append(result.stderr)
+
                 # raise for error
                 if not result.success:
                     f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
@@ -187,6 +196,10 @@ def claude_code(
                         )
                     else:
                         agent_prompt = attempts.incorrect_message
+
+            # trace debug info
+            debug_output.insert(0, "Claude Code Debug Output:")
+            trace("\n".join(debug_output))
 
         return bridge.state
 
