@@ -3,7 +3,8 @@ from typing import Literal
 from inspect_ai.util import SandboxEnvironment, concurrency
 from inspect_ai.util import sandbox as sandbox_env
 
-from inspect_swe._claude_code.install.cache import read_cached_claude_code_binary
+from inspect_swe._claude_code.install.cache import claude_code_binary_cache
+from inspect_swe._util.binarycache import read_cached_binary
 from inspect_swe._util.trace import trace
 
 from ..._util.sandbox import bash_command, detect_sandbox_platform, sandbox_exec
@@ -40,8 +41,8 @@ async def ensure_claude_code_installed(
     async with concurrency("claude-install", 1, visible=False):
         # if a specific version is requested, first try to read it directly from the cache
         if version not in ["stable", "latest"]:
-            claude_binary_bytes: bytes | None = read_cached_claude_code_binary(
-                version, platform, None
+            claude_binary_bytes: bytes | None = read_cached_binary(
+                claude_code_binary_cache(), version, platform, None
             )
             if claude_binary_bytes is not None:
                 trace(f"Used claude code binary from cache: {version} ({platform})")

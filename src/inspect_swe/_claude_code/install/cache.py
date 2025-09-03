@@ -3,56 +3,18 @@ from pathlib import Path
 from inspect_swe._util.sandbox import SandboxPlatform
 
 from ..._util.appdirs import package_cache_dir
-from ..._util.checksum import verify_checksum
+from ..._util.binarycache import AgentBinaryCache
 
 
-def read_cached_claude_code_binary(
-    version: str, platform: SandboxPlatform, expected_checksum: str | None
-) -> bytes | None:
-    # no cached binary
-    cache_path = _claude_code_cached_binary(version, platform)
-    if not cache_path.exists():
-        return None
+def claude_code_binary_cache() -> AgentBinaryCache:
+    cached_binary_dir = package_cache_dir("claude-code-downloads")
 
-    # read binary
-    with open(cache_path, "rb") as f:
-        binary_data = f.read()
+    def cached_binary_path(version: str, platform: SandboxPlatform) -> Path:
+        return cached_binary_dir / f"claude-{version}-{platform}"
 
-    if expected_checksum is None or verify_checksum(binary_data, expected_checksum):
-        cache_path.touch()
-        return binary_data
-    else:
-        cache_path.unlink()
-        return None
+    def list_cached_binaries() -> list[Path]:
+        return list(cached_binary_dir.glob("claude-*"))
 
-
-def write_cached_claude_code_binary(
-    binary_data: bytes, version: str, platform: SandboxPlatform
-) -> None:
-    binary_path = _claude_code_cached_binary(version, platform)
-
-    with open(binary_path, "wb") as f:
-        f.write(binary_data)
-
-    _cleanup_claude_code_binary_cache(keep_count=3)
-
-
-def _cleanup_claude_code_binary_cache(keep_count: int = 5) -> None:
-    # get all cached binaries
-    cache_files = list(_claude_code_cached_binary_dir().glob("claude-*"))
-    if len(cache_files) <= keep_count:
-        return
-
-    # remove oldest
-    cache_files.sort(key=lambda f: f.stat().st_atime)
-    files_to_remove = cache_files[:-keep_count]
-    for file_path in files_to_remove:
-        file_path.unlink()
-
-
-def _claude_code_cached_binary_dir() -> Path:
-    return package_cache_dir("claude-code-downloads")
-
-
-def _claude_code_cached_binary(version: str, platform: SandboxPlatform) -> Path:
-    return _claude_code_cached_binary_dir() / f"claude-{version}-{platform}"
+    return AgentBinaryCache(
+        cached_binary_path=cached_binary_path, list_cached_binaries=list_cached_binaries
+    )

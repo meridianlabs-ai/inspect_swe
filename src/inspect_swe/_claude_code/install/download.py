@@ -3,13 +3,12 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel
 
+from inspect_swe._util.binarycache import read_cached_binary, write_cached_binary
+
 from ..._util.checksum import verify_checksum
 from ..._util.download import download_file, download_text_file
 from ..._util.sandbox import SandboxPlatform
-from .cache import (
-    read_cached_claude_code_binary,
-    write_cached_claude_code_binary,
-)
+from .cache import claude_code_binary_cache
 
 
 async def download_claude_code_async(
@@ -27,7 +26,8 @@ async def download_claude_code_async(
     expected_checksum = _checksum_for_platform(manifest, platform)
 
     # check the cache
-    binary_data = read_cached_claude_code_binary(version, platform, expected_checksum)
+    binary_cache = claude_code_binary_cache()
+    binary_data = read_cached_binary(binary_cache, version, platform, expected_checksum)
     if binary_data is None:
         # not in cache, download and verify checksum
         binary_url = f"{gcs_bucket}/{version}/{platform}/claude"
@@ -36,7 +36,7 @@ async def download_claude_code_async(
             raise ValueError("Checksum verification failed")
 
         # save to cache
-        write_cached_claude_code_binary(binary_data, version, platform)
+        write_cached_binary(binary_cache, binary_data, version, platform)
 
         # trace
         logger(f"Downloaded claude code binary: {version} ({platform})")
