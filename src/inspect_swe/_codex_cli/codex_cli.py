@@ -16,6 +16,7 @@ from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import SandboxEnvironment
 from inspect_ai.util import sandbox as sandbox_env
+
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.sandbox import sandbox_exec
 from inspect_swe._util.toml import to_toml
