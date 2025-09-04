@@ -8,7 +8,7 @@ def extract_tarball(tarball_bytes: bytes) -> bytes:
     # Open the gzip-compressed tarball
     with BytesIO(tarball_bytes) as tarball_io:
         with gzip.open(tarball_io, "rb") as gz:
-            with tarfile.open(fileobj=gz, mode="r") as tar:  # type: ignore[call-overload]
+            with tarfile.open(fileobj=gz, mode="r") as tar:
                 # List all members (should be just one file)
                 members = tar.getmembers()
                 if len(members) != 1:
