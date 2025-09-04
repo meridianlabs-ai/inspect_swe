@@ -16,8 +16,22 @@ from inspect_ai.util import sandbox as sandbox_env
 from .._util.agentbinary import ensure_agent_binary_installed
 from .agentbinary import codex_cli_binary_source
 
+# https://github.com/openai/codex/blob/main/docs/config.md#config-reference
+# https://github.com/openai/codex/blob/main/codex-rs/mcp-server/src/codex_tool_config.rs#L167
+
+#  /// Include an experimental plan tool that the model can use to update its current plan and status of each step.
+#     pub include_plan_tool: bool,
+
+#     /// Include the `apply_patch` tool for models that benefit from invoking
+#     /// file edits as a structured tool call. When unset, this falls back to the
+#     /// model family's default preference.
+#     pub include_apply_patch_tool: bool,
+
+#     pub tools_web_search_request: bool,
+
 # TODO: attempts
 # TODO: mcp_servers
+# TODO: write systemm prompt to AGENTS.md
 # TODO: search / disallowed_tools
 # TODO: other codex-specific options
 # TODO: tests (move web_search and disallowed to general)
@@ -105,8 +119,13 @@ def codex_cli(
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--color",
                 "never",
-                prompt,
             ]
+
+            # include web search if appropriate
+            agent_cmd.extend(["-c", "tools.web_search=true"])
+
+            # append the prompt
+            agent_cmd.append(prompt)
 
             # execute the agent
             result = await sandbox_env(sandbox).exec(

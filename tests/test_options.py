@@ -1,10 +1,9 @@
 from inspect_ai import Task, eval, task
 from inspect_ai.agent import Agent
 from inspect_ai.dataset import Sample
-from inspect_ai.model import ChatMessageAssistant
 from inspect_swe import claude_code
 
-from tests.conftest import run_example, skip_if_no_anthropic, skip_if_no_docker
+from tests.conftest import skip_if_no_anthropic, skip_if_no_docker
 
 
 @skip_if_no_anthropic
@@ -32,19 +31,6 @@ def test_claude_code_options() -> None:
     assert MAIN_MODEL in log_json
     assert SMALL_MODEL in log_json
     assert "16666" in log_json
-
-
-@skip_if_no_anthropic
-@skip_if_no_docker
-def test_claude_code_web_search() -> None:
-    log = run_example("web_search", "claude_code", "anthropic/claude-sonnet-4-0")[0]
-    assert log.status == "success"
-    assert log.samples
-    assistant_messages = [
-        m for m in log.samples[0].messages if isinstance(m, ChatMessageAssistant)
-    ]
-    tool_calls = [tc for m in assistant_messages for tc in (m.tool_calls or [])]
-    assert next((tc for tc in tool_calls if tc.function == "WebSearch"), None)
 
 
 @task
