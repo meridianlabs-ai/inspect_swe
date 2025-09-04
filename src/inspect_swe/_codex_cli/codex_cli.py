@@ -22,6 +22,7 @@ from .agentbinary import codex_cli_binary_source
 # TODO: search / disallowed_tools
 # TODO: other codex-specific options
 # TODO: tests (move web_search and disallowed to general)
+# TODO: docs
 
 
 @agent
