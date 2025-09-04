@@ -1,3 +1,11 @@
+## Unreleased
+
+- Codex CLI: New `codex_cli()` agent for OpenAI Codex.
+
+## 0.2.10 (03 September 2026)
+
+- Add trace logging for claude code debug/verbose output.
+
 ## v0.2.8 (02 September 2026)
 
 - Claude Code: `allowed_tools` and `disallowed_tools` options.
