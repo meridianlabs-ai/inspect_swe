@@ -13,19 +13,15 @@ from inspect_ai.agent import (
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import sandbox as sandbox_env
+from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
 from .agentbinary import codex_cli_binary_source
 
-# https://github.com/openai/codex/blob/main/docs/config.md#config-reference
-# https://github.com/openai/codex/blob/main/codex-rs/mcp-server/src/codex_tool_config.rs#L167
-
-
 # TODO: attempts
 # TODO: mcp_servers
-# TODO: other codex-specific options
+
 # TODO: docs
-# TODO: debug output
 
 
 @agent
@@ -139,19 +135,34 @@ def codex_cli(
             # append the prompt
             agent_cmd.append(prompt)
 
+            debug_output: list[str] = []
+
             # execute the agent
             result = await sandbox_env(sandbox).exec(
                 cmd=["bash", "-c", 'exec "$@"', "bash"] + agent_cmd,
                 cwd=cwd,
                 env={
                     "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
+                    "RUST_LOG": "debug",
                 }
                 | (env or {}),
             )
 
-        if result.success:
+            # record output for debug
+            debug_output.append(result.stdout)
+            debug_output.append(result.stderr)
+
+            # trace debug info
+            debug_output.insert(0, "Codex CLI Debug Output:")
+            trace("\n".join(debug_output))
+
+            # raise for error
+            if not result.success:
+                raise RuntimeError(
+                    f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
+                )
+
+            # return success
             return bridge.state
-        else:
-            raise RuntimeError(f"Error executing codex agent: {result.stderr}")
 
     return agent_with(execute, name=name, description=description)
