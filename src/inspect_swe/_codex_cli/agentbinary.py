@@ -69,11 +69,15 @@ def codex_cli_binary_source() -> AgentBinarySource:
 
 
 def _platform_to_codex_arch(platform: SandboxPlatform) -> str:
-    """Map SandboxPlatform to Codex architecture string."""
+    """Map SandboxPlatform to Codex architecture string.
+
+    Always use musl variants for better compatibility since they're
+    statically linked and don't depend on system GLIBC version.
+    """
     platform_map = {
-        "linux-x64": "x86_64-unknown-linux-gnu",
+        "linux-x64": "x86_64-unknown-linux-musl",
         "linux-x64-musl": "x86_64-unknown-linux-musl",
-        "linux-arm64": "aarch64-unknown-linux-gnu",
+        "linux-arm64": "aarch64-unknown-linux-musl",
         "linux-arm64-musl": "aarch64-unknown-linux-musl",
     }
     if platform not in platform_map:
