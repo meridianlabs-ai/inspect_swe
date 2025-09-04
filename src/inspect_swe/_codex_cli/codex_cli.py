@@ -1,4 +1,5 @@
 import os
+from logging import getLogger
 from textwrap import dedent
 from typing import Any, Literal, Sequence
 
@@ -11,8 +12,11 @@ from inspect_ai.agent import (
     sandbox_agent_bridge,
 )
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser
+from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
+from inspect_ai.util import SandboxEnvironment
 from inspect_ai.util import sandbox as sandbox_env
+from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.sandbox import sandbox_exec
 from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
@@ -20,9 +24,7 @@ from inspect_swe._util.trace import trace
 from .._util.agentbinary import ensure_agent_binary_installed
 from .agentbinary import codex_cli_binary_source
 
-# TODO: attempts
-
-# TODO: docs
+logger = getLogger(__file__)
 
 
 @agent
@@ -102,7 +104,10 @@ def codex_cli(
 
             # determine CODEX_HOME (we want this to be whatever sandbox working dir is)
             working_dir = (await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)).strip()
-            codex_home = f"{working_dir}/.codex"
+            if not working_dir.endswith("/"):
+                working_dir = f"{working_dir}/"
+            codex_home = f"{working_dir}.codex"
+            await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=user)
 
             # write system messages to AGENTS.md
             if system_messages:
@@ -120,7 +125,7 @@ def codex_cli(
             )
 
             # build agent cmd
-            agent_cmd = [
+            cmd = [
                 codex_binary,
                 "exec",
                 "--model",
@@ -134,15 +139,12 @@ def codex_cli(
             # include the plan and apply patch tools.
             # NOTE: update_plan not currently working in 'exec' mode:
             # https://github.com/openai/codex/issues/1952
-            agent_cmd.extend(["-c", "include_plan_tool=true"])
-            agent_cmd.extend(["-c", "include_apply_patch_tool=true"])
+            cmd.extend(["-c", "include_plan_tool=true"])
+            cmd.extend(["-c", "include_apply_patch_tool=true"])
 
             # include web search if appropriate
             if "web_search" not in disallowed_tools:
-                agent_cmd.extend(["-c", "tools.web_search=true"])
-
-            # append the prompt
-            agent_cmd.append(prompt)
+                cmd.extend(["-c", "tools.web_search=true"])
 
             # register mcp servers
             if mcp_servers:
@@ -160,36 +162,88 @@ def codex_cli(
                     codex_path(".codex/config.toml"), to_toml(mcp_config)
                 )
 
-            # capture stdout and stderr
+            # execute the agent (track debug output)
             debug_output: list[str] = []
+            agent_prompt = prompt
+            attempt_count = 0
+            resume_rollout: str | None = None
+            while True:
+                # resume if requested
+                agent_cmd = cmd.copy()
+                if resume_rollout is not None:
+                    agent_cmd.extend(["-c", f'experimental_resume="{resume_rollout}"'])
 
-            # execute the agent
-            result = await sbox.exec(
-                cmd=["bash", "-c", 'exec "$@"', "bash"] + agent_cmd,
-                cwd=cwd,
-                env={
-                    "CODEX_HOME": codex_home,
-                    "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
-                    "RUST_LOG": "debug",
-                }
-                | (env or {}),
-            )
+                # append prompt
+                agent_cmd.append(agent_prompt)
 
-            # record output for debug
-            debug_output.append(result.stdout)
-            debug_output.append(result.stderr)
+                # run agent
+                result = await sbox.exec(
+                    cmd=["bash", "-c", 'exec "$@"', "bash"] + agent_cmd,
+                    cwd=cwd,
+                    env={
+                        "CODEX_HOME": codex_home,
+                        "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
+                        "RUST_LOG": "debug",
+                    }
+                    | (env or {}),
+                )
+
+                # record output for debug
+                debug_output.append(result.stdout)
+                debug_output.append(result.stderr)
+
+                # raise for error
+                if not result.success:
+                    raise RuntimeError(
+                        f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
+                    )
+
+                # exit if we are at max_attempts
+                attempt_count += 1
+                if attempt_count >= attempts.attempts:
+                    break
+
+                # score this attempt
+                answer_scores = await score(state)
+
+                # break if we score 'correct'
+                if attempts.score_value(answer_scores[0].value) == 1.0:
+                    break
+
+                # otherwise update prompt with incorrect message and continue
+                else:
+                    resume_rollout = await _last_rollout(sbox, codex_home, user)
+                    if callable(attempts.incorrect_message):
+                        if not is_callable_coroutine(attempts.incorrect_message):
+                            raise ValueError(
+                                "The incorrect_message function must be async."
+                            )
+                        agent_prompt = await attempts.incorrect_message(
+                            state, answer_scores
+                        )
+                    else:
+                        agent_prompt = attempts.incorrect_message
 
             # trace debug info
             debug_output.insert(0, "Codex CLI Debug Output:")
             trace("\n".join(debug_output))
 
-            # raise for error
-            if not result.success:
-                raise RuntimeError(
-                    f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
-                )
-
-            # return success
-            return bridge.state
+        # return success
+        return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+async def _last_rollout(
+    sandbox: SandboxEnvironment, codex_home: str, user: str | None
+) -> str | None:
+    try:
+        rollout = await sandbox_exec(
+            sandbox,
+            f"find '{codex_home}/sessions' -type f -name 'rollout-*.jsonl' -exec ls -t -- {{}} + | head -n 1",
+            user=user,
+        )
+        return rollout.strip()
+    except RuntimeError as ex:
+        logger.warning(f"Error attempting to read rollout file: {ex}")
+        return None

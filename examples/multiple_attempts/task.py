@@ -11,7 +11,7 @@ def multiple_attempts(
     agent: Literal["claude_code", "codex_cli"] = "claude_code",
 ) -> Task:
     # setup agent
-    system_prompt = "You will be given two attempts and you should take only a short time (maximum 3 tool calls) to come with each attempt. If you haven't yet found the magic number after 3 tool calls you should just make a guess."
+    system_prompt = "You will be given two attempts and you should make only ONE tool call to come up with your answer for each attempt. If you haven't yet found the magic number after 1 tool call you should just make a guess."
     attempts = 2
     match agent:
         case "claude_code":
