@@ -1,30 +1,243 @@
 [
   {
+    "objectID": "codex_cli.html",
+    "href": "codex_cli.html",
+    "title": "Codex CLI",
+    "section": "",
+    "text": "The codex_cli() agent uses the the unattended mode of OpenAI Codex CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nCodex CLI Installation\n\n\n\nBy default, the agent will download the current stable version of the Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "codex_cli.html#overview",
+    "href": "codex_cli.html#overview",
+    "title": "Codex CLI",
+    "section": "",
+    "text": "The codex_cli() agent uses the the unattended mode of OpenAI Codex CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nCodex CLI Installation\n\n\n\nBy default, the agent will download the current stable version of the Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "codex_cli.html#basic-usage",
+    "href": "codex_cli.html#basic-usage",
+    "title": "Codex CLI",
+    "section": "Basic Usage",
+    "text": "Basic Usage\nUse the codex_cli() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import codex_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=codex_cli(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/codex_cli\nIf you want to try this out locally, see the system_explorer example.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "codex_cli.html#options",
+    "href": "codex_cli.html#options",
+    "title": "Codex CLI",
+    "section": "Options",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (currently only \"web_search\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\ncwd\nWorkding directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the web_search tool:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"web_search\"]\n)",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "codex_cli.html#mcp-servers",
+    "href": "codex_cli.html#mcp-servers",
+    "title": "Codex CLI",
+    "section": "MCP Servers",
+    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Codex CLI. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MPC server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import codex_cli\n\n@task\ndef web_search() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=codex_cli(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\", \n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ] \n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "codex_cli.html#installation",
+    "href": "codex_cli.html#installation",
+    "title": "Codex CLI",
+    "section": "Installation",
+    "text": "Installation\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Codex CLI in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of Claude Code in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Codex CLI (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Codex CLI you want to use in the sandbox, then use version=\"sandbox\":\ncodex_cli(version=\"sandbox\")\nDownload the version of Codex CLI you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"codex_cli\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\ncodex_cli(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "codex_cli.html#troubleshooting",
+    "href": "codex_cli.html#troubleshooting",
+    "title": "Codex CLI",
+    "section": "Troubleshooting",
+    "text": "Troubleshooting\nIf Codex CLI doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Codex CLI debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"Codex\"",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "CHANGELOG.html",
+    "href": "CHANGELOG.html",
+    "title": "Inspect SWE",
+    "section": "",
+    "text": "Claude Code: allowed_tools and disallowed_tools options."
+  },
+  {
+    "objectID": "CHANGELOG.html#v0.2.8-02-september-2026",
+    "href": "CHANGELOG.html#v0.2.8-02-september-2026",
+    "title": "Inspect SWE",
+    "section": "",
+    "text": "Claude Code: allowed_tools and disallowed_tools options."
+  },
+  {
+    "objectID": "CHANGELOG.html#v0.2.6-01-september-2025",
+    "href": "CHANGELOG.html#v0.2.6-01-september-2025",
+    "title": "Inspect SWE",
+    "section": "v0.2.6 (01 September 2025)",
+    "text": "v0.2.6 (01 September 2025)\n\nClaude Code: Add support for multiple agent attempts."
+  },
+  {
+    "objectID": "CHANGELOG.html#v0.2.5-01-september-2025",
+    "href": "CHANGELOG.html#v0.2.5-01-september-2025",
+    "title": "Inspect SWE",
+    "section": "v0.2.5 (01 September 2025)",
+    "text": "v0.2.5 (01 September 2025)\nInitial release."
+  },
+  {
+    "objectID": "claude_code.html",
+    "href": "claude_code.html",
+    "title": "Claude Code",
+    "section": "",
+    "text": "The claude_code() agent uses the the unattended mode of Claude Code to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Claude Code"
+    ]
+  },
+  {
+    "objectID": "claude_code.html#overview",
+    "href": "claude_code.html#overview",
+    "title": "Claude Code",
+    "section": "",
+    "text": "The claude_code() agent uses the the unattended mode of Claude Code to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Claude Code"
+    ]
+  },
+  {
+    "objectID": "claude_code.html#basic-usage",
+    "href": "claude_code.html#basic-usage",
+    "title": "Claude Code",
+    "section": "Basic Usage",
+    "text": "Basic Usage\nUse the claude_code() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/claude_code\nIf you want to try this out locally, see the system_explorer example.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Claude Code"
+    ]
+  },
+  {
+    "objectID": "claude_code.html#log-viewer",
+    "href": "claude_code.html#log-viewer",
+    "title": "Claude Code",
+    "section": "Log Viewer",
+    "text": "Log Viewer\nOne important productivity tip for working with the Claude Code agent is that the Messages view in the Log Viewer will provide the most coherent view of the agent’s path to the solution:\n\nWhile the Transcript view includes all of the same information, it also includes many additional model requests for supporting tasks (e.g. extracting the file paths from bash commands) which tend to distract from understanding the agent’s actions at a high level. Start with the Messages view, then use the transcript view as required for debugging.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Claude Code"
+    ]
+  },
+  {
+    "objectID": "claude_code.html#options",
+    "href": "claude_code.html#options",
+    "title": "Claude Code",
+    "section": "Options",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\ndisallowed_tools\nList of tool names to disallow entirely (see Tools Available to Claude for a list of all tools used by default).\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for Opus and Sonnet calls (defaults to main model for task).\n\n\nsmall_model\nModel to use for Haiku calls (defaults to main model for task).\n\n\ncwd\nWorkding directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebFetch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebFetch\"]\n)",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Claude Code"
+    ]
+  },
+  {
+    "objectID": "claude_code.html#mcp-servers",
+    "href": "claude_code.html#mcp-servers",
+    "title": "Claude Code",
+    "section": "MCP Servers",
+    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Claude Code. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MPC server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import claude_code\n\n@task\ndef web_search() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=claude_code(\n            system_prompt=\"Please use the WebSearch tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\", \n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ] \n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Claude Code"
+    ]
+  },
+  {
+    "objectID": "claude_code.html#installation",
+    "href": "claude_code.html#installation",
+    "title": "Claude Code",
+    "section": "Installation",
+    "text": "Installation\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Claude Code in the sandbox, otherwise download the current stable version.\n\n\n\"sandbox\"\nUse the version of Claude Code in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"stable\"\nDownload and use the current stable version.\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Claude Code (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Claude Code you want to use in the sandbox, then use version=\"sandbox\":\nclaude_code(version=\"sandbox\")\nDownload the version of Claude Code you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"claude_code\", \"1.0.98\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\nclaude_code(version=\"1.0.98\")\nNote that the 5 most recently downloaded versions are retained in the cache.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Claude Code"
+    ]
+  },
+  {
+    "objectID": "claude_code.html#troubleshooting",
+    "href": "claude_code.html#troubleshooting",
+    "title": "Claude Code",
+    "section": "Troubleshooting",
+    "text": "Troubleshooting\nIf Claude Code doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Claude Code debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"Claude Code\"",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Claude Code"
+    ]
+  },
+  {
     "objectID": "index.html",
     "href": "index.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "The inspect_swe package makes software engineering agents like Claude Code available as standard Inspect Agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge(). Agents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents and that features like token and time limits and log transcripts work as normal with the agents."
+    "text": "The inspect_swe package makes software engineering agents like Claude Code and Codex CLI available as standard Inspect agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge().\nAgents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents, and that features like token or time limits and log transcripts work as normal with the agents.",
+    "crumbs": [
+      "Home",
+      "Getting Started"
+    ]
   },
   {
     "objectID": "index.html#overview",
     "href": "index.html#overview",
     "title": "Inspect SWE",
     "section": "",
-    "text": "The inspect_swe package makes software engineering agents like Claude Code available as standard Inspect Agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge(). Agents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents and that features like token and time limits and log transcripts work as normal with the agents."
+    "text": "The inspect_swe package makes software engineering agents like Claude Code and Codex CLI available as standard Inspect agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge().\nAgents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents, and that features like token or time limits and log transcripts work as normal with the agents.",
+    "crumbs": [
+      "Home",
+      "Getting Started"
+    ]
   },
   {
     "objectID": "index.html#getting-started",
     "href": "index.html#getting-started",
     "title": "Inspect SWE",
     "section": "Getting Started",
-    "text": "Getting Started\nInstall the inspect-swe package with:\npip install inspect-swe\nRead on below to learn about using the available agents (currently only Claude Code, but soon to include OpenAI Codex)."
-  },
-  {
-    "objectID": "index.html#claude-code",
-    "href": "index.html#claude-code",
-    "title": "Inspect SWE",
-    "section": "Claude Code",
-    "text": "Claude Code\nWhile Claude Code is typically used in an interactive loop by developers, it can also run in an unattended mode where it works on a solution to the prompt without interactions. The claude_code() agent runs in this mode within the sandbox, and its model API calls are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.\n\n\n\nBasic Usage\nUse the claude_code() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nIf you want to try this out locally, see the system_explorer example.\n\n\nLog Viewer\nOne important productivity tip for working with the Claude Code agent is that the Messages view in the Log Viewer will provide the most coherent view of the agent’s path to the solution:\n\nWhile the Transcript view includes all of the same information, it also includes many additional model requests for supporting tasks (e.g. extracting the file paths from bash commands) which tend to distract from understanding the agent’s actions at a high level. Start with the Messages view, then use the transcript view as required for debugging.\n\n\nOptions\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nallowed_tools\nParameter filters for built-in tools (see Tool Filters below for details).\n\n\ndisallowed_tools\nList of tool names to disallow entirely (see Tool Filters below for details).\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for Opus and Sonnet calls (defaults to main model for task).\n\n\nsmall_model\nModel to use for Haiku calls (defaults to main model for task).\n\n\ncwd\nWorkding directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disable the WebFetch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebFetch\"]\n)\n\nTool Filters\nUse allowed_tools and disallowed_tools to control access to Claude’s built in tools. Note that allowed_tools enables you to filter allowed parameter values and disallowed_tools enables you to remove tools entirely. In other words, allowed_tools is not a complete list of what tools are available but rather just filters on tool parameters—to remove tools you need to explicitly set disallowed_tools.\nThese resources provide additional information on tool filtering:\n\nTools available to Claude documents the list of built-in tools\nHow to use Allowed Tools in Claude Code provides details on the supported syntax.\n\n\n\n\nMCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Claude Code. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MPC server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import claude_code\n\n@task\ndef web_search() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=claude_code(\n            system_prompt=\"Please use the WebSearch tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\", \n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ] \n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).\n\n\nInstallation\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Claude Code in the sandbox, otherwise download the current stable version.\n\n\n\"sandbox\"\nUse the version of Claude Code in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"stable\"\nDownload and use the current stable version.\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Claude Code (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Claude Code you want to use in the sandbox, then use version=\"sandbox\":\nclaude_code(version=\"sandbox\")\nDownload the version of Claude Code you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"claude_code\", \"1.0.98\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\nclaude_code(version=\"1.0.98\")\nNote that the 5 most recently downloaded versions are retained in the cache.\n\n\n\nTroubleshooting\nIf Claude Code doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Claude Code debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"Claude Code\""
+    "text": "Getting Started\nInspect SWE is under active development and also depends on the development version of Inspect AI. To install the latest development versions of inspect_ai and inspect_swe:\npip install git+https://github.com/UKGovernmentBEIS/inspect_ai\npip install git+https://github.com/meridianlabs-ai/inspect_swe\nThen, try out one or more of the available agents:\n\n\n\n\n\n\n\nAgent\nDescription\n\n\n\n\nclaude_code()\nAnthropic’s agentic coding tool Claude Code\n\n\ncodex_cli()\nOpenAI’s terminal-based coding agent Codex CLI",
+    "crumbs": [
+      "Home",
+      "Getting Started"
+    ]
   }
 ]
