@@ -19,23 +19,13 @@ from .agentbinary import codex_cli_binary_source
 # https://github.com/openai/codex/blob/main/docs/config.md#config-reference
 # https://github.com/openai/codex/blob/main/codex-rs/mcp-server/src/codex_tool_config.rs#L167
 
-#  /// Include an experimental plan tool that the model can use to update its current plan and status of each step.
-#     pub include_plan_tool: bool,
-
-#     /// Include the `apply_patch` tool for models that benefit from invoking
-#     /// file edits as a structured tool call. When unset, this falls back to the
-#     /// model family's default preference.
-#     pub include_apply_patch_tool: bool,
-
-#     pub tools_web_search_request: bool,
 
 # TODO: attempts
 # TODO: mcp_servers
 # TODO: write systemm prompt to AGENTS.md
-# TODO: search / disallowed_tools
 # TODO: other codex-specific options
-# TODO: tests (move web_search and disallowed to general)
 # TODO: docs
+# TODO: debug output
 
 
 @agent
@@ -47,6 +37,7 @@ def codex_cli(
     """),
     system_prompt: str | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
+    disallowed_tools: list[Literal["web_search"]] | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     cwd: str | None = None,
@@ -67,6 +58,7 @@ def codex_cli(
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
         system_prompt: Additional system prompt to append to default system prompt.
         mcp_servers: MCP servers to make available to the agent.
+        disallowed_tools: Optionally disallow tools (currently only web_search).
         attempts: Configure agent to make multiple attempts.
         model: Model name to use (defaults to main model for task).
         cwd: Working directory to run codex cli within.
@@ -85,8 +77,11 @@ def codex_cli(
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
+    # ensure disallowed_tools list
+    disallowed_tools = disallowed_tools or []
+
     async def execute(state: AgentState) -> AgentState:
-        async with sandbox_agent_bridge(state) as bridge:
+        async with sandbox_agent_bridge(state, model=model) as bridge:
             # ensure codex is installed and get binary location
             codex_binary = await ensure_agent_binary_installed(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)
@@ -114,15 +109,22 @@ def codex_cli(
                 codex_binary,
                 "exec",
                 "--model",
-                model,
+                "gpt-5",  # real model is passed to the bridge above
                 "--skip-git-repo-check",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--color",
                 "never",
             ]
 
+            # include the plan and apply patch tools.
+            # NOTE: update_plan not currently working in 'exec' mode:
+            # https://github.com/openai/codex/issues/1952
+            agent_cmd.extend(["-c", "include_plan_tool=true"])
+            agent_cmd.extend(["-c", "include_apply_patch_tool=true"])
+
             # include web search if appropriate
-            agent_cmd.extend(["-c", "tools.web_search=true"])
+            if "web_search" not in disallowed_tools:
+                agent_cmd.extend(["-c", "tools.web_search=true"])
 
             # append the prompt
             agent_cmd.append(prompt)
