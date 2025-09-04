@@ -32,10 +32,11 @@ def claude_code_binary_source() -> AgentBinarySource:
     return AgentBinarySource(
         agent="claude code",
         binary="claude",
-        post_install="config list",
         resolve_version=resolve_version,
         cached_binary_path=cached_binary_path,
         list_cached_binaries=list_cached_binaries,
+        post_download=None,
+        post_install="config list",
     )
 
 

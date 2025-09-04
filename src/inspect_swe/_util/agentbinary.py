@@ -27,13 +27,14 @@ class AgentBinaryVersion(NamedTuple):
 class AgentBinarySource:
     agent: str
     binary: str
-    post_install: str | None
     resolve_version: Callable[
         [Literal["stable", "latest"] | str, SandboxPlatform],
         Awaitable[AgentBinaryVersion],
     ]
     cached_binary_path: Callable[[str, SandboxPlatform], Path]
     list_cached_binaries: Callable[[], list[Path]]
+    post_download: Callable[[bytes], bytes] | None
+    post_install: str | None
 
 
 async def ensure_agent_binary_installed(
@@ -106,13 +107,18 @@ async def download_agent_binary_async(
         version, platform
     )
 
-    # check the cache
-    binary_data = read_cached_binary(source, version, platform, expected_checksum)
+    # check the cache (if post_download is used, don't verify checksum since cached is processed)
+    cache_checksum = None if source.post_download else expected_checksum
+    binary_data = read_cached_binary(source, version, platform, cache_checksum)
     if binary_data is None:
         # not in cache, download and verify checksum
         binary_data = await download_file(download_url)
         if not verify_checksum(binary_data, expected_checksum):
             raise ValueError("Checksum verification failed")
+
+        # apply post-download processing if provided (e.g., extract from tar.gz)
+        if source.post_download is not None:
+            binary_data = source.post_download(binary_data)
 
         # save to cache
         write_cached_binary(source, binary_data, version, platform)
