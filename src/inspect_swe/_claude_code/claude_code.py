@@ -169,7 +169,9 @@ def claude_code(
 
                 # raise for error
                 if not result.success:
-                    f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
+                    raise RuntimeError(
+                        f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
+                    )
 
                 # exit if we are at max_attempts
                 attempt_count += 1
