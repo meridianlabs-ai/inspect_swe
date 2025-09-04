@@ -40,7 +40,7 @@
     "href": "codex_cli.html#options",
     "title": "Codex CLI",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (currently only \"web_search\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\ncwd\nWorkding directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the web_search tool:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"web_search\"]\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (currently only \"web_search\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\ncwd\nWorkding directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the web_search tool:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"web_search\"]\n)",
     "crumbs": [
       "Home",
       "Agents",
@@ -88,14 +88,14 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Codex CLI: New codex_cli() agent for OpenAI Codex."
+    "text": "Codex CLI: New codex_cli() agent for OpenAI Codex.\nAdded filter parameter to agents for intercepting model generations."
   },
   {
     "objectID": "CHANGELOG.html#unreleased",
     "href": "CHANGELOG.html#unreleased",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Codex CLI: New codex_cli() agent for OpenAI Codex."
+    "text": "Codex CLI: New codex_cli() agent for OpenAI Codex.\nAdded filter parameter to agents for intercepting model generations."
   },
   {
     "objectID": "CHANGELOG.html#september-2026",
@@ -178,7 +178,7 @@
     "href": "claude_code.html#options",
     "title": "Claude Code",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\ndisallowed_tools\nList of tool names to disallow entirely (see Tools Available to Claude for a list of all tools used by default).\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for Opus and Sonnet calls (defaults to main model for task).\n\n\nsmall_model\nModel to use for Haiku calls (defaults to main model for task).\n\n\ncwd\nWorkding directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebFetch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebFetch\"]\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\ndisallowed_tools\nList of tool names to disallow entirely (see Tools Available to Claude for a list of all tools used by default).\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for Opus and Sonnet calls (defaults to main model for task).\n\n\nsmall_model\nModel to use for Haiku calls (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\ncwd\nWorkding directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebFetch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebFetch\"]\n)",
     "crumbs": [
       "Home",
       "Agents",
