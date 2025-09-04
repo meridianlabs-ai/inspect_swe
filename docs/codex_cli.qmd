@@ -2,3 +2,174 @@
 title: Codex CLI
 ---
 
+## Overview
+
+The `codex_cli()` agent uses the the unattended mode of OpenAI [Codex CLI](https://github.com/openai/codex) to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.
+
+::: callout-note
+#### Codex CLI Installation
+
+By default, the agent will download the current stable version of the Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used---see the [Installation](#installation) section below for details.
+:::
+
+## Basic Usage
+
+Use the `codex_cli()` agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:
+
+``` python
+from inspect_ai import Task, task
+from inspect_ai.dataset import json_dataset
+from inspect_ai.scorer import model_graded_qa
+
+from inspect_swe import codex_cli
+
+@task
+def system_explorer() -> Task:
+    return Task(
+        dataset=json_dataset("dataset.json"),
+        solver=codex_cli(),
+        scorer=model_graded_qa(),
+        sandbox="docker",
+    )
+```
+
+You can also pass the agent as a `--solver` on the command line:
+
+```bash
+inspect eval ctf.py --solver inspect_swe/codex_cli
+```
+
+If you want to try this out locally, see the [system_explorer](https://github.com/meridianlabs-ai/inspect_swe/tree/main/examples/system_explorer/task.py) example.
+
+## Options
+
+The following options are supported for customizing the behavior of the agent:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Additional system prompt to append to default system prompt. |
+| `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
+| `disallowed_tools` | Optionally disallow tools (currently only `"web_search"`) |
+| `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
+| `model` | Model name to use for agent (defaults to main model for task). |
+| `cwd` | Workding directory for Codex CLI session. |
+| `env` | Environment variables to set for Codex CLI. |
+| `version` | Version of Codex CLI to use (see [Installation](#installation) below for details) |
+
+: {tbl-colwidths=\[25,75\]}
+
+For example, here we specify a custom system prompt and disallow the `web_search` tool:
+
+```python
+codex_cli(
+    system_prompt="You are an ace system researcher.",
+    disallowed_tools=["web_search"]
+)
+```
+
+## MCP Servers {#mcp-servers}
+
+You can specify one or more [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro) (MCP) servers to provide additional tools to Codex CLI. Servers are specified via the [`MCPServerConfig`](https://inspect.aisi.org.uk/reference/inspect_ai.tool.html#mcpserverconfig) class and its Stdio and HTTP variants.
+
+For example, here is a Dockerfile that makes the `server-memory` MPC server available in the sandbox container:
+
+``` dockerfile
+FROM python:3.12-bookworm
+
+# nodejs (required by mcp server)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# memory mcp server
+RUN npx --yes @modelcontextprotocol/server-memory --version
+
+# run forever
+CMD ["tail", "-f", "/dev/null"]
+```
+
+Note that we run the `npx` server during the build of the Dockerfile so that it is cached for use offline (below we'll run it with the `--offline` option).
+
+We can then use this MCP server in a task as follows:
+
+``` python
+from inspect_ai import Task, task
+from inspect_ai.dataset import Sample
+from inspect_ai.tool import MCPServerConfigStdio
+from inspect_swe import codex_cli
+
+@task
+def web_search() -> Task:
+    return Task(
+        dataset=[
+            Sample(
+                input="What transport protocols are supported in "
+                + " the 2025-03-26 version of the MCP spec?"
+            )
+        ],
+        solver=codex_cli(
+            system_prompt="Please use the web search tool to "
+            + "research this question and the memory tools "
+            + "to keep track of your research.",
+            mcp_servers=[
+                MCPServerConfigStdio(
+                    name="memory",
+                    command="npx",
+                    args=[
+                        "--offline", 
+                        "@modelcontextprotocol/server-memory"
+                    ],
+                )
+            ] 
+        ),
+        sandbox=("docker", "Dockerfile"),
+    )
+```
+
+Note that we run the MCP server using the `--offline` option so that it doesn't require an internet connection (which it would normally use to check for updates to the package).
+
+## Installation
+
+By default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can override this behaviour using the `version` option:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `"auto"` | Use any available version of Codex CLI in the sandbox, otherwise download the latest version. |
+| `"sandbox"` | Use the version of Claude Code in the sandbox (raises `RuntimeError` if not available in the sandbox) |
+| `"latest"` | Download and use the very latest version. |
+| `"x.x.x"` | Download and use a specific version number. |
+
+: {tbl-colwidths=\[25,75\]}
+
+If you don't ever want to rely on automatic downloads of Codex CLI (e.g. if you run your evaluations offline), you can use one of two approaches:
+
+1.  Pre-install the version of Codex CLI you want to use in the sandbox, then use `version="sandbox"`:
+
+    ``` python
+    codex_cli(version="sandbox")
+    ```
+
+2.  Download the version of Codex CLI you want to use into the cache, then specify that version explicitly:
+
+    ``` python
+    # download the agent binary during installation/configuration
+    download_agent_binary("codex_cli", "0.29.0", "linux-x64")
+
+    # reference that version in your task (no download will occur)
+    codex_cli(version="0.29.0")
+    ```
+
+    Note that the 5 most recently downloaded versions are retained in the cache.
+
+
+## Troubleshooting
+
+If Codex CLI doesn't appear to be working or working as expected, you can troubleshoot by dumping the Codex CLI debug log after an evaluation task is complete. You can do this with:
+
+```bash
+inspect trace dump --filter "Codex"
+```
+

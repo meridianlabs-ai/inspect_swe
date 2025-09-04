@@ -9,7 +9,7 @@ The `claude_code()` agent uses the the unattended mode of [Claude Code](https://
 ::: callout-note
 #### Claude Code Installation
 
-By default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used---see the [Installation](#claude-code-versions) section below for details.
+By default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used---see the [Installation](#installation) section below for details.
 :::
 
 ## Basic Usage
@@ -31,6 +31,12 @@ def system_explorer() -> Task:
         scorer=model_graded_qa(),
         sandbox="docker",
     )
+```
+
+You can also pass the agent as a `--solver` on the command line:
+
+```bash
+inspect eval ctf.py --solver inspect_swe/claude_code
 ```
 
 If you want to try this out locally, see the [system_explorer](https://github.com/meridianlabs-ai/inspect_swe/tree/main/examples/system_explorer/task.py) example.
