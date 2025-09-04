@@ -16,6 +16,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from .._util.agentbinary import ensure_agent_binary_installed
 from .agentbinary import codex_cli_binary_source
 
+# TODO: same bash execution deal w/ did w/ claude code
 # TODO: attempts
 # TODO: mcp_servers
 # TODO: search / disallowed_tools
