@@ -1,7 +1,8 @@
 from pathlib import Path
 
-from inspect_ai._util.constants import PKG_NAME
 from platformdirs import user_cache_path, user_data_path
+
+from .constants import PKG_NAME
 
 
 def package_data_dir(subdir: str | None) -> Path:

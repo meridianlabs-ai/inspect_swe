@@ -4,13 +4,28 @@ project:
 website:
   title: "Inspect SWE"
   navbar:
-    search: false
+    search: true
     left:
-      - text: "Software Engineering Agents for Inspect AI"
+      - text: Home
+        href: index.qmd
+      - text: Agents
+        menu:
+           - href: claude_code.qmd
+           - href: codex_cli.qmd
     right:
+      - text: Changelog
+        href: CHANGELOG.md
       - icon: github
         href: https://github.com/meridianlabs-ai/inspect_swe
         aria-label: GitHub
+  sidebar: 
+     - contents:
+        - text: Getting Started
+          href: index.qmd
+        - section: Agents
+          contents: 
+            - href: claude_code.qmd
+            - href: codex_cli.qmd
 
 format:
   html:

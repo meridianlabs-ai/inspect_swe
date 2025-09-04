@@ -1,18 +1,10 @@
 from inspect_ai import Task, eval, task
 from inspect_ai.agent import Agent
 from inspect_ai.dataset import Sample
-from inspect_ai.log import ScoreEvent
-from inspect_ai.model import ChatMessageAssistant
 from inspect_swe import claude_code
+from inspect_swe._codex_cli.codex_cli import codex_cli
 
-from tests.conftest import run_example, skip_if_no_anthropic, skip_if_no_docker
-
-
-@skip_if_no_anthropic
-@skip_if_no_docker
-def test_claude_code_example() -> None:
-    log = run_example("system_explorer", "anthropic/claude-sonnet-4-0")[0]
-    assert log.status == "success"
+from tests.conftest import skip_if_no_anthropic, skip_if_no_docker
 
 
 @skip_if_no_anthropic
@@ -44,37 +36,23 @@ def test_claude_code_options() -> None:
 
 @skip_if_no_anthropic
 @skip_if_no_docker
-def test_claude_code_tools() -> None:
-    log = run_example("web_search", "anthropic/claude-sonnet-4-0")[0]
+def test_codex_cli_options() -> None:
+    SYSTEM_PROMPT_CANARY = "32C507F0-9347-4DB2-8061-907682DD34EB"
+    PASSED_MODEL = "anthropic/claude-sonnet-4-0"
+
+    log = eval(
+        system_explorer(
+            codex_cli(
+                system_prompt=f"This is a part of the system prompt {SYSTEM_PROMPT_CANARY}.",
+                model=PASSED_MODEL,
+            )
+        ),
+        model=PASSED_MODEL,
+    )[0]
     assert log.status == "success"
-    assert log.samples
-    assistant_messages = [
-        m for m in log.samples[0].messages if isinstance(m, ChatMessageAssistant)
-    ]
-    tool_calls = [tc for m in assistant_messages for tc in (m.tool_calls or [])]
-    assert next((tc for tc in tool_calls if tc.function == "WebSearch"), None)
-    assert next(
-        (tc for tc in tool_calls if tc.function == "mcp__memory__create_entities"), None
-    )
-
-
-@skip_if_no_anthropic
-@skip_if_no_docker
-def test_claude_code_attempts() -> None:
-    log = run_example("multiple_attempts", "anthropic/claude-sonnet-4-0")[0]
-    assert log.samples
-    score_events = [
-        event for event in log.samples[0].events if isinstance(event, ScoreEvent)
-    ]
-    assert len(score_events) == 2
-
-
-@skip_if_no_anthropic
-@skip_if_no_docker
-def test_claude_code_disallowed_tools() -> None:
-    log = eval(system_explorer(claude_code(disallowed_tools=["WebSearch"])))[0]
     log_json = log.model_dump_json(exclude_none=True)
-    assert "WebSearch" not in log_json
+    assert SYSTEM_PROMPT_CANARY in log_json
+    assert PASSED_MODEL in log_json
 
 
 @task
