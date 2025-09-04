@@ -2,6 +2,7 @@ from inspect_ai import Task, eval, task
 from inspect_ai.agent import Agent
 from inspect_ai.dataset import Sample
 from inspect_swe import claude_code
+from inspect_swe._codex_cli.codex_cli import codex_cli
 
 from tests.conftest import skip_if_no_anthropic, skip_if_no_docker
 
@@ -31,6 +32,27 @@ def test_claude_code_options() -> None:
     assert MAIN_MODEL in log_json
     assert SMALL_MODEL in log_json
     assert "16666" in log_json
+
+
+@skip_if_no_anthropic
+@skip_if_no_docker
+def test_codex_cli_options() -> None:
+    SYSTEM_PROMPT_CANARY = "32C507F0-9347-4DB2-8061-907682DD34EB"
+    PASSED_MODEL = "anthropic/claude-sonnet-4-0"
+
+    log = eval(
+        system_explorer(
+            codex_cli(
+                system_prompt=f"This is a part of the system prompt {SYSTEM_PROMPT_CANARY}.",
+                model=PASSED_MODEL,
+            )
+        ),
+        model=PASSED_MODEL,
+    )[0]
+    assert log.status == "success"
+    log_json = log.model_dump_json(exclude_none=True)
+    assert SYSTEM_PROMPT_CANARY in log_json
+    assert PASSED_MODEL in log_json
 
 
 @task

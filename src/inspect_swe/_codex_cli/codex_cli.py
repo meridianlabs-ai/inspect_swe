@@ -1,3 +1,4 @@
+import os
 from textwrap import dedent
 from typing import Literal, Sequence
 
@@ -22,7 +23,6 @@ from .agentbinary import codex_cli_binary_source
 
 # TODO: attempts
 # TODO: mcp_servers
-# TODO: write systemm prompt to AGENTS.md
 # TODO: other codex-specific options
 # TODO: docs
 # TODO: debug output
@@ -94,10 +94,20 @@ def codex_cli(
             if system_prompt is not None:
                 system_messages.append(system_prompt)
 
+            # write system messages to AGENTS.md
+            if system_messages:
+                agents_md = (
+                    "AGENTS.md"
+                    if cwd is None
+                    else os.path.join(cwd, "AGENTS.md").replace("\\", "/")
+                )
+                await sandbox_env(sandbox).write_file(
+                    agents_md, "\n\n".join(system_messages)
+                )
+
             # built full promot
             prompt = "\n\n".join(
-                system_messages
-                + [
+                [
                     message.text
                     for message in state.messages
                     if isinstance(message, ChatMessageUser)
