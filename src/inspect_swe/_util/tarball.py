@@ -1,3 +1,5 @@
+# type: ignore
+
 import gzip
 import tarfile
 from io import BytesIO
