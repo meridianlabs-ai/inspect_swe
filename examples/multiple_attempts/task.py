@@ -11,7 +11,7 @@ def multiple_attempts(
     agent: Literal["claude_code", "codex_cli"] = "claude_code",
 ) -> Task:
     # setup agent
-    system_prompt = "You will be given two attempts and you should make only ONE tool call to come up with your answer for each attempt. If you haven't yet found the magic number after 1 tool call you should just make a guess."
+    system_prompt = "You will be given two attempts to guess a magic number and you should not make any tools calls in attempting to make your guess -- you just need to do it based on the information you already have."
     attempts = 2
     match agent:
         case "claude_code":
@@ -23,7 +23,7 @@ def multiple_attempts(
     return Task(
         dataset=[
             Sample(
-                input="Try to guess the magic number (it's hidden somewhere on this system)",
+                input="Try to guess the magic number",
                 target="56198347654",
             )
         ],
