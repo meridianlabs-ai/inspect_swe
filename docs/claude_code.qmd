@@ -61,6 +61,7 @@ The following options are supported for customizing the behavior of the agent:
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for Opus and Sonnet calls (defaults to main model for task). |
 | `small_model` | Model to use for Haiku calls (defaults to main model for task). |
+| `filter` | Filter for intercepting bridged model requests. |
 | `cwd` | Workding directory for Claude Code session. |
 | `env` | Environment variables to set for Claude Code. |
 | `version` | Version of Claude Code to use (see [Installation](#installation) below for details) |

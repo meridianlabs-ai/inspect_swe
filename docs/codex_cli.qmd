@@ -52,6 +52,7 @@ The following options are supported for customizing the behavior of the agent:
 | `disallowed_tools` | Optionally disallow tools (currently only `"web_search"`) |
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
+| `filter` | Filter for intercepting bridged model requests. |
 | `cwd` | Workding directory for Codex CLI session. |
 | `env` | Environment variables to set for Codex CLI. |
 | `version` | Version of Codex CLI to use (see [Installation](#installation) below for details) |

@@ -11,7 +11,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, ChatMessageUser
+from inspect_ai.model import ChatMessageSystem, ChatMessageUser, GenerateFilter
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import SandboxEnvironment
@@ -40,6 +40,7 @@ def codex_cli(
     disallowed_tools: list[Literal["web_search"]] | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    filter: GenerateFilter | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -61,6 +62,7 @@ def codex_cli(
         disallowed_tools: Optionally disallow tools (currently only web_search).
         attempts: Configure agent to make multiple attempts.
         model: Model name to use (defaults to main model for task).
+        filter: Filter for intercepting bridged model requests.
         cwd: Working directory to run codex cli within.
         env: Environment variables to set for codex cli
         user: User to execute codex cli with.
@@ -81,7 +83,7 @@ def codex_cli(
     disallowed_tools = disallowed_tools or []
 
     async def execute(state: AgentState) -> AgentState:
-        async with sandbox_agent_bridge(state, model=model) as bridge:
+        async with sandbox_agent_bridge(state, model=model, filter=filter) as bridge:
             # ensure codex is installed and get binary location
             codex_binary = await ensure_agent_binary_installed(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)
