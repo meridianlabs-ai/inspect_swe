@@ -51,8 +51,7 @@ The following options are supported for customizing the behavior of the agent:
 |------------------------------------|------------------------------------|
 | `system_prompt` | Additional system prompt to append to default system prompt. |
 | `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
-| `allowed_tools` | Parameter filters for built-in tools (see [Tool Filters](#tool-filters) below for details). |
-| `disallowed_tools` | List of tool names to disallow entirely (see [Tool Filters](#tool-filters) below for details). |
+| `disallowed_tools` | List of tool names to disallow entirely (see [Tools Available to Claude](https://docs.anthropic.com/en/docs/claude-code/settings#tools-available-to-claude) for a list of all tools used by default). |
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for Opus and Sonnet calls (defaults to main model for task). |
 | `small_model` | Model to use for Haiku calls (defaults to main model for task). |
@@ -62,7 +61,7 @@ The following options are supported for customizing the behavior of the agent:
 
 : {tbl-colwidths=\[25,75\]}
 
-For example, here we specify a custom system prompt and disable the `WebFetch` tool:
+For example, here we specify a custom system prompt and disallow the `WebFetch` tool:
 
 ```python
 claude_code(
@@ -70,16 +69,6 @@ claude_code(
     disallowed_tools=["WebFetch"]
 )
 ```
-
-### Tool Filters
-
-Use `allowed_tools` and `disallowed_tools` to control access to Claude's built in tools.  Note that `allowed_tools` enables you to filter allowed parameter values and `disallowed_tools` enables you to remove tools entirely. In other words, `allowed_tools` is not a complete list of what tools are available but rather just filters on tool parameters---to remove tools you need to explicitly set `disallowed_tools`.
-
-These resources provide additional information on tool filtering:
-
-- [Tools available to Claude](https://docs.anthropic.com/en/docs/claude-code/settings#tools-available-to-claude) documents the list of built-in tools
-- [How to use Allowed Tools in Claude Code](https://www.instructa.ai/blog/claude-code/how-to-use-allowed-tools-in-claude-code) provides details on the supported syntax.
-
 
 ## MCP Servers {#mcp-servers}
 
