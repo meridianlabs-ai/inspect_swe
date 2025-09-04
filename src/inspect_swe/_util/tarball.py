@@ -1,8 +1,7 @@
-# type: ignore
-
 import gzip
 import tarfile
 from io import BytesIO
+from typing import Any, cast
 
 
 def extract_tarball(tarball_bytes: bytes) -> bytes:
@@ -10,7 +9,7 @@ def extract_tarball(tarball_bytes: bytes) -> bytes:
     # Open the gzip-compressed tarball
     with BytesIO(tarball_bytes) as tarball_io:
         with gzip.open(tarball_io, "rb") as gz:
-            with tarfile.open(fileobj=gz, mode="r") as tar:
+            with tarfile.open(fileobj=cast(Any, gz), mode="r") as tar:
                 # List all members (should be just one file)
                 members = tar.getmembers()
                 if len(members) != 1:
