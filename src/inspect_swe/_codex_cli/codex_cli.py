@@ -1,6 +1,6 @@
 import os
 from textwrap import dedent
-from typing import Literal, Sequence
+from typing import Any, Literal, Sequence
 
 from inspect_ai.agent import (
     Agent,
@@ -13,13 +13,14 @@ from inspect_ai.agent import (
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import sandbox as sandbox_env
+from inspect_swe._util.sandbox import sandbox_exec
+from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
 from .agentbinary import codex_cli_binary_source
 
 # TODO: attempts
-# TODO: mcp_servers
 
 # TODO: docs
 
@@ -83,6 +84,12 @@ def codex_cli(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)
             )
 
+            # helper to create codex cwd relative paths
+            def codex_path(file: str) -> str:
+                return (
+                    file if cwd is None else os.path.join(cwd, file).replace("\\", "/")
+                )
+
             # build system prompt
             system_messages = [
                 m.text for m in state.messages if isinstance(m, ChatMessageSystem)
@@ -90,15 +97,17 @@ def codex_cli(
             if system_prompt is not None:
                 system_messages.append(system_prompt)
 
+            # resolve sandbox
+            sbox = sandbox_env(sandbox)
+
+            # determine CODEX_HOME (we want this to be whatever sandbox working dir is)
+            working_dir = (await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)).strip()
+            codex_home = f"{working_dir}/.codex"
+
             # write system messages to AGENTS.md
             if system_messages:
-                agents_md = (
-                    "AGENTS.md"
-                    if cwd is None
-                    else os.path.join(cwd, "AGENTS.md").replace("\\", "/")
-                )
-                await sandbox_env(sandbox).write_file(
-                    agents_md, "\n\n".join(system_messages)
+                await sbox.write_file(
+                    codex_path("AGENTS.md"), "\n\n".join(system_messages)
                 )
 
             # built full promot
@@ -135,13 +144,31 @@ def codex_cli(
             # append the prompt
             agent_cmd.append(prompt)
 
+            # register mcp servers
+            if mcp_servers:
+                mcp_config: dict[str, Any] = {}
+                for mcp_server in mcp_servers or []:
+                    mcp_config[f"mcp_servers.{mcp_server.name}"] = (
+                        mcp_server.model_dump(
+                            exclude={"name", "tools"}, exclude_none=True
+                        )
+                    )
+                await sandbox_exec(
+                    sbox, cmd=f"mkdir -p {codex_path('.codex')}", user=user
+                )
+                await sbox.write_file(
+                    codex_path(".codex/config.toml"), to_toml(mcp_config)
+                )
+
+            # capture stdout and stderr
             debug_output: list[str] = []
 
             # execute the agent
-            result = await sandbox_env(sandbox).exec(
+            result = await sbox.exec(
                 cmd=["bash", "-c", 'exec "$@"', "bash"] + agent_cmd,
                 cwd=cwd,
                 env={
+                    "CODEX_HOME": codex_home,
                     "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
                     "RUST_LOG": "debug",
                 }
