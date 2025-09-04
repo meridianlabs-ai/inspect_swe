@@ -78,12 +78,15 @@ async def ensure_agent_binary_installed(
 
         # download the binary
         if binary_bytes is None:
-            binary_bytes = await download_agent_binary_async(
+            binary_bytes, resolved_version = await download_agent_binary_async(
                 source, version, platform, trace
             )
+        else:
+            # If we got it from cache, version is already the resolved version
+            resolved_version = version
 
         # write it into the container and return it
-        binary_path = f"/opt/{source.binary}-{version}-{platform}"
+        binary_path = f"/opt/{source.binary}-{resolved_version}-{platform}"
         await sandbox.write_file(binary_path, binary_bytes)
         await sandbox_exec(sandbox, f"chmod +x {binary_path}")
         if source.post_install:
@@ -98,7 +101,7 @@ async def download_agent_binary_async(
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform,
     logger: Callable[[str], None] | None = None,
-) -> bytes:
+) -> tuple[bytes, str]:
     # resovle logger
     logger = logger or print
 
@@ -128,8 +131,8 @@ async def download_agent_binary_async(
     else:
         logger(f"Used {source.agent} binary from cache: {version} ({platform})")
 
-    # return data
-    return binary_data
+    # return data and resolved version
+    return binary_data, version
 
 
 def read_cached_binary(
