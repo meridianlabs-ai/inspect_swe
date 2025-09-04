@@ -88,14 +88,28 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Claude Code: allowed_tools and disallowed_tools options."
+    "text": "Codex CLI: New codex_cli() agent for OpenAI Codex."
+  },
+  {
+    "objectID": "CHANGELOG.html#unreleased",
+    "href": "CHANGELOG.html#unreleased",
+    "title": "Inspect SWE",
+    "section": "",
+    "text": "Codex CLI: New codex_cli() agent for OpenAI Codex."
+  },
+  {
+    "objectID": "CHANGELOG.html#september-2026",
+    "href": "CHANGELOG.html#september-2026",
+    "title": "Inspect SWE",
+    "section": "0.2.10 (03 September 2026)",
+    "text": "0.2.10 (03 September 2026)\n\nAdd trace logging for claude code debug/verbose output."
   },
   {
     "objectID": "CHANGELOG.html#v0.2.8-02-september-2026",
     "href": "CHANGELOG.html#v0.2.8-02-september-2026",
     "title": "Inspect SWE",
-    "section": "",
-    "text": "Claude Code: allowed_tools and disallowed_tools options."
+    "section": "v0.2.8 (02 September 2026)",
+    "text": "v0.2.8 (02 September 2026)\n\nClaude Code: allowed_tools and disallowed_tools options."
   },
   {
     "objectID": "CHANGELOG.html#v0.2.6-01-september-2025",
