@@ -1,185 +1,32 @@
 ---
 title: Claude Code
+agent: claude_code
+agent_provider: "Anthropic"
+agent_name: "Claude Code"
+agent_url: "https://docs.anthropic.com/en/docs/claude-code/overview"
+agent_disallowed_tool: "WebSearch"
 ---
 
-## Overview
+{{< include _snippets/agent_intro.md >}}
 
-The `claude_code()` agent uses the the unattended mode of [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.
+{{< include _snippets/agent_options.md >}}
 
-::: callout-note
-#### Claude Code Installation
-
-By default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used---see the [Installation](#installation) section below for details.
-:::
-
-## Basic Usage
-
-Use the `claude_code()` agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:
-
-``` python
-from inspect_ai import Task, task
-from inspect_ai.dataset import json_dataset
-from inspect_ai.scorer import model_graded_qa
-
-from inspect_swe import claude_code
-
-@task
-def system_explorer() -> Task:
-    return Task(
-        dataset=json_dataset("dataset.json"),
-        solver=claude_code(),
-        scorer=model_graded_qa(),
-        sandbox="docker",
-    )
-```
-
-You can also pass the agent as a `--solver` on the command line:
-
-```bash
-inspect eval ctf.py --solver inspect_swe/claude_code
-```
-
-If you want to try this out locally, see the [system_explorer](https://github.com/meridianlabs-ai/inspect_swe/tree/main/examples/system_explorer/task.py) example.
-
-## Log Viewer
-
-One important productivity tip for working with the Claude Code agent is that the **Messages** view in the Log Viewer will provide the most coherent view of the agent's path to the solution:
-
-![](images/inspect-view-messages.png){.border}
-
-While the **Transcript** view includes all of the same information, it also includes many additional model requests for supporting tasks (e.g. extracting the file paths from bash commands) which tend to distract from understanding the agent's actions at a high level. Start with the **Messages** view, then use the transcript view as required for debugging.
-
-## Options
-
-The following options are supported for customizing the behavior of the agent:
-
-| Option | Description |
-|------------------------------------|------------------------------------|
-| `system_prompt` | Additional system prompt to append to default system prompt. |
-| `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
-| `disallowed_tools` | List of tool names to disallow entirely (see [Tools Available to Claude](https://docs.anthropic.com/en/docs/claude-code/settings#tools-available-to-claude) for a list of all tools used by default). |
-| `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
-| `model` | Model name to use for Opus and Sonnet calls (defaults to main model for task). |
-| `small_model` | Model to use for Haiku calls (defaults to main model for task). |
-| `filter` | Filter for intercepting bridged model requests. |
-| `cwd` | Workding directory for Claude Code session. |
-| `env` | Environment variables to set for Claude Code. |
-| `version` | Version of Claude Code to use (see [Installation](#installation) below for details) |
-
-: {tbl-colwidths=\[25,75\]}
-
-For example, here we specify a custom system prompt and disallow the `WebFetch` tool:
-
-```python
-claude_code(
-    system_prompt="You are an ace system researcher.",
-    disallowed_tools=["WebFetch"]
-)
-```
-
-## MCP Servers {#mcp-servers}
-
-You can specify one or more [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro) (MCP) servers to provide additional tools to Claude Code. Servers are specified via the [`MCPServerConfig`](https://inspect.aisi.org.uk/reference/inspect_ai.tool.html#mcpserverconfig) class and its Stdio and HTTP variants.
-
-For example, here is a Dockerfile that makes the `server-memory` MPC server available in the sandbox container:
-
-``` dockerfile
-FROM python:3.12-bookworm
-
-# nodejs (required by mcp server)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# memory mcp server
-RUN npx --yes @modelcontextprotocol/server-memory --version
-
-# run forever
-CMD ["tail", "-f", "/dev/null"]
-```
-
-Note that we run the `npx` server during the build of the Dockerfile so that it is cached for use offline (below we'll run it with the `--offline` option).
-
-We can then use this MCP server in a task as follows:
-
-``` python
-from inspect_ai import Task, task
-from inspect_ai.dataset import Sample
-from inspect_ai.tool import MCPServerConfigStdio
-from inspect_swe import claude_code
-
-@task
-def web_search() -> Task:
-    return Task(
-        dataset=[
-            Sample(
-                input="What transport protocols are supported in "
-                + " the 2025-03-26 version of the MCP spec?"
-            )
-        ],
-        solver=claude_code(
-            system_prompt="Please use the WebSearch tool to "
-            + "research this question and the memory tools "
-            + "to keep track of your research.",
-            mcp_servers=[
-                MCPServerConfigStdio(
-                    name="memory",
-                    command="npx",
-                    args=[
-                        "--offline", 
-                        "@modelcontextprotocol/server-memory"
-                    ],
-                )
-            ] 
-        ),
-        sandbox=("docker", "Dockerfile"),
-    )
-```
-
-Note that we run the MCP server using the `--offline` option so that it doesn't require an internet connection (which it would normally use to check for updates to the package).
+{{< include _snippets/agent_mcp_servers.md >}}
 
 ## Installation
 
-By default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can override this behaviour using the `version` option:
+By default, the agent will download the current stable version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:
 
 | Option | Description |
 |------------------------------------|------------------------------------|
-| `"auto"` | Use any available version of Claude Code in the sandbox, otherwise download the current stable version. |
-| `"sandbox"` | Use the version of Claude Code in the sandbox (raises `RuntimeError` if not available in the sandbox) |
+| `"auto"` | Use any available version of {{< meta agent_name >}} in the sandbox, otherwise download the current stable version. |
+| `"sandbox"` | Use the version of {{< meta agent_name >}} in the sandbox (raises `RuntimeError` if not available in the sandbox) |
 | `"stable"` | Download and use the current stable version. |
 | `"latest"` | Download and use the very latest version. |
 | `"x.x.x"` | Download and use a specific version number. |
 
 : {tbl-colwidths=\[25,75\]}
 
-If you don't ever want to rely on automatic downloads of Claude Code (e.g. if you run your evaluations offline), you can use one of two approaches:
+{{< include _snippets/agent_installation.md >}}
 
-1.  Pre-install the version of Claude Code you want to use in the sandbox, then use `version="sandbox"`:
-
-    ``` python
-    claude_code(version="sandbox")
-    ```
-
-2.  Download the version of Claude Code you want to use into the cache, then specify that version explicitly:
-
-    ``` python
-    # download the agent binary during installation/configuration
-    download_agent_binary("claude_code", "1.0.98", "linux-x64")
-
-    # reference that version in your task (no download will occur)
-    claude_code(version="1.0.98")
-    ```
-
-    Note that the 5 most recently downloaded versions are retained in the cache.
-
-
-## Troubleshooting
-
-If Claude Code doesn't appear to be working or working as expected, you can troubleshoot by dumping the Claude Code debug log after an evaluation task is complete. You can do this with:
-
-```bash
-inspect trace dump --filter "Claude Code"
-```
+{{< include _snippets/agent_troubleshooting.md >}}
