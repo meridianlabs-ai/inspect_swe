@@ -53,7 +53,7 @@ jobs:
           python -m pip install git+https://github.com/UKGovernmentBEIS/inspect_ai.git@main
       - name: Run mypy
         run: |
-          mypy src
+          mypy src --python-executable $(which python)
 
   py-test:
     runs-on: ubuntu-latest
