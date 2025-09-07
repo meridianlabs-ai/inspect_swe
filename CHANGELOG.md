@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.11 (06 September 2026)
 
 - Codex CLI: New `codex_cli()` agent for OpenAI Codex.
 - Added `filter` parameter to agents for intercepting model generations.

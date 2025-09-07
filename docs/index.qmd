@@ -30,11 +30,10 @@ Agents run inside the sample sandbox and their model API calls are proxied back 
 
 ## Getting Started
 
-Inspect SWE is under active development and also depends on the development version of Inspect AI. To install the latest development versions of `inspect_ai` and `inspect_swe`:
+Install Inspect SWE from PyPI with:
 
 ``` bash
-pip install git+https://github.com/UKGovernmentBEIS/inspect_ai
-pip install git+https://github.com/meridianlabs-ai/inspect_swe
+pip install inspect-swe
 ```
 
 Then, try out one or more of the available agents:
