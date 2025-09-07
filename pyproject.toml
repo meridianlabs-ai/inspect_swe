@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect_ai>=0.3.129",
+    "inspect_ai>=0.3.130",
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.11.4",
@@ -39,7 +39,7 @@ dev = [
     "openai",
     "pytest-dotenv",
     "types-PyYAML",
-    "IPython"
+    "IPython",
 ]
 doc = ["quarto-cli==1.7.31"]
 
