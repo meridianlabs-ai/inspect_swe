@@ -54,6 +54,7 @@ def test_codex_cli_options() -> None:
     assert SYSTEM_PROMPT_CANARY in log_json
     assert PASSED_MODEL in log_json
 
+
 @task
 def system_explorer(agent: Agent) -> Task:
     return Task(
