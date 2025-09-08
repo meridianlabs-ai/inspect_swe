@@ -111,6 +111,36 @@ def skip_if_no_docker(func: F) -> F:
     )
 
 
+def skip_if_no_k8s(func: F) -> F:
+    """
+    Skip test if we don't have access to a Kubernetes cluster.
+
+    Detects Kubernetes by checking if kubectl can connect to a cluster
+    by running 'kubectl version --client=false'.
+    """
+    try:
+        is_k8s_available = (
+            subprocess.run(
+                ["kubectl", "version", "--client=false"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5,  # Add timeout to prevent hanging
+            ).returncode
+            == 0
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        is_k8s_available = False
+
+    return cast(
+        F,
+        pytest.mark.skipif(
+            not is_k8s_available,
+            reason="Test requires a connection to a Kubernetes cluster.",
+        )(func),
+    )
+
+
 def run_example(
     example: str, agent: Literal["claude_code", "codex_cli"], model: str
 ) -> list[EvalLog]:
