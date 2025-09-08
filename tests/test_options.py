@@ -1,6 +1,7 @@
 from inspect_ai import Task, eval, task
 from inspect_ai.agent import Agent
 from inspect_ai.dataset import Sample
+from inspect_ai.util import SandboxEnvironmentType
 from inspect_swe import claude_code
 from inspect_swe._codex_cli.codex_cli import codex_cli
 
@@ -56,7 +57,9 @@ def test_codex_cli_options() -> None:
 
 
 @task
-def system_explorer(agent: Agent) -> Task:
+def system_explorer(
+    agent: Agent, sandbox: SandboxEnvironmentType | None = "docker"
+) -> Task:
     return Task(
         dataset=[
             Sample(
@@ -65,5 +68,5 @@ def system_explorer(agent: Agent) -> Task:
             )
         ],
         solver=agent,
-        sandbox="docker",
+        sandbox=sandbox,
     )

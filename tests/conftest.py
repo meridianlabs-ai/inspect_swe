@@ -49,12 +49,7 @@ def pytest_collection_modifyitems(
 
 
 def skip_if_env_var(var: str, exists: bool = True) -> pytest.MarkDecorator:
-    """
-    Pytest mark to skip the test if the var environment variable is not defined.
-
-    Use in combination with `pytest.mark.api` if the environment variable in
-    question corresponds to a paid API. For example, see `skip_if_no_openai`.
-    """
+    """Pytest mark to skip the test if the var environment variable is not defined."""
     condition = (var in os.environ.keys()) if exists else (var not in os.environ.keys())
     return pytest.mark.skipif(
         condition,
@@ -68,20 +63,16 @@ F = TypeVar("F", bound=Callable[..., Any])
 def skip_if_no_openai(func: F) -> F:
     return cast(
         F,
-        pytest.mark.api(
-            pytest.mark.skipif(
-                importlib.util.find_spec("openai") is None
-                or os.environ.get("OPENAI_API_KEY") is None,
-                reason="Test requires both OpenAI package and OPENAI_API_KEY environment variable",
-            )(func)
-        ),
+        pytest.mark.skipif(
+            importlib.util.find_spec("openai") is None
+            or os.environ.get("OPENAI_API_KEY") is None,
+            reason="Test requires both OpenAI package and OPENAI_API_KEY environment variable",
+        )(func),
     )
 
 
 def skip_if_no_anthropic(func: F) -> F:
-    return cast(
-        F, pytest.mark.api(skip_if_env_var("ANTHROPIC_API_KEY", exists=False)(func))
-    )
+    return cast(F, skip_if_env_var("ANTHROPIC_API_KEY", exists=False)(func))
 
 
 def skip_if_github_action(func: F) -> F:
@@ -142,7 +133,16 @@ def skip_if_no_k8s(func: F) -> F:
 
 
 def run_example(
-    example: str, agent: Literal["claude_code", "codex_cli"], model: str
+    example: str,
+    agent: Literal["claude_code", "codex_cli"],
+    model: str,
+    k8s: bool = False,
 ) -> list[EvalLog]:
     example_file = os.path.join("examples", example)
-    return eval(example_file, model=model, limit=1, task_args={"agent": agent})
+    task_args: dict[str, str] = {
+        "agent": agent,
+    }
+
+    if k8s:
+        task_args["sandbox"] = "k8s"
+    return eval(example_file, model=model, limit=1, task_args=task_args)

@@ -23,5 +23,5 @@ def test_codex_cli_system_explorer() -> None:
 def check_system_explorer_example(
     agent: Literal["claude_code", "codex_cli"], model: str
 ) -> None:
-    log = run_example("system_explorer", agent, model)[0]
+    log = run_example("system_explorer", agent, model, k8s=True)[0]
     assert log.status == "success"

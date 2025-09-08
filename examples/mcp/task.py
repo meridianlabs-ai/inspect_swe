@@ -3,11 +3,15 @@ from typing import Literal
 from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 from inspect_ai.tool import MCPServerConfigStdio
+from inspect_ai.util import SandboxEnvironmentType
 from inspect_swe import claude_code, codex_cli
 
 
 @task
-def mcp_memory(agent: Literal["claude_code", "codex_cli"] = "claude_code") -> Task:
+def mcp_memory(
+    agent: Literal["claude_code", "codex_cli"] = "claude_code",
+    sandbox: SandboxEnvironmentType | None = "docker",
+) -> Task:
     # setup agent
     system_prompt = "You MUST use the memory tools to keep track of your work as you invesigate the system configuration. Please note all findings using the memory tools."
     mcp_servers = [
@@ -31,5 +35,5 @@ def mcp_memory(agent: Literal["claude_code", "codex_cli"] = "claude_code") -> Ta
             )
         ],
         solver=solver,
-        sandbox="docker",
+        sandbox=sandbox,
     )
