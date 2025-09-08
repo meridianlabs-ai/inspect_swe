@@ -3,12 +3,14 @@ from typing import Literal
 from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 from inspect_ai.scorer import includes
+from inspect_ai.util import SandboxEnvironmentType
 from inspect_swe import claude_code, codex_cli
 
 
 @task
 def multiple_attempts(
     agent: Literal["claude_code", "codex_cli"] = "claude_code",
+    sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
     # setup agent
     system_prompt = "You will be given two attempts to guess a magic number and you should not make any tools calls in attempting to make your guess -- you just need to do it based on the information you already have."
@@ -29,5 +31,5 @@ def multiple_attempts(
         ],
         solver=solver,
         scorer=includes(),
-        sandbox="docker",
+        sandbox=sandbox,
     )

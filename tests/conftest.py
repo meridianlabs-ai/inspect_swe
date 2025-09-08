@@ -1,7 +1,7 @@
 import importlib
 import os
 import subprocess
-from typing import Any, Callable, Literal, TypeVar, cast
+from typing import Any, Callable, List, Literal, TypeVar, cast
 
 import pytest
 from inspect_ai import eval
@@ -49,12 +49,7 @@ def pytest_collection_modifyitems(
 
 
 def skip_if_env_var(var: str, exists: bool = True) -> pytest.MarkDecorator:
-    """
-    Pytest mark to skip the test if the var environment variable is not defined.
-
-    Use in combination with `pytest.mark.api` if the environment variable in
-    question corresponds to a paid API. For example, see `skip_if_no_openai`.
-    """
+    """Pytest mark to skip the test if the var environment variable is not defined."""
     condition = (var in os.environ.keys()) if exists else (var not in os.environ.keys())
     return pytest.mark.skipif(
         condition,
@@ -68,29 +63,26 @@ F = TypeVar("F", bound=Callable[..., Any])
 def skip_if_no_openai(func: F) -> F:
     return cast(
         F,
-        pytest.mark.api(
-            pytest.mark.skipif(
-                importlib.util.find_spec("openai") is None
-                or os.environ.get("OPENAI_API_KEY") is None,
-                reason="Test requires both OpenAI package and OPENAI_API_KEY environment variable",
-            )(func)
-        ),
+        pytest.mark.skipif(
+            importlib.util.find_spec("openai") is None
+            or os.environ.get("OPENAI_API_KEY") is None,
+            reason="Test requires both OpenAI package and OPENAI_API_KEY environment variable",
+        )(func),
     )
 
 
 def skip_if_no_anthropic(func: F) -> F:
-    return cast(
-        F, pytest.mark.api(skip_if_env_var("ANTHROPIC_API_KEY", exists=False)(func))
-    )
+    return cast(F, skip_if_env_var("ANTHROPIC_API_KEY", exists=False)(func))
 
 
 def skip_if_github_action(func: F) -> F:
     return cast(F, skip_if_env_var("GITHUB_ACTIONS", exists=True)(func))
 
 
-def skip_if_no_docker(func: F) -> F:
+def is_docker_available() -> bool:
+    """Check if Docker is available on the system."""
     try:
-        is_docker_installed = (
+        return (
             subprocess.run(
                 ["docker", "--version"],
                 check=False,
@@ -100,26 +92,27 @@ def skip_if_no_docker(func: F) -> F:
             == 0
         )
     except FileNotFoundError:
-        is_docker_installed = False
+        return False
 
+
+def skip_if_no_docker(func: F) -> F:
     return cast(
         F,
         pytest.mark.skipif(
-            not is_docker_installed,
+            not is_docker_available(),
             reason="Test doesn't work without Docker installed.",
         )(func),
     )
 
 
-def skip_if_no_k8s(func: F) -> F:
-    """
-    Skip test if we don't have access to a Kubernetes cluster.
+def is_k8s_available() -> bool:
+    """Check if Kubernetes is available on the system.
 
     Detects Kubernetes by checking if kubectl can connect to a cluster
     by running 'kubectl version --client=false'.
     """
     try:
-        is_k8s_available = (
+        return (
             subprocess.run(
                 ["kubectl", "version", "--client=false"],
                 check=False,
@@ -130,19 +123,50 @@ def skip_if_no_k8s(func: F) -> F:
             == 0
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        is_k8s_available = False
+        return False
 
+
+def skip_if_no_k8s(func: F) -> F:
+    """Skip test if we don't have access to a Kubernetes cluster."""
     return cast(
         F,
         pytest.mark.skipif(
-            not is_k8s_available,
+            not is_k8s_available(),
             reason="Test requires a connection to a Kubernetes cluster.",
         )(func),
     )
 
 
+def get_available_sandboxes() -> List[Literal["docker", "k8s"]]:
+    """Return a list of available sandbox environments.
+
+    This function checks if docker and/or kubernetes are available
+    on the system and returns a list of available sandbox types.
+    """
+    available_sandboxes: list[Literal["docker", "k8s"]] = []
+
+    # Check if Docker is available
+    if is_docker_available():
+        available_sandboxes.append("docker")
+
+    # Check if Kubernetes is available
+    if is_k8s_available():
+        available_sandboxes.append("k8s")
+
+    return available_sandboxes
+
+
 def run_example(
-    example: str, agent: Literal["claude_code", "codex_cli"], model: str
+    example: str,
+    agent: Literal["claude_code", "codex_cli"],
+    model: str,
+    sandbox: str | None = None,
 ) -> list[EvalLog]:
     example_file = os.path.join("examples", example)
-    return eval(example_file, model=model, limit=1, task_args={"agent": agent})
+    task_args: dict[str, str] = {
+        "agent": agent,
+    }
+
+    if sandbox is not None:
+        task_args["sandbox"] = sandbox
+    return eval(example_file, model=model, limit=1, task_args=task_args)

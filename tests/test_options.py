@@ -1,15 +1,20 @@
+import pytest
 from inspect_ai import Task, eval, task
 from inspect_ai.agent import Agent
 from inspect_ai.dataset import Sample
+from inspect_ai.util import SandboxEnvironmentType
 from inspect_swe import claude_code
 from inspect_swe._codex_cli.codex_cli import codex_cli
 
-from tests.conftest import skip_if_no_anthropic, skip_if_no_docker
+from tests.conftest import get_available_sandboxes, skip_if_no_anthropic
 
 
 @skip_if_no_anthropic
-@skip_if_no_docker
-def test_claude_code_options() -> None:
+@pytest.mark.parametrize(
+    "sandbox",
+    get_available_sandboxes(),
+)
+def test_claude_code_options(sandbox: str) -> None:
     SYSTEM_PROMPT_CANARY = "32C507F0-9347-4DB2-8061-907682DD34EB"
     PASSED_MODEL = "anthropic/claude-sonnet-4-0"
     MAIN_MODEL = "anthropic/claude-3-7-sonnet-20250219"
@@ -22,7 +27,8 @@ def test_claude_code_options() -> None:
                 model=MAIN_MODEL,
                 small_model=SMALL_MODEL,
                 env={"MAX_THINKING_TOKENS": "16666"},
-            )
+            ),
+            sandbox=sandbox,
         ),
         model=PASSED_MODEL,
     )[0]
@@ -35,8 +41,11 @@ def test_claude_code_options() -> None:
 
 
 @skip_if_no_anthropic
-@skip_if_no_docker
-def test_codex_cli_options() -> None:
+@pytest.mark.parametrize(
+    "sandbox",
+    get_available_sandboxes(),
+)
+def test_codex_cli_options(sandbox: str) -> None:
     SYSTEM_PROMPT_CANARY = "32C507F0-9347-4DB2-8061-907682DD34EB"
     PASSED_MODEL = "anthropic/claude-sonnet-4-0"
 
@@ -45,7 +54,8 @@ def test_codex_cli_options() -> None:
             codex_cli(
                 system_prompt=f"This is a part of the system prompt {SYSTEM_PROMPT_CANARY}.",
                 model=PASSED_MODEL,
-            )
+            ),
+            sandbox=sandbox,
         ),
         model=PASSED_MODEL,
     )[0]
@@ -56,7 +66,9 @@ def test_codex_cli_options() -> None:
 
 
 @task
-def system_explorer(agent: Agent) -> Task:
+def system_explorer(
+    agent: Agent, sandbox: SandboxEnvironmentType | None = "docker"
+) -> Task:
     return Task(
         dataset=[
             Sample(
@@ -65,5 +77,5 @@ def system_explorer(agent: Agent) -> Task:
             )
         ],
         solver=agent,
-        sandbox="docker",
+        sandbox=sandbox,
     )
