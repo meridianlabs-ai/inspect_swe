@@ -49,7 +49,7 @@ jobs:
           python -m pip install .[dev]
       - name: Run mypy
         run: |
-          mypy src
+          mypy src --python-executable $(which python)
 
   py-test:
     runs-on: ubuntu-latest

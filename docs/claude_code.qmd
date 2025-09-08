@@ -1,0 +1,32 @@
+---
+title: Claude Code
+agent: claude_code
+agent_provider: "Anthropic"
+agent_name: "Claude Code"
+agent_url: "https://docs.anthropic.com/en/docs/claude-code/overview"
+agent_disallowed_tool: "WebSearch"
+---
+
+{{< include _snippets/agent_intro.md >}}
+
+{{< include _snippets/agent_options.md >}}
+
+{{< include _snippets/agent_mcp_servers.md >}}
+
+## Installation
+
+By default, the agent will download the current stable version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `"auto"` | Use any available version of {{< meta agent_name >}} in the sandbox, otherwise download the current stable version. |
+| `"sandbox"` | Use the version of {{< meta agent_name >}} in the sandbox (raises `RuntimeError` if not available in the sandbox) |
+| `"stable"` | Download and use the current stable version. |
+| `"latest"` | Download and use the very latest version. |
+| `"x.x.x"` | Download and use a specific version number. |
+
+: {tbl-colwidths=\[25,75\]}
+
+{{< include _snippets/agent_installation.md >}}
+
+{{< include _snippets/agent_troubleshooting.md >}}

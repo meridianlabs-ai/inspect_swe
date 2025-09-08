@@ -49,9 +49,12 @@ def bash_command(cmd: str) -> list[str]:
 
 
 async def sandbox_exec(
-    sandbox: SandboxEnvironment, cmd: str, user: str | None = None
+    sandbox: SandboxEnvironment,
+    cmd: str,
+    user: str | None = None,
+    cwd: str | None = None,
 ) -> str:
-    result = await sandbox.exec(bash_command(cmd), user=user)
+    result = await sandbox.exec(bash_command(cmd), user=user, cwd=cwd)
     if not result.success:
         raise RuntimeError(f"Error executing sandbox command {cmd}: {result.stderr}")
     return result.stdout.strip()

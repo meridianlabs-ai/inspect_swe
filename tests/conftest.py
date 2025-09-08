@@ -1,7 +1,7 @@
 import importlib
 import os
 import subprocess
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, Callable, Literal, TypeVar, cast
 
 import pytest
 from inspect_ai import eval
@@ -111,6 +111,8 @@ def skip_if_no_docker(func: F) -> F:
     )
 
 
-def run_example(example: str, model: str) -> list[EvalLog]:
+def run_example(
+    example: str, agent: Literal["claude_code", "codex_cli"], model: str
+) -> list[EvalLog]:
     example_file = os.path.join("examples", example)
-    return eval(example_file, model=model, limit=1, token_limit=25000)
+    return eval(example_file, model=model, limit=1, task_args={"agent": agent})

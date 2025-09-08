@@ -1,46 +1,43 @@
 import re
-from typing import Literal
+from pathlib import Path
 
 from pydantic import BaseModel
+from typing_extensions import Literal
 
-from ..._util.checksum import verify_checksum
-from ..._util.download import download_file, download_text_file
-from ..._util.sandbox import SandboxPlatform
-from ..._util.trace import trace
-from .cache import (
-    read_cached_claude_code_binary,
-    write_cached_claude_code_binary,
-)
+from .._util.agentbinary import AgentBinarySource, AgentBinaryVersion
+from .._util.appdirs import package_cache_dir
+from .._util.download import download_text_file
+from .._util.sandbox import SandboxPlatform
 
 
-async def download_claude_code_async(
-    version: Literal["stable", "latest"] | str, platform: SandboxPlatform
-) -> bytes:
-    # determine version and checksum
-    gcs_bucket = await _claude_code_gcs_bucket()
-    version = await _claude_code_version(gcs_bucket, version)
-    manifest = await _claude_code_manifest(gcs_bucket, version)
-    expected_checksum = _checksum_for_platform(manifest, platform)
+def claude_code_binary_source() -> AgentBinarySource:
+    cached_binary_dir = package_cache_dir("claude-code-downloads")
 
-    # check the cache
-    binary_data = read_cached_claude_code_binary(version, platform, expected_checksum)
-    if binary_data is None:
-        # not in cache, download and verify checksum
-        binary_url = f"{gcs_bucket}/{version}/{platform}/claude"
-        binary_data = await download_file(binary_url)
-        if not verify_checksum(binary_data, expected_checksum):
-            raise ValueError("Checksum verification failed")
+    async def resolve_version(
+        version: Literal["stable", "latest"] | str, platform: SandboxPlatform
+    ) -> AgentBinaryVersion:
+        gcs_bucket = await _claude_code_gcs_bucket()
+        version = await _claude_code_version(gcs_bucket, version)
+        manifest = await _claude_code_manifest(gcs_bucket, version)
+        expected_checksum = _checksum_for_platform(manifest, platform)
+        download_url = f"{gcs_bucket}/{version}/{platform}/claude"
+        return AgentBinaryVersion(version, expected_checksum, download_url)
 
-        # save to cache
-        write_cached_claude_code_binary(binary_data, version, platform)
+    def cached_binary_path(version: str, platform: SandboxPlatform) -> Path:
+        return cached_binary_dir / f"claude-{version}-{platform}"
 
-        # trace
-        trace(f"Downloaded claude code binary: {version} ({platform})")
-    else:
-        trace(f"Used claude code binary from cache: {version} ({platform})")
+    def list_cached_binaries() -> list[Path]:
+        return list(cached_binary_dir.glob("claude-*"))
 
-    # return data
-    return binary_data
+    return AgentBinarySource(
+        agent="claude code",
+        binary="claude",
+        resolve_version=resolve_version,
+        cached_binary_path=cached_binary_path,
+        list_cached_binaries=list_cached_binaries,
+        post_download=None,
+        post_install="config list",
+    )
 
 
 async def _claude_code_gcs_bucket() -> str:

@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect_ai>=0.3.126",
+    "inspect_ai>=0.3.130",
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.11.4",
@@ -39,6 +39,7 @@ dev = [
     "openai",
     "pytest-dotenv",
     "types-PyYAML",
+    "IPython",
 ]
 doc = ["quarto-cli==1.7.31"]
 
@@ -85,6 +86,7 @@ strict = true
 mypy_path = "src"
 namespace_packages = true
 explicit_package_bases = true
+python_executable = ".venv/bin/python"
 
 [tool.uv.sources]
 aisitools = { git = "ssh://git@github.com/AI-Safety-Institute/aisi-inspect-tools" }
