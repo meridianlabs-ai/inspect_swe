@@ -1,10 +1,8 @@
 from typing import Literal
 
-import pytest
 from inspect_ai.model import ChatMessageAssistant
 
 from tests.conftest import (
-    get_available_sandboxes,
     run_example,
     skip_if_no_anthropic,
     skip_if_no_docker,
@@ -14,25 +12,20 @@ from tests.conftest import (
 
 @skip_if_no_anthropic
 @skip_if_no_docker
-@pytest.mark.parametrize("sandbox", get_available_sandboxes())
-def test_claude_code_mcp(sandbox: str) -> None:
-    check_mcp("claude_code", "anthropic/claude-sonnet-4-0", "mcp__", sandbox)
+def test_claude_code_mcp() -> None:
+    check_mcp("claude_code", "anthropic/claude-sonnet-4-0", "mcp__")
 
 
 @skip_if_no_openai
 @skip_if_no_docker
-@pytest.mark.parametrize("sandbox", get_available_sandboxes())
-def test_codex_cli_mcp(sandbox: str) -> None:
-    check_mcp("codex_cli", "openai/gpt-5", sandbox=sandbox)
+def test_codex_cli_mcp() -> None:
+    check_mcp("codex_cli", "openai/gpt-5")
 
 
 def check_mcp(
-    agent: Literal["claude_code", "codex_cli"],
-    model: str,
-    prefix: str = "",
-    sandbox: str | None = None,
+    agent: Literal["claude_code", "codex_cli"], model: str, prefix: str = ""
 ) -> None:
-    log = run_example("mcp", agent, model, sandbox=sandbox)[0]
+    log = run_example("mcp", agent, model)[0]
     assert log.status == "success"
     assert log.samples
     assistant_messages = [
