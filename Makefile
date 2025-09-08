@@ -10,7 +10,7 @@ check:
 
 .PHONY: test
 test:
-	uv run pytest
+	pytest
 
 .PHONY: sync
 sync:
