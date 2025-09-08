@@ -1,3 +1,7 @@
+## Unreleased
+
+- Close stdin when running agent binaries (needed for k8s provider to work properly)
+
 ## 0.2.11 (06 September 2026)
 
 - Codex CLI: New `codex_cli()` agent for OpenAI Codex.

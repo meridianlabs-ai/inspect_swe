@@ -181,7 +181,7 @@ def codex_cli(
 
                 # run agent
                 result = await sbox.exec(
-                    cmd=["bash", "-c", 'exec "$@"', "bash"] + agent_cmd,
+                    cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
                     cwd=cwd,
                     env={
                         "CODEX_HOME": codex_home,
