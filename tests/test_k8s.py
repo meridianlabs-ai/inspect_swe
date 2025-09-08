@@ -8,11 +8,7 @@ from tests.conftest import skip_if_no_k8s
 @task
 def t() -> Task:
     return Task(
-        dataset=[
-            Sample(
-                input="what is 1+1?"
-            )
-        ],
+        dataset=[Sample(input="what is 1+1?")],
         solver=claude_code(),
         sandbox="k8s",
     )
