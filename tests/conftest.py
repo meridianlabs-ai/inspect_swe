@@ -1,7 +1,7 @@
 import importlib
 import os
 import subprocess
-from typing import Any, Callable, Literal, TypeVar, cast
+from typing import Any, Callable, List, Literal, TypeVar, cast
 
 import pytest
 from inspect_ai import eval
@@ -130,6 +130,50 @@ def skip_if_no_k8s(func: F) -> F:
             reason="Test requires a connection to a Kubernetes cluster.",
         )(func),
     )
+
+
+def get_available_sandboxes() -> List[Literal["docker", "k8s"]]:
+    """Return a list of available sandbox environments.
+
+    This function checks if docker and/or kubernetes are available
+    on the system and returns a list of available sandbox types.
+    """
+    available_sandboxes: list[Literal["docker", "k8s"]] = []
+
+    # Check if Docker is available
+    try:
+        is_docker_available = (
+            subprocess.run(
+                ["docker", "--version"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            ).returncode
+            == 0
+        )
+        if is_docker_available:
+            available_sandboxes.append("docker")
+    except FileNotFoundError:
+        pass
+
+    # Check if Kubernetes is available
+    try:
+        is_k8s_available = (
+            subprocess.run(
+                ["kubectl", "version", "--client=false"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5,  # Add timeout to prevent hanging
+            ).returncode
+            == 0
+        )
+        if is_k8s_available:
+            available_sandboxes.append("k8s")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return available_sandboxes
 
 
 def run_example(
