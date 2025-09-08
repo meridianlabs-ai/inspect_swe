@@ -11,3 +11,7 @@ check:
 .PHONY: test
 test:
 	pytest
+
+.PHONY: sync
+sync:
+	uv sync --all-groups --all-extras
