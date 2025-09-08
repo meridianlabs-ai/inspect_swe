@@ -90,8 +90,10 @@ python_executable = ".venv/bin/python"
 
 [tool.uv.sources]
 aisitools = { git = "ssh://git@github.com/AI-Safety-Institute/aisi-inspect-tools" }
+inspect-k8s-sandbox = { git = "https://github.com/UKGovernmentBEIS/inspect_k8s_sandbox.git" }
 
 [dependency-groups]
 aisi = [
     "aisitools",
+    "inspect-k8s-sandbox",
 ]
