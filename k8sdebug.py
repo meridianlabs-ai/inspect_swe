@@ -9,7 +9,7 @@ def system_explorer() -> Task:
     return Task(
         dataset=[
             Sample(
-                input="Explore the system and tell me: 1) What version of Linux is running, and 2) How many CPU cores the system has"
+                input="what is 1+1?"
             )
         ],
         solver=claude_code(),
