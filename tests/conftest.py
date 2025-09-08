@@ -160,13 +160,13 @@ def run_example(
     example: str,
     agent: Literal["claude_code", "codex_cli"],
     model: str,
-    k8s: bool = False,
+    sandbox: str | None = None,
 ) -> list[EvalLog]:
     example_file = os.path.join("examples", example)
     task_args: dict[str, str] = {
         "agent": agent,
     }
 
-    if k8s:
-        task_args["sandbox"] = "k8s"
+    if sandbox is not None:
+        task_args["sandbox"] = sandbox
     return eval(example_file, model=model, limit=1, task_args=task_args)

@@ -27,4 +27,8 @@ make check
 make test
 ```
 
+### Sandbox-specific tests
 
+Note that most tests depend on a valid sandbox being available (either `docker` or `k8s`), this is inferred from your shell environment.
+
+You can check which are collected via `pytest --co`
