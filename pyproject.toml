@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect_ai>=0.3.130",
+    "inspect_ai>=0.3.132",
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.11.4",
@@ -93,7 +93,4 @@ aisitools = { git = "ssh://git@github.com/AI-Safety-Institute/aisi-inspect-tools
 inspect-k8s-sandbox = { git = "https://github.com/UKGovernmentBEIS/inspect_k8s_sandbox.git" }
 
 [dependency-groups]
-aisi = [
-    "aisitools",
-    "inspect-k8s-sandbox",
-]
+aisi = ["aisitools", "inspect-k8s-sandbox"]
