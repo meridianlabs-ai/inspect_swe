@@ -38,7 +38,6 @@ def codex_cli(
     system_prompt: str | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     disallowed_tools: list[Literal["web_search"]] | None = None,
-    attempts: int | AgentAttempts = 1,
     model: str | None = None,
     filter: GenerateFilter | None = None,
     cwd: str | None = None,
@@ -60,7 +59,6 @@ def codex_cli(
         system_prompt: Additional system prompt to append to default system prompt.
         mcp_servers: MCP servers to make available to the agent.
         disallowed_tools: Optionally disallow tools (currently only web_search).
-        attempts: Configure agent to make multiple attempts.
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
         cwd: Working directory to run codex cli within.
@@ -76,8 +74,8 @@ def codex_cli(
     # resolve model
     model = f"inspect/{model}" if model is not None else "inspect"
 
-    # resolve attempts
-    attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
+    # only support a single attempt for now as codex exec resume doesn't seem to work properly
+    attempts = AgentAttempts(attempts=1)
 
     # ensure disallowed_tools list
     disallowed_tools = disallowed_tools or []

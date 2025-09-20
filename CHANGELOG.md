@@ -1,3 +1,7 @@
+## Unreleased
+
+- Disable support for multiple attempts in codex cli (new `codex exec resume` doesn't yet work properly).
+
 ## 0.2.12 (08 September 2026)
 
 - Close stdin when running agent binaries (needed for k8s provider to work properly)
