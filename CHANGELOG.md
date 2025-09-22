@@ -2,6 +2,7 @@
 
 - Support multiple attempts for Codex CLI via `codex exec <...> resume --last` (requires Codex v0.36.0 or later).
 - Add `retry_refusals` option to set a configurable number of retries for requests refused due to content filtering.
+- Update `inspect_ai` requirement to >=0.3.133.
 
 ## 0.2.13 (12 September 2026)
 
