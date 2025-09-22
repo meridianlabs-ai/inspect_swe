@@ -41,6 +41,7 @@ def codex_cli(
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     filter: GenerateFilter | None = None,
+    retry_refusals: int | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -63,6 +64,7 @@ def codex_cli(
         attempts: Configure agent to make multiple attempts.
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
+        retry_refusals: Should refusals be retried? (pass number of times to retry)
         cwd: Working directory to run codex cli within.
         env: Environment variables to set for codex cli
         user: User to execute codex cli with.
@@ -83,7 +85,9 @@ def codex_cli(
     disallowed_tools = disallowed_tools or []
 
     async def execute(state: AgentState) -> AgentState:
-        async with sandbox_agent_bridge(state, model=model, filter=filter) as bridge:
+        async with sandbox_agent_bridge(
+            state, model=model, filter=filter, retry_refusals=retry_refusals
+        ) as bridge:
             # ensure codex is installed and get binary location
             codex_binary = await ensure_agent_binary_installed(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)

@@ -36,6 +36,7 @@ def claude_code(
     model: str | None = None,
     small_model: str | None = None,
     filter: GenerateFilter | None = None,
+    retry_refusals: int | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -63,6 +64,7 @@ def claude_code(
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
         small_model: Model to use for Haiku calls (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
+        retry_refusals: Should refusals be retried? (pass number of times to retry)
         cwd: Working directory to run claude code within.
         env: Environment variables to set for claude code.
         user: User to execute claude code with.
@@ -82,7 +84,9 @@ def claude_code(
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
     async def execute(state: AgentState) -> AgentState:
-        async with sandbox_agent_bridge(state, filter=filter) as bridge:
+        async with sandbox_agent_bridge(
+            state, filter=filter, retry_refusals=retry_refusals
+        ) as bridge:
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
                 claude_code_binary_source(), version, user, sandbox_env(sandbox)
