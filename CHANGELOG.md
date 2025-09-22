@@ -1,6 +1,6 @@
 ## Unreleased
 
-- Disable support for multiple attempts in codex cli (new `codex exec resume` doesn't yet work properly).
+- Support multiple attempts for Codex CLI via `codex exec <...> resume --last` (requires Codex v0.36.0 or later).
 
 ## 0.2.12 (08 September 2026)
 
