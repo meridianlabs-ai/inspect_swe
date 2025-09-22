@@ -181,8 +181,11 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#september-2026" id="toc-september-2026" class="nav-link active" data-scroll-target="#september-2026">0.2.11 (06 September 2026)</a></li>
-  <li><a href="#september-2026-1" id="toc-september-2026-1" class="nav-link" data-scroll-target="#september-2026-1">0.2.10 (03 September 2026)</a></li>
+  <li><a href="#september-2026" id="toc-september-2026" class="nav-link active" data-scroll-target="#september-2026">0.2.14 (22 September 2026)</a></li>
+  <li><a href="#september-2026-1" id="toc-september-2026-1" class="nav-link" data-scroll-target="#september-2026-1">0.2.13 (12 September 2026)</a></li>
+  <li><a href="#september-2026-2" id="toc-september-2026-2" class="nav-link" data-scroll-target="#september-2026-2">0.2.12 (08 September 2026)</a></li>
+  <li><a href="#september-2026-3" id="toc-september-2026-3" class="nav-link" data-scroll-target="#september-2026-3">0.2.11 (06 September 2026)</a></li>
+  <li><a href="#september-2026-4" id="toc-september-2026-4" class="nav-link" data-scroll-target="#september-2026-4">0.2.10 (03 September 2026)</a></li>
   <li><a href="#v0.2.8-02-september-2026" id="toc-v0.2.8-02-september-2026" class="nav-link" data-scroll-target="#v0.2.8-02-september-2026">v0.2.8 (02 September 2026)</a></li>
   <li><a href="#v0.2.6-01-september-2025" id="toc-v0.2.6-01-september-2025" class="nav-link" data-scroll-target="#v0.2.6-01-september-2025">v0.2.6 (01 September 2025)</a></li>
   <li><a href="#v0.2.5-01-september-2025" id="toc-v0.2.5-01-september-2025" class="nav-link" data-scroll-target="#v0.2.5-01-september-2025">v0.2.5 (01 September 2025)</a></li>
@@ -196,14 +199,34 @@ ul.task-list li input[type="checkbox"] {
 
 
 <section id="september-2026" class="level2">
-<h2 class="anchored" data-anchor-id="september-2026">0.2.11 (06 September 2026)</h2>
+<h2 class="anchored" data-anchor-id="september-2026">0.2.14 (22 September 2026)</h2>
+<ul>
+<li>Support multiple attempts for Codex CLI via <code>codex exec &lt;...&gt; resume --last</code> (requires Codex v0.36.0 or later).</li>
+<li>Add <code>retry_refusals</code> option to set a configurable number of retries for requests refused due to content filtering.</li>
+<li>Update <code>inspect_ai</code> requirement to &gt;=0.3.133.</li>
+</ul>
+</section>
+<section id="september-2026-1" class="level2">
+<h2 class="anchored" data-anchor-id="september-2026-1">0.2.13 (12 September 2026)</h2>
+<ul>
+<li>Update <code>inspect_ai</code> requirement to &gt;=0.3.132.</li>
+</ul>
+</section>
+<section id="september-2026-2" class="level2">
+<h2 class="anchored" data-anchor-id="september-2026-2">0.2.12 (08 September 2026)</h2>
+<ul>
+<li>Close stdin when running agent binaries (needed for k8s provider to work properly)</li>
+</ul>
+</section>
+<section id="september-2026-3" class="level2">
+<h2 class="anchored" data-anchor-id="september-2026-3">0.2.11 (06 September 2026)</h2>
 <ul>
 <li>Codex CLI: New <code>codex_cli()</code> agent for OpenAI Codex.</li>
 <li>Added <code>filter</code> parameter to agents for intercepting model generations.</li>
 </ul>
 </section>
-<section id="september-2026-1" class="level2">
-<h2 class="anchored" data-anchor-id="september-2026-1">0.2.10 (03 September 2026)</h2>
+<section id="september-2026-4" class="level2">
+<h2 class="anchored" data-anchor-id="september-2026-4">0.2.10 (03 September 2026)</h2>
 <ul>
 <li>Add trace logging for claude code debug/verbose output.</li>
 </ul>
