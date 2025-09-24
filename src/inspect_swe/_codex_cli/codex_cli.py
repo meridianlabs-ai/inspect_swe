@@ -36,6 +36,7 @@ def codex_cli(
        and iterating on code across multiple languages.
     """),
     system_prompt: str | None = None,
+    model_config: str = "gpt-5-codex",
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     disallowed_tools: list[Literal["web_search"]] | None = None,
     attempts: int | AgentAttempts = 1,
@@ -59,6 +60,7 @@ def codex_cli(
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
         system_prompt: Additional system prompt to append to default system prompt.
+        model_config: Model configuration profile (e.g. used to determine the system prompt).
         mcp_servers: MCP servers to make available to the agent.
         disallowed_tools: Optionally disallow tools (currently only web_search).
         attempts: Configure agent to make multiple attempts.
@@ -135,8 +137,9 @@ def codex_cli(
             cmd = [
                 codex_binary,
                 "exec",
+                # real model is passed to the bridge above, this just affects defaults e.g. system prompt
                 "--model",
-                "gpt-5",  # real model is passed to the bridge above
+                model_config,
                 "--skip-git-repo-check",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--color",
