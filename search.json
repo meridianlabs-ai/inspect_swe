@@ -40,7 +40,7 @@
     "href": "codex_cli.html#options",
     "title": "Codex CLI",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"web_search\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorkding directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the web_search tool:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"web_search\"]\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmodel_config\nModel configuration profile (e.g. used to determine the system prompt). Defaults to gpt-5-codex.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"web_search\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorkding directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the web_search tool:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"web_search\"]\n)",
     "crumbs": [
       "Home",
       "Agents",
@@ -88,39 +88,46 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Support multiple attempts for Codex CLI via codex exec &lt;...&gt; resume --last (requires Codex v0.36.0 or later).\nAdd retry_refusals option to set a configurable number of retries for requests refused due to content filtering.\nUpdate inspect_ai requirement to &gt;=0.3.133."
+    "text": "Use gpt-5-codex as the default model config for Codex CLI (e.g. results in use of the gpt-5-codex specific system instructions)."
   },
   {
     "objectID": "CHANGELOG.html#september-2026",
     "href": "CHANGELOG.html#september-2026",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Support multiple attempts for Codex CLI via codex exec &lt;...&gt; resume --last (requires Codex v0.36.0 or later).\nAdd retry_refusals option to set a configurable number of retries for requests refused due to content filtering.\nUpdate inspect_ai requirement to &gt;=0.3.133."
+    "text": "Use gpt-5-codex as the default model config for Codex CLI (e.g. results in use of the gpt-5-codex specific system instructions)."
   },
   {
     "objectID": "CHANGELOG.html#september-2026-1",
     "href": "CHANGELOG.html#september-2026-1",
     "title": "Inspect SWE",
-    "section": "0.2.13 (12 September 2026)",
-    "text": "0.2.13 (12 September 2026)\n\nUpdate inspect_ai requirement to &gt;=0.3.132."
+    "section": "0.2.14 (22 September 2026)",
+    "text": "0.2.14 (22 September 2026)\n\nSupport multiple attempts for Codex CLI via codex exec &lt;...&gt; resume --last (requires Codex v0.36.0 or later).\nAdd retry_refusals option to set a configurable number of retries for requests refused due to content filtering.\nUpdate inspect_ai requirement to &gt;=0.3.133."
   },
   {
     "objectID": "CHANGELOG.html#september-2026-2",
     "href": "CHANGELOG.html#september-2026-2",
     "title": "Inspect SWE",
-    "section": "0.2.12 (08 September 2026)",
-    "text": "0.2.12 (08 September 2026)\n\nClose stdin when running agent binaries (needed for k8s provider to work properly)"
+    "section": "0.2.13 (12 September 2026)",
+    "text": "0.2.13 (12 September 2026)\n\nUpdate inspect_ai requirement to &gt;=0.3.132."
   },
   {
     "objectID": "CHANGELOG.html#september-2026-3",
     "href": "CHANGELOG.html#september-2026-3",
     "title": "Inspect SWE",
-    "section": "0.2.11 (06 September 2026)",
-    "text": "0.2.11 (06 September 2026)\n\nCodex CLI: New codex_cli() agent for OpenAI Codex.\nAdded filter parameter to agents for intercepting model generations."
+    "section": "0.2.12 (08 September 2026)",
+    "text": "0.2.12 (08 September 2026)\n\nClose stdin when running agent binaries (needed for k8s provider to work properly)"
   },
   {
     "objectID": "CHANGELOG.html#september-2026-4",
     "href": "CHANGELOG.html#september-2026-4",
+    "title": "Inspect SWE",
+    "section": "0.2.11 (06 September 2026)",
+    "text": "0.2.11 (06 September 2026)\n\nCodex CLI: New codex_cli() agent for OpenAI Codex.\nAdded filter parameter to agents for intercepting model generations."
+  },
+  {
+    "objectID": "CHANGELOG.html#september-2026-5",
+    "href": "CHANGELOG.html#september-2026-5",
     "title": "Inspect SWE",
     "section": "0.2.10 (03 September 2026)",
     "text": "0.2.10 (03 September 2026)\n\nAdd trace logging for claude code debug/verbose output."
