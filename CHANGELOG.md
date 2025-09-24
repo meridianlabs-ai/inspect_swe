@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.16 (23 September 2026)
 
 - Add support for the `update_plan()` tool for Codex CLI.
 
