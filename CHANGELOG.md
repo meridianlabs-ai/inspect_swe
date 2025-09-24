@@ -1,3 +1,7 @@
+## 0.2.15 (23 September 2026)
+
+- Use `gpt-5-codex` as the default model config for Codex CLI (e.g. results in use of the `gpt-5-codex` specific system instructions).
+
 ## 0.2.14 (22 September 2026)
 
 - Support multiple attempts for Codex CLI via `codex exec <...> resume --last` (requires Codex v0.36.0 or later).
