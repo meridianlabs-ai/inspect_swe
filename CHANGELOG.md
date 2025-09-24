@@ -1,3 +1,7 @@
+## Unreleased
+
+- Add support for the `update_plan()` tool for Codex CLI.
+
 ## 0.2.15 (23 September 2026)
 
 - Use `gpt-5-codex` as the default model config for Codex CLI (e.g. results in use of the `gpt-5-codex` specific system instructions).

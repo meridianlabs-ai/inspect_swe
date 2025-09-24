@@ -38,7 +38,7 @@ def codex_cli(
     system_prompt: str | None = None,
     model_config: str = "gpt-5-codex",
     mcp_servers: Sequence[MCPServerConfig] | None = None,
-    disallowed_tools: list[Literal["web_search"]] | None = None,
+    disallowed_tools: list[Literal["web_search", "update_plan"]] | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     filter: GenerateFilter | None = None,
@@ -146,15 +146,20 @@ def codex_cli(
                 "never",
             ]
 
-            # include the plan and apply patch tools.
-            # NOTE: update_plan not currently working in 'exec' mode:
-            # https://github.com/openai/codex/issues/1952
-            cmd.extend(["-c", "include_plan_tool=true"])
-            cmd.extend(["-c", "include_apply_patch_tool=true"])
+            # include update_plan if appropriate
+            if "update_plan" not in disallowed_tools:
+                cmd.append(
+                    "--include-plan-tool"
+                )  # https://github.com/openai/codex/commit/594248f415afbbf1796729c1e061ddc6be6b603a)
 
             # include web search if appropriate
             if "web_search" not in disallowed_tools:
                 cmd.extend(["-c", "tools.web_search=true"])
+
+            # # include the apply patch tools.
+            # # NOTE: include_apply_patch_tool not currently working in 'exec' mode:
+            # # https://github.com/openai/codex/issues/1952
+            # cmd.extend(["-c", "include_apply_patch_tool=true"])
 
             # register mcp servers
             if mcp_servers:
