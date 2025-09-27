@@ -1,3 +1,7 @@
+## 0.2.17 (23 September 2026)
+
+- Update `inspect_ai` requirement to >=0.3.134.
+
 ## 0.2.16 (23 September 2026)
 
 - Add support for the `update_plan()` tool for Codex CLI.
