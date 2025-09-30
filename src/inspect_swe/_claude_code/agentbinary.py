@@ -36,7 +36,7 @@ def claude_code_binary_source() -> AgentBinarySource:
         cached_binary_path=cached_binary_path,
         list_cached_binaries=list_cached_binaries,
         post_download=None,
-        post_install="config list",
+        post_install=None,
     )
 
 

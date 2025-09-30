@@ -1,3 +1,8 @@
+## 0.2.18 (23 September 2026)
+
+- Update for Claude Code 2.0 (don't call `config list` after installation as it has been removed).
+- Update `inspect_ai` requirement to >= 0.3.135.
+
 ## 0.2.17 (23 September 2026)
 
 - Update `inspect_ai` requirement to >=0.3.134.
