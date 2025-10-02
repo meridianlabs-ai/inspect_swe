@@ -17,4 +17,4 @@ If you don't ever want to rely on automatic downloads of {{< meta agent_name >}}
     {{< meta agent >}}(version="0.29.0")
     ```
 
-    Note that the 5 most recently downloaded versions are retained in the cache.
+    Note that the 5 most recently downloaded versions are retained in the cache. Use the `cached_agent_binaries()` function to list the contents of the cache.

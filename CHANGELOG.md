@@ -1,3 +1,7 @@
+## Unreleased
+
+- Added `cached_agent_binaries()` function to list previously downloaded and cached agent binaries.
+
 ## 0.2.18 (23 September 2026)
 
 - Update for Claude Code 2.0 (don't call `config list` after installation as it has been removed).
