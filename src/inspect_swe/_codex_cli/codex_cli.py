@@ -93,7 +93,7 @@ def codex_cli(
         store().set(MODEL_PORT, port)
 
         async with sandbox_agent_bridge(
-            state, model=model, filter=filter, retry_refusals=retry_refusals
+            state, model=model, filter=filter, retry_refusals=retry_refusals, port=port
         ) as bridge:
             # ensure codex is installed and get binary location
             codex_binary = await ensure_agent_binary_installed(
