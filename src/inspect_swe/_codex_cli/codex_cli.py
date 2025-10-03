@@ -14,7 +14,7 @@ from inspect_ai.agent import (
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser, GenerateFilter
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
-from inspect_ai.util import SandboxEnvironment
+from inspect_ai.util import SandboxEnvironment, store
 from inspect_ai.util import sandbox as sandbox_env
 
 from inspect_swe._util._async import is_callable_coroutine
@@ -87,6 +87,11 @@ def codex_cli(
     disallowed_tools = disallowed_tools or []
 
     async def execute(state: AgentState) -> AgentState:
+        # determine port (use new port for each execution of agent on sample)
+        MODEL_PORT = "codex_cli_model_port"
+        port = store().get(MODEL_PORT, 3000) + 1
+        store().set(MODEL_PORT, port)
+
         async with sandbox_agent_bridge(
             state, model=model, filter=filter, retry_refusals=retry_refusals
         ) as bridge:

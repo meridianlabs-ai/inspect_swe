@@ -14,6 +14,7 @@ from inspect_ai.model import ChatMessageSystem, ChatMessageUser, GenerateFilter
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import sandbox as sandbox_env
+from inspect_ai.util import store
 from pydantic_core import to_json
 
 from .._util._async import is_callable_coroutine
@@ -84,8 +85,13 @@ def claude_code(
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
     async def execute(state: AgentState) -> AgentState:
+        # determine port (use new port for each execution of agent on sample)
+        MODEL_PORT = "claude_code_model_port"
+        port = store().get(MODEL_PORT, 3000) + 1
+        store().set(MODEL_PORT, port)
+
         async with sandbox_agent_bridge(
-            state, filter=filter, retry_refusals=retry_refusals
+            state, filter=filter, retry_refusals=retry_refusals, port=port
         ) as bridge:
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
