@@ -1,7 +1,7 @@
-## Unreleased
+## 0.2.19 (23 September 2026)
 
-- Added `cached_agent_binaries()` function to list previously downloaded and cached agent binaries.
 - Automatically use a new port for each unique agent bridge invocation within a sample.
+- Added `cached_agent_binaries()` function to list previously downloaded and cached agent binaries.
 
 ## 0.2.18 (23 September 2026)
 
