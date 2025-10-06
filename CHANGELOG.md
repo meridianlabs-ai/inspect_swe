@@ -1,4 +1,4 @@
-## 0.2.19 (23 September 2026)
+## 0.2.19 (05 October 2026)
 
 - Automatically use a new port for each unique agent bridge invocation within a sample.
 - Added `cached_agent_binaries()` function to list previously downloaded and cached agent binaries.
