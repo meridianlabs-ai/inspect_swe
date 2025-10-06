@@ -64,7 +64,7 @@
     "href": "codex_cli.html#installation-1",
     "title": "Codex CLI",
     "section": "Installation",
-    "text": "Installation\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Codex CLI in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of Codex CLI in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Codex CLI (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Codex CLI you want to use in the sandbox, then use version=\"sandbox\":\ncodex_cli(version=\"sandbox\")\nDownload the version of Codex CLI you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"codex_cli\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\ncodex_cli(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache.",
+    "text": "Installation\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Codex CLI in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of Codex CLI in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Codex CLI (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Codex CLI you want to use in the sandbox, then use version=\"sandbox\":\ncodex_cli(version=\"sandbox\")\nDownload the version of Codex CLI you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"codex_cli\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\ncodex_cli(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
     "crumbs": [
       "Home",
       "Agents",
@@ -88,53 +88,74 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Add support for the update_plan() tool for Codex CLI."
+    "text": "Automatically use a new port for each unique agent bridge invocation within a sample.\nAdded cached_agent_binaries() function to list previously downloaded and cached agent binaries."
   },
   {
     "objectID": "CHANGELOG.html#september-2026",
     "href": "CHANGELOG.html#september-2026",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Add support for the update_plan() tool for Codex CLI."
+    "text": "Automatically use a new port for each unique agent bridge invocation within a sample.\nAdded cached_agent_binaries() function to list previously downloaded and cached agent binaries."
   },
   {
     "objectID": "CHANGELOG.html#september-2026-1",
     "href": "CHANGELOG.html#september-2026-1",
     "title": "Inspect SWE",
-    "section": "0.2.15 (23 September 2026)",
-    "text": "0.2.15 (23 September 2026)\n\nUse gpt-5-codex as the default model config for Codex CLI (e.g. results in use of the gpt-5-codex specific system instructions)."
+    "section": "0.2.18 (23 September 2026)",
+    "text": "0.2.18 (23 September 2026)\n\nUpdate for Claude Code 2.0 (don’t call config list after installation as it has been removed).\nUpdate inspect_ai requirement to &gt;= 0.3.135."
   },
   {
     "objectID": "CHANGELOG.html#september-2026-2",
     "href": "CHANGELOG.html#september-2026-2",
     "title": "Inspect SWE",
-    "section": "0.2.14 (22 September 2026)",
-    "text": "0.2.14 (22 September 2026)\n\nSupport multiple attempts for Codex CLI via codex exec &lt;...&gt; resume --last (requires Codex v0.36.0 or later).\nAdd retry_refusals option to set a configurable number of retries for requests refused due to content filtering.\nUpdate inspect_ai requirement to &gt;=0.3.133."
+    "section": "0.2.17 (23 September 2026)",
+    "text": "0.2.17 (23 September 2026)\n\nUpdate inspect_ai requirement to &gt;=0.3.134."
   },
   {
     "objectID": "CHANGELOG.html#september-2026-3",
     "href": "CHANGELOG.html#september-2026-3",
     "title": "Inspect SWE",
-    "section": "0.2.13 (12 September 2026)",
-    "text": "0.2.13 (12 September 2026)\n\nUpdate inspect_ai requirement to &gt;=0.3.132."
+    "section": "0.2.16 (23 September 2026)",
+    "text": "0.2.16 (23 September 2026)\n\nAdd support for the update_plan() tool for Codex CLI."
   },
   {
     "objectID": "CHANGELOG.html#september-2026-4",
     "href": "CHANGELOG.html#september-2026-4",
     "title": "Inspect SWE",
-    "section": "0.2.12 (08 September 2026)",
-    "text": "0.2.12 (08 September 2026)\n\nClose stdin when running agent binaries (needed for k8s provider to work properly)"
+    "section": "0.2.15 (23 September 2026)",
+    "text": "0.2.15 (23 September 2026)\n\nUse gpt-5-codex as the default model config for Codex CLI (e.g. results in use of the gpt-5-codex specific system instructions)."
   },
   {
     "objectID": "CHANGELOG.html#september-2026-5",
     "href": "CHANGELOG.html#september-2026-5",
     "title": "Inspect SWE",
-    "section": "0.2.11 (06 September 2026)",
-    "text": "0.2.11 (06 September 2026)\n\nCodex CLI: New codex_cli() agent for OpenAI Codex.\nAdded filter parameter to agents for intercepting model generations."
+    "section": "0.2.14 (22 September 2026)",
+    "text": "0.2.14 (22 September 2026)\n\nSupport multiple attempts for Codex CLI via codex exec &lt;...&gt; resume --last (requires Codex v0.36.0 or later).\nAdd retry_refusals option to set a configurable number of retries for requests refused due to content filtering.\nUpdate inspect_ai requirement to &gt;=0.3.133."
   },
   {
     "objectID": "CHANGELOG.html#september-2026-6",
     "href": "CHANGELOG.html#september-2026-6",
+    "title": "Inspect SWE",
+    "section": "0.2.13 (12 September 2026)",
+    "text": "0.2.13 (12 September 2026)\n\nUpdate inspect_ai requirement to &gt;=0.3.132."
+  },
+  {
+    "objectID": "CHANGELOG.html#september-2026-7",
+    "href": "CHANGELOG.html#september-2026-7",
+    "title": "Inspect SWE",
+    "section": "0.2.12 (08 September 2026)",
+    "text": "0.2.12 (08 September 2026)\n\nClose stdin when running agent binaries (needed for k8s provider to work properly)"
+  },
+  {
+    "objectID": "CHANGELOG.html#september-2026-8",
+    "href": "CHANGELOG.html#september-2026-8",
+    "title": "Inspect SWE",
+    "section": "0.2.11 (06 September 2026)",
+    "text": "0.2.11 (06 September 2026)\n\nCodex CLI: New codex_cli() agent for OpenAI Codex.\nAdded filter parameter to agents for intercepting model generations."
+  },
+  {
+    "objectID": "CHANGELOG.html#september-2026-9",
+    "href": "CHANGELOG.html#september-2026-9",
     "title": "Inspect SWE",
     "section": "0.2.10 (03 September 2026)",
     "text": "0.2.10 (03 September 2026)\n\nAdd trace logging for claude code debug/verbose output."
@@ -225,7 +246,7 @@
     "href": "claude_code.html#installation-1",
     "title": "Claude Code",
     "section": "Installation",
-    "text": "Installation\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Claude Code in the sandbox, otherwise download the current stable version.\n\n\n\"sandbox\"\nUse the version of Claude Code in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"stable\"\nDownload and use the current stable version.\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Claude Code (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Claude Code you want to use in the sandbox, then use version=\"sandbox\":\nclaude_code(version=\"sandbox\")\nDownload the version of Claude Code you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"claude_code\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\nclaude_code(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache.",
+    "text": "Installation\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Claude Code in the sandbox, otherwise download the current stable version.\n\n\n\"sandbox\"\nUse the version of Claude Code in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"stable\"\nDownload and use the current stable version.\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Claude Code (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Claude Code you want to use in the sandbox, then use version=\"sandbox\":\nclaude_code(version=\"sandbox\")\nDownload the version of Claude Code you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"claude_code\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\nclaude_code(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
     "crumbs": [
       "Home",
       "Agents",
