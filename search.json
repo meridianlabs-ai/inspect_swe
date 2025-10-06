@@ -91,71 +91,71 @@
     "text": "Automatically use a new port for each unique agent bridge invocation within a sample.\nAdded cached_agent_binaries() function to list previously downloaded and cached agent binaries."
   },
   {
-    "objectID": "CHANGELOG.html#september-2026",
-    "href": "CHANGELOG.html#september-2026",
+    "objectID": "CHANGELOG.html#october-2026",
+    "href": "CHANGELOG.html#october-2026",
     "title": "Inspect SWE",
     "section": "",
     "text": "Automatically use a new port for each unique agent bridge invocation within a sample.\nAdded cached_agent_binaries() function to list previously downloaded and cached agent binaries."
   },
   {
-    "objectID": "CHANGELOG.html#september-2026-1",
-    "href": "CHANGELOG.html#september-2026-1",
+    "objectID": "CHANGELOG.html#september-2026",
+    "href": "CHANGELOG.html#september-2026",
     "title": "Inspect SWE",
     "section": "0.2.18 (23 September 2026)",
     "text": "0.2.18 (23 September 2026)\n\nUpdate for Claude Code 2.0 (don’t call config list after installation as it has been removed).\nUpdate inspect_ai requirement to &gt;= 0.3.135."
   },
   {
-    "objectID": "CHANGELOG.html#september-2026-2",
-    "href": "CHANGELOG.html#september-2026-2",
+    "objectID": "CHANGELOG.html#september-2026-1",
+    "href": "CHANGELOG.html#september-2026-1",
     "title": "Inspect SWE",
     "section": "0.2.17 (23 September 2026)",
     "text": "0.2.17 (23 September 2026)\n\nUpdate inspect_ai requirement to &gt;=0.3.134."
   },
   {
-    "objectID": "CHANGELOG.html#september-2026-3",
-    "href": "CHANGELOG.html#september-2026-3",
+    "objectID": "CHANGELOG.html#september-2026-2",
+    "href": "CHANGELOG.html#september-2026-2",
     "title": "Inspect SWE",
     "section": "0.2.16 (23 September 2026)",
     "text": "0.2.16 (23 September 2026)\n\nAdd support for the update_plan() tool for Codex CLI."
   },
   {
-    "objectID": "CHANGELOG.html#september-2026-4",
-    "href": "CHANGELOG.html#september-2026-4",
+    "objectID": "CHANGELOG.html#september-2026-3",
+    "href": "CHANGELOG.html#september-2026-3",
     "title": "Inspect SWE",
     "section": "0.2.15 (23 September 2026)",
     "text": "0.2.15 (23 September 2026)\n\nUse gpt-5-codex as the default model config for Codex CLI (e.g. results in use of the gpt-5-codex specific system instructions)."
   },
   {
-    "objectID": "CHANGELOG.html#september-2026-5",
-    "href": "CHANGELOG.html#september-2026-5",
+    "objectID": "CHANGELOG.html#september-2026-4",
+    "href": "CHANGELOG.html#september-2026-4",
     "title": "Inspect SWE",
     "section": "0.2.14 (22 September 2026)",
     "text": "0.2.14 (22 September 2026)\n\nSupport multiple attempts for Codex CLI via codex exec &lt;...&gt; resume --last (requires Codex v0.36.0 or later).\nAdd retry_refusals option to set a configurable number of retries for requests refused due to content filtering.\nUpdate inspect_ai requirement to &gt;=0.3.133."
   },
   {
-    "objectID": "CHANGELOG.html#september-2026-6",
-    "href": "CHANGELOG.html#september-2026-6",
+    "objectID": "CHANGELOG.html#september-2026-5",
+    "href": "CHANGELOG.html#september-2026-5",
     "title": "Inspect SWE",
     "section": "0.2.13 (12 September 2026)",
     "text": "0.2.13 (12 September 2026)\n\nUpdate inspect_ai requirement to &gt;=0.3.132."
   },
   {
-    "objectID": "CHANGELOG.html#september-2026-7",
-    "href": "CHANGELOG.html#september-2026-7",
+    "objectID": "CHANGELOG.html#september-2026-6",
+    "href": "CHANGELOG.html#september-2026-6",
     "title": "Inspect SWE",
     "section": "0.2.12 (08 September 2026)",
     "text": "0.2.12 (08 September 2026)\n\nClose stdin when running agent binaries (needed for k8s provider to work properly)"
   },
   {
-    "objectID": "CHANGELOG.html#september-2026-8",
-    "href": "CHANGELOG.html#september-2026-8",
+    "objectID": "CHANGELOG.html#september-2026-7",
+    "href": "CHANGELOG.html#september-2026-7",
     "title": "Inspect SWE",
     "section": "0.2.11 (06 September 2026)",
     "text": "0.2.11 (06 September 2026)\n\nCodex CLI: New codex_cli() agent for OpenAI Codex.\nAdded filter parameter to agents for intercepting model generations."
   },
   {
-    "objectID": "CHANGELOG.html#september-2026-9",
-    "href": "CHANGELOG.html#september-2026-9",
+    "objectID": "CHANGELOG.html#september-2026-8",
+    "href": "CHANGELOG.html#september-2026-8",
     "title": "Inspect SWE",
     "section": "0.2.10 (03 September 2026)",
     "text": "0.2.10 (03 September 2026)\n\nAdd trace logging for claude code debug/verbose output."
