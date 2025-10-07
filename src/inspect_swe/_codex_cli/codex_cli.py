@@ -47,7 +47,7 @@ def codex_cli(
     env: dict[str, str] | None = None,
     user: str | None = None,
     sandbox: str | None = None,
-    version: Literal["auto", "sandbox", "latest"] | str = "auto",
+    version: Literal["auto", "sandbox", "latest"] | str = "0.44.0",
 ) -> Agent:
     """Codex CLI.
 
