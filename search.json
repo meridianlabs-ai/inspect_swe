@@ -4,7 +4,7 @@
     "href": "codex_cli.html",
     "title": "Codex CLI",
     "section": "",
-    "text": "The codex_cli() agent uses the the unattended mode of OpenAI Codex CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nCodex CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used—see the Installation section below for details.",
+    "text": "The codex_cli() agent uses the the unattended mode of OpenAI Codex CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteCodex CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used—see the Installation section below for details.",
     "crumbs": [
       "Home",
       "Agents",
@@ -16,7 +16,7 @@
     "href": "codex_cli.html#overview",
     "title": "Codex CLI",
     "section": "",
-    "text": "The codex_cli() agent uses the the unattended mode of OpenAI Codex CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nCodex CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used—see the Installation section below for details.",
+    "text": "The codex_cli() agent uses the the unattended mode of OpenAI Codex CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteCodex CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used—see the Installation section below for details.",
     "crumbs": [
       "Home",
       "Agents",
@@ -88,18 +88,25 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Codex CLI now uses 0.44.0 as its default version (since later versions include the apply_patch tool which relies on “custom” tool types not currently supported by Inspect)."
+    "text": "Codex CLI now uses the latest version of codex, which includes the apply_patch tool.\nUpdate inspect_ai requirement to &gt;= 0.3.138."
   },
   {
-    "objectID": "CHANGELOG.html#october-20",
-    "href": "CHANGELOG.html#october-20",
+    "objectID": "CHANGELOG.html#october-2-25",
+    "href": "CHANGELOG.html#october-2-25",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Codex CLI now uses 0.44.0 as its default version (since later versions include the apply_patch tool which relies on “custom” tool types not currently supported by Inspect)."
+    "text": "Codex CLI now uses the latest version of codex, which includes the apply_patch tool.\nUpdate inspect_ai requirement to &gt;= 0.3.138."
   },
   {
     "objectID": "CHANGELOG.html#october-2025",
     "href": "CHANGELOG.html#october-2025",
+    "title": "Inspect SWE",
+    "section": "0.2.20 (07 October 2025)",
+    "text": "0.2.20 (07 October 2025)\n\nCodex CLI now uses 0.44.0 as its default version (since later versions include the apply_patch tool which relies on “custom” tool types not currently supported by Inspect)."
+  },
+  {
+    "objectID": "CHANGELOG.html#october-2025-1",
+    "href": "CHANGELOG.html#october-2025-1",
     "title": "Inspect SWE",
     "section": "0.2.19 (05 October 2025)",
     "text": "0.2.19 (05 October 2025)\n\nAutomatically use a new port for each unique agent bridge invocation within a sample.\nAdded cached_agent_binaries() function to list previously downloaded and cached agent binaries."
@@ -193,7 +200,7 @@
     "href": "claude_code.html",
     "title": "Claude Code",
     "section": "",
-    "text": "The claude_code() agent uses the the unattended mode of Anthropic Claude Code to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.",
+    "text": "The claude_code() agent uses the the unattended mode of Anthropic Claude Code to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.",
     "crumbs": [
       "Home",
       "Agents",
@@ -205,7 +212,7 @@
     "href": "claude_code.html#overview",
     "title": "Claude Code",
     "section": "",
-    "text": "The claude_code() agent uses the the unattended mode of Anthropic Claude Code to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.",
+    "text": "The claude_code() agent uses the the unattended mode of Anthropic Claude Code to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.",
     "crumbs": [
       "Home",
       "Agents",
