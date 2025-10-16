@@ -1,4 +1,9 @@
-## 0.2.20 (07 October 20)
+## 0.2.21 (16 October 2-25)
+
+- Codex CLI now uses the latest version of codex, which includes the `apply_patch` tool.
+- Update `inspect_ai` requirement to >= 0.3.138.
+
+## 0.2.20 (07 October 2025)
 
 - Codex CLI now uses 0.44.0 as its default version (since later versions include the `apply_patch` tool which relies on "custom" tool types not currently supported by Inspect).
 

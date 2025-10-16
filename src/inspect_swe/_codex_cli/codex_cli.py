@@ -47,7 +47,7 @@ def codex_cli(
     env: dict[str, str] | None = None,
     user: str | None = None,
     sandbox: str | None = None,
-    version: Literal["auto", "sandbox", "latest"] | str = "0.44.0",
+    version: Literal["auto", "sandbox", "latest"] | str = "auto",
 ) -> Agent:
     """Codex CLI.
 
@@ -160,11 +160,6 @@ def codex_cli(
             # include web search if appropriate
             if "web_search" not in disallowed_tools:
                 cmd.extend(["-c", "tools.web_search=true"])
-
-            # # include the apply patch tools.
-            # # NOTE: include_apply_patch_tool not currently working in 'exec' mode:
-            # # https://github.com/openai/codex/issues/1952
-            # cmd.extend(["-c", "include_apply_patch_tool=true"])
 
             # register mcp servers
             if mcp_servers:
