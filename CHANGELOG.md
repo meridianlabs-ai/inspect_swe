@@ -1,3 +1,7 @@
+## Unreleased
+
+- Codex: Eliminate use of `--include-plan-tool` option (no longer available as plan mode is now [always on](https://github.com/openai/codex/pull/5384)).
+
 ## 0.2.22 (16 October 2-25)
 
 - Codex CLI now uses the latest version of codex, which includes the `apply_patch` tool.

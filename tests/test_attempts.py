@@ -1,7 +1,7 @@
 from typing import Literal
 
 import pytest
-from inspect_ai.log import ScoreEvent
+from inspect_ai.event import ScoreEvent
 
 from tests.conftest import (
     get_available_sandboxes,

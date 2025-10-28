@@ -38,7 +38,7 @@ def codex_cli(
     system_prompt: str | None = None,
     model_config: str = "gpt-5-codex",
     mcp_servers: Sequence[MCPServerConfig] | None = None,
-    disallowed_tools: list[Literal["web_search", "update_plan"]] | None = None,
+    disallowed_tools: list[Literal["web_search"]] | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     filter: GenerateFilter | None = None,
@@ -150,12 +150,6 @@ def codex_cli(
                 "--color",
                 "never",
             ]
-
-            # include update_plan if appropriate
-            if "update_plan" not in disallowed_tools:
-                cmd.append(
-                    "--include-plan-tool"
-                )  # https://github.com/openai/codex/commit/594248f415afbbf1796729c1e061ddc6be6b603a)
 
             # include web search if appropriate
             if "web_search" not in disallowed_tools:
