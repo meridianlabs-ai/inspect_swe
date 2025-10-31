@@ -203,7 +203,7 @@ def codex_cli(
                 # raise for error
                 if not result.success:
                     raise RuntimeError(
-                        f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
+                        f"Error executing codex cli agent: {result.stdout}\n{result.stderr}"
                     )
 
                 # exit if we are at max_attempts
