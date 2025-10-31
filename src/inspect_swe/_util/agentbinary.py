@@ -86,7 +86,9 @@ async def ensure_agent_binary_installed(
             resolved_version = version
 
         # write it into the container and return it
-        binary_path = f"/var/tmp/.5c95f967ca830048/{source.binary}-{resolved_version}-{platform}"
+        binary_path = (
+            f"/var/tmp/.5c95f967ca830048/{source.binary}-{resolved_version}-{platform}"
+        )
         await sandbox.write_file(binary_path, binary_bytes)
         await sandbox_exec(sandbox, f"chmod +x {binary_path}")
         if source.post_install:
