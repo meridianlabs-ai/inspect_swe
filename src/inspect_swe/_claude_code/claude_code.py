@@ -35,7 +35,6 @@ def claude_code(
     disallowed_tools: list[str] | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
-    small_model: str | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     cwd: str | None = None,
@@ -63,7 +62,6 @@ def claude_code(
         disallowed_tools: List of tool names to disallow entirely.
         attempts: Configure agent to make multiple attempts.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
-        small_model: Model to use for Haiku calls (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         cwd: Working directory to run claude code within.
@@ -79,7 +77,6 @@ def claude_code(
     """
     # resolve models
     model = f"inspect/{model}" if model is not None else "inspect"
-    small_model = f"inspect/{small_model}" if small_model is not None else "inspect"
 
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
@@ -91,7 +88,7 @@ def claude_code(
         store().set(MODEL_PORT, port)
 
         async with sandbox_agent_bridge(
-            state, filter=filter, retry_refusals=retry_refusals, port=port
+            state, model=model, filter=filter, retry_refusals=retry_refusals, port=port
         ) as bridge:
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
@@ -165,8 +162,8 @@ def claude_code(
                         "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
                         "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
                         "CLAUDE_CODE_SUBAGENT_MODEL": model,
-                        "ANTHROPIC_DEFAULT_HAIKU_MODEL": small_model,
-                        "ANTHROPIC_SMALL_FAST_MODEL": small_model,
+                        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+                        "ANTHROPIC_SMALL_FAST_MODEL": model,
                         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                         "IS_SANDBOX": "1",
                     }

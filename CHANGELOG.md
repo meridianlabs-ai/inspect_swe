@@ -1,3 +1,8 @@
+## 0.2.24 (01 November 2025)
+
+- Claude Code: Pass `model` through to agent bridge to accomodate scenarios where a non-Inspect model is specified.
+- Claude Code: Remove `small_model` setting as it conflicts with aforementioned fix to non-Inspect model.
+
 ## 0.2.23 (27 October 2025)
 
 - Codex: Eliminate use of `--include-plan-tool` option (no longer available as plan mode is now [always on](https://github.com/openai/codex/pull/5384)).

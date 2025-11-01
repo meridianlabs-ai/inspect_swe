@@ -18,14 +18,12 @@ def test_claude_code_options(sandbox: str) -> None:
     SYSTEM_PROMPT_CANARY = "32C507F0-9347-4DB2-8061-907682DD34EB"
     PASSED_MODEL = "anthropic/claude-sonnet-4-0"
     MAIN_MODEL = "anthropic/claude-3-7-sonnet-20250219"
-    SMALL_MODEL = "anthropic/claude-3-5-haiku-20241022"
 
     log = eval(
         system_explorer(
             claude_code(
                 system_prompt=f"This is a part of the system prompt {SYSTEM_PROMPT_CANARY}. When solving this task you should use a mix of the main model and the smaller model that you typically use for backgrounds tasks.",
                 model=MAIN_MODEL,
-                small_model=SMALL_MODEL,
                 env={"MAX_THINKING_TOKENS": "16666"},
             ),
             sandbox=sandbox,
@@ -36,7 +34,6 @@ def test_claude_code_options(sandbox: str) -> None:
     log_json = log.model_dump_json(exclude_none=True)
     assert SYSTEM_PROMPT_CANARY in log_json
     assert MAIN_MODEL in log_json
-    assert SMALL_MODEL in log_json
     assert "16666" in log_json
 
 
