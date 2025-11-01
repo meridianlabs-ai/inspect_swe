@@ -88,25 +88,39 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Codex CLI now uses the latest version of codex, which includes the apply_patch tool.\nUpdate inspect_ai requirement to &gt;= 0.3.138."
+    "text": "Claude Code: Pass model through to agent bridge to accomodate scenarios where a non-Inspect model is specified.\nClaude Code: Remove small_model setting as it conflicts with aforementioned fix to non-Inspect model."
   },
   {
-    "objectID": "CHANGELOG.html#october-2-25",
-    "href": "CHANGELOG.html#october-2-25",
+    "objectID": "CHANGELOG.html#november-2025",
+    "href": "CHANGELOG.html#november-2025",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Codex CLI now uses the latest version of codex, which includes the apply_patch tool.\nUpdate inspect_ai requirement to &gt;= 0.3.138."
+    "text": "Claude Code: Pass model through to agent bridge to accomodate scenarios where a non-Inspect model is specified.\nClaude Code: Remove small_model setting as it conflicts with aforementioned fix to non-Inspect model."
   },
   {
     "objectID": "CHANGELOG.html#october-2025",
     "href": "CHANGELOG.html#october-2025",
     "title": "Inspect SWE",
-    "section": "0.2.20 (07 October 2025)",
-    "text": "0.2.20 (07 October 2025)\n\nCodex CLI now uses 0.44.0 as its default version (since later versions include the apply_patch tool which relies on “custom” tool types not currently supported by Inspect)."
+    "section": "0.2.23 (27 October 2025)",
+    "text": "0.2.23 (27 October 2025)\n\nCodex: Eliminate use of --include-plan-tool option (no longer available as plan mode is now always on)."
   },
   {
     "objectID": "CHANGELOG.html#october-2025-1",
     "href": "CHANGELOG.html#october-2025-1",
+    "title": "Inspect SWE",
+    "section": "0.2.22 (16 October 2025)",
+    "text": "0.2.22 (16 October 2025)\n\nCodex CLI now uses the latest version of codex, which includes the apply_patch tool.\nUpdate inspect_ai requirement to &gt;= 0.3.138."
+  },
+  {
+    "objectID": "CHANGELOG.html#october-2025-2",
+    "href": "CHANGELOG.html#october-2025-2",
+    "title": "Inspect SWE",
+    "section": "0.2.20 (07 October 2025)",
+    "text": "0.2.20 (07 October 2025)\n\nCodex CLI now uses 0.44.0 as its default version (since later versions include the apply_patch tool which relies on “custom” tool types not currently supported by Inspect)."
+  },
+  {
+    "objectID": "CHANGELOG.html#october-2025-3",
+    "href": "CHANGELOG.html#october-2025-3",
     "title": "Inspect SWE",
     "section": "0.2.19 (05 October 2025)",
     "text": "0.2.19 (05 October 2025)\n\nAutomatically use a new port for each unique agent bridge invocation within a sample.\nAdded cached_agent_binaries() function to list previously downloaded and cached agent binaries."
