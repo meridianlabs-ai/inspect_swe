@@ -1,3 +1,7 @@
+## 0.2.25 (07 November 2025)
+
+- Codex CLI: Execute `codex` using the `user` passed to `codex_cli()`.
+
 ## 0.2.24 (01 November 2025)
 
 - Claude Code: Pass `model` through to agent bridge to accomodate scenarios where a non-Inspect model is specified.

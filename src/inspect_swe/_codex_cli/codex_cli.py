@@ -194,6 +194,7 @@ def codex_cli(
                         "RUST_LOG": "debug",
                     }
                     | (env or {}),
+                    user=user,
                 )
 
                 # record output for debug
