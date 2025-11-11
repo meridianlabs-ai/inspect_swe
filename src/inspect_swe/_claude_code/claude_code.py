@@ -10,7 +10,12 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, ChatMessageUser, GenerateFilter
+from inspect_ai.model import (
+    ChatMessageAssistant,
+    ChatMessageSystem,
+    ChatMessageUser,
+    GenerateFilter,
+)
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import sandbox as sandbox_env
@@ -132,9 +137,24 @@ def claude_code(
                 cmd.append("--disallowed-tools")
                 cmd.append(",".join(disallowed_tools))
 
+            last_assistant_idx = next(
+                (
+                    i
+                    for i, m in reversed(list(enumerate(state.messages)))
+                    if isinstance(m, ChatMessageAssistant)
+                ),
+                None,
+            )
+            has_assistant_response = last_assistant_idx is not None
+            start_idx = (
+                (last_assistant_idx + 1) if last_assistant_idx is not None else 0
+            )
+
             # user prompt
             prompt = "\n\n".join(
-                [m.text for m in state.messages if isinstance(m, ChatMessageUser)]
+                m.text
+                for m in state.messages[start_idx:]
+                if isinstance(m, ChatMessageUser)
             )
 
             # resolve sandbox
@@ -145,11 +165,17 @@ def claude_code(
             agent_prompt = prompt
             attempt_count = 0
             while True:
-                # either starting a new session or resuming one
-                id_param = "--session-id" if attempt_count == 0 else "--resume"
-                agent_cmd = (
-                    [claude_binary, id_param, session_id] + cmd + ["--", agent_prompt]
-                )
+                # resume previous conversation
+                if has_assistant_response or attempt_count > 0:
+                    agent_cmd = (
+                        [claude_binary, "--continue"] + cmd + ["--", agent_prompt]
+                    )
+                else:
+                    agent_cmd = (
+                        [claude_binary, "--session-id", session_id]
+                        + cmd
+                        + ["--", agent_prompt]
+                    )
 
                 # run agent
                 result = await sbox.exec(

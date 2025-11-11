@@ -11,7 +11,12 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, ChatMessageUser, GenerateFilter
+from inspect_ai.model import (
+    ChatMessageAssistant,
+    ChatMessageSystem,
+    ChatMessageUser,
+    GenerateFilter,
+)
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import SandboxEnvironment, store
@@ -129,13 +134,24 @@ def codex_cli(
                     codex_path("AGENTS.md"), "\n\n".join(system_messages)
                 )
 
-            # built full promot
+            last_assistant_idx = next(
+                (
+                    i
+                    for i, m in reversed(list(enumerate(state.messages)))
+                    if isinstance(m, ChatMessageAssistant)
+                ),
+                None,
+            )
+            has_assistant_response = last_assistant_idx is not None
+            start_idx = (
+                (last_assistant_idx + 1) if last_assistant_idx is not None else 0
+            )
+
+            # build user prompt
             prompt = "\n\n".join(
-                [
-                    message.text
-                    for message in state.messages
-                    if isinstance(message, ChatMessageUser)
-                ]
+                m.text
+                for m in state.messages[start_idx:]
+                if isinstance(m, ChatMessageUser)
             )
 
             # build agent cmd
@@ -180,8 +196,8 @@ def codex_cli(
                 agent_cmd = cmd.copy()
                 agent_cmd.append(agent_prompt)
 
-                # resume if requested
-                if attempt_count > 0:
+                # resume previous conversation
+                if has_assistant_response or attempt_count > 0:
                     agent_cmd.extend(["resume", "--last"])
 
                 # run agent
@@ -235,6 +251,20 @@ def codex_cli(
             # trace debug info
             debug_output.insert(0, "Codex CLI Debug Output:")
             trace("\n".join(debug_output))
+
+        # filter out scaffold messages that codex adds to the conversation
+        filter_tags = {
+            "<user_instructions>",
+            "<environment_context>",
+            "AGENTS.md",
+            "<INSTRUCTIONS>",
+        }
+        bridge.state.messages = [
+            m
+            for m in bridge.state.messages
+            if not isinstance(m, ChatMessageUser)
+            or not any(tag in m.text for tag in filter_tags)
+        ]
 
         # return success
         return bridge.state
