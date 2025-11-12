@@ -1,7 +1,6 @@
 ## Unreleased
 
 - Fix multi-call sessions to properly handle multiple `run()` calls with the same agent (only send new messages instead of resending all previous messages).
-- Codex CLI: Filter out scaffold messages from conversation history.
 
 ## 0.2.25 (07 November 2025)
 
