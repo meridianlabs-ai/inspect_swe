@@ -252,20 +252,6 @@ def codex_cli(
             debug_output.insert(0, "Codex CLI Debug Output:")
             trace("\n".join(debug_output))
 
-        # filter out scaffold messages that codex adds to the conversation
-        filter_tags = {
-            "<user_instructions>",
-            "<environment_context>",
-            "AGENTS.md",
-            "<INSTRUCTIONS>",
-        }
-        bridge.state.messages = [
-            m
-            for m in bridge.state.messages
-            if not isinstance(m, ChatMessageUser)
-            or not any(tag in m.text for tag in filter_tags)
-        ]
-
         # return success
         return bridge.state
 
