@@ -1,3 +1,8 @@
+## 0.2.26 (15 November 2025)
+
+- Copy agent binary executables to /var/tmp/ (more liberal default permissions)
+- Agent binary chmod+x using "root" user for scenarios where they agent isn't root.
+
 ## 0.2.25 (07 November 2025)
 
 - Codex CLI: Execute `codex` using the `user` passed to `codex_cli()`.
