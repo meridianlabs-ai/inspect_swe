@@ -114,7 +114,7 @@ def codex_cli(
 
             # determine CODEX_HOME (default to whatever sandbox working dir is)
             if home_dir is None:
-                working_dir = (await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)).strip()
+                working_dir = await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)
                 if not working_dir.endswith("/"):
                     working_dir = f"{working_dir}/"
                 codex_home = f"{working_dir}.codex"
@@ -272,7 +272,7 @@ async def _last_rollout(
             f"find '{codex_home}/sessions' -type f -name 'rollout-*.jsonl' -exec ls -t -- {{}} + | head -n 1",
             user=user,
         )
-        return rollout.strip()
+        return rollout
     except RuntimeError as ex:
         logger.warning(f"Error attempting to read rollout file: {ex}")
         return None
