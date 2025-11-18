@@ -68,7 +68,7 @@ def codex_cli(
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
-        home_dir: Home directory to use for codex cli.
+        home_dir: Home directory to use for codex cli. If set, AGENTS.md and the MCP configuration will be written here.
         cwd: Working directory to run codex cli within.
         env: Environment variables to set for codex cli
         user: User to execute codex cli with.
@@ -102,12 +102,6 @@ def codex_cli(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)
             )
 
-            # helper to create codex cwd relative paths
-            def codex_path(file: str) -> str:
-                return (
-                    file if cwd is None else os.path.join(cwd, file).replace("\\", "/")
-                )
-
             # build system prompt
             system_messages = [
                 m.text for m in state.messages if isinstance(m, ChatMessageSystem)
@@ -128,6 +122,24 @@ def codex_cli(
                 # Resolve ~ and $VARS inside the sandbox
                 codex_home = await sandbox_exec(sbox, f'eval echo "{home_dir}"', user=user, cwd=cwd)
             await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=user)
+
+            # helper to create codex cwd relative paths or paths within the codex home directory
+            def codex_path(file: str = None, subdir: str = None) -> str:
+                # If `home_dir` is set, ignore `subdir` and use resolved path of `home_dir`, since
+                # in this case, both `AGENTS.md` and `config.toml` should be in the home directory.
+                if home_dir is not None:
+                    dir = codex_home
+                elif subdir is not None:
+                    dir = subdir if cwd is None else os.path.join(cwd, subdir).replace("\\", "/")
+                else:
+                    dir = cwd
+
+                if file is None:
+                    return dir
+
+                return (
+                    file if dir is None else os.path.join(dir, file).replace("\\", "/")
+                )
 
             # write system messages to AGENTS.md
             if system_messages:
@@ -170,11 +182,14 @@ def codex_cli(
                             exclude={"name", "tools"}, exclude_none=True
                         )
                     )
-                await sandbox_exec(
-                    sbox, cmd=f"mkdir -p {codex_path('.codex')}", user=user
-                )
+                # `codex_home` was created above, so skip the sandbox call if it's the same
+                mcp_config_dir = codex_path(subdir=".codex")
+                if mcp_config_dir != codex_home:
+                    await sandbox_exec(
+                        sbox, cmd=f"mkdir -p {mcp_config_dir}", user=user
+                    )
                 await sbox.write_file(
-                    codex_path(".codex/config.toml"), to_toml(mcp_config)
+                    codex_path("config.toml", subdir=".codex"), to_toml(mcp_config)
                 )
 
             # execute the agent (track debug output)
