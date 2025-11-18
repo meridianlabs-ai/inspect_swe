@@ -147,7 +147,7 @@ def codex_cli(
                     codex_path("AGENTS.md"), "\n\n".join(system_messages)
                 )
 
-            # built full promot
+            # built full prompt
             prompt = "\n\n".join(
                 [
                     message.text
