@@ -43,6 +43,7 @@ def codex_cli(
     model: str | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
+    home_dir: str | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -67,6 +68,7 @@ def codex_cli(
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
+        home_dir: Home directory to use for codex cli.
         cwd: Working directory to run codex cli within.
         env: Environment variables to set for codex cli
         user: User to execute codex cli with.
@@ -116,11 +118,15 @@ def codex_cli(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
-            # determine CODEX_HOME (we want this to be whatever sandbox working dir is)
-            working_dir = (await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)).strip()
-            if not working_dir.endswith("/"):
-                working_dir = f"{working_dir}/"
-            codex_home = f"{working_dir}.codex"
+            # determine CODEX_HOME (default to whatever sandbox working dir is)
+            if home_dir is None:
+                working_dir = (await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)).strip()
+                if not working_dir.endswith("/"):
+                    working_dir = f"{working_dir}/"
+                codex_home = f"{working_dir}.codex"
+            else:
+                # Resolve ~ and $VARS inside the sandbox
+                codex_home = await sandbox_exec(sbox, f'eval echo "{home_dir}"', user=user, cwd=cwd)
             await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=user)
 
             # write system messages to AGENTS.md
