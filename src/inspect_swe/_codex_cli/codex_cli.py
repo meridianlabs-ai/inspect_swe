@@ -191,7 +191,7 @@ def codex_cli(
                     env={
                         "CODEX_HOME": codex_home,
                         "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
-                        "RUST_LOG": "debug",
+                        "RUST_LOG": "warning",
                     }
                     | (env or {}),
                     user=user,
