@@ -134,6 +134,9 @@ def codex_cli(
                     codex_path("AGENTS.md"), "\n\n".join(system_messages)
                 )
 
+            if state.messages and isinstance(state.messages[-1], ChatMessageAssistant):
+                raise ValueError("No user prompt after assistant message")
+
             last_assistant_idx = next(
                 (
                     i
