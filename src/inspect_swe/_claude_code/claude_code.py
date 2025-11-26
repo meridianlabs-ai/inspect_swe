@@ -10,12 +10,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import (
-    ChatMessageAssistant,
-    ChatMessageSystem,
-    ChatMessageUser,
-    GenerateFilter,
-)
+from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import sandbox as sandbox_env
@@ -24,6 +19,7 @@ from pydantic_core import to_json
 
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
+from .._util.messages import build_user_prompt
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 
@@ -137,28 +133,7 @@ def claude_code(
                 cmd.append("--disallowed-tools")
                 cmd.append(",".join(disallowed_tools))
 
-            if state.messages and isinstance(state.messages[-1], ChatMessageAssistant):
-                raise ValueError("No user prompt after assistant message")
-
-            last_assistant_idx = next(
-                (
-                    i
-                    for i, m in reversed(list(enumerate(state.messages)))
-                    if isinstance(m, ChatMessageAssistant)
-                ),
-                None,
-            )
-            has_assistant_response = last_assistant_idx is not None
-            start_idx = (
-                (last_assistant_idx + 1) if last_assistant_idx is not None else 0
-            )
-
-            # user prompt
-            prompt = "\n\n".join(
-                m.text
-                for m in state.messages[start_idx:]
-                if isinstance(m, ChatMessageUser)
-            )
+            prompt, has_assistant_response = build_user_prompt(state.messages)
 
             # resolve sandbox
             sbox = sandbox_env(sandbox)
