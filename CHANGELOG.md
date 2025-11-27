@@ -1,6 +1,7 @@
 ## Unreleased
 
 - Codex CLI: Use `RUST_LOG=warning` (rather than `debug`) to reduce amount of output produced by `exec()`.
+- Codex CLI: Enable setting a custom `home_dir` (override default of ~).
 - Handle multiple `run()` calls to the same agent (resume session and send only new messages in prompt).
 
 ## 0.2.26 (15 November 2025)
