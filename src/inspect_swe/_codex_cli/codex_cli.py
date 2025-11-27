@@ -44,6 +44,7 @@ def codex_cli(
     model: str | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
+    home_dir: str | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -68,6 +69,7 @@ def codex_cli(
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
+        home_dir: Home directory to use for codex cli. If set, AGENTS.md and the MCP configuration will be written here.
         cwd: Working directory to run codex cli within.
         env: Environment variables to set for codex cli
         user: User to execute codex cli with.
@@ -101,12 +103,6 @@ def codex_cli(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)
             )
 
-            # helper to create codex cwd relative paths
-            def codex_path(file: str) -> str:
-                return (
-                    file if cwd is None else os.path.join(cwd, file).replace("\\", "/")
-                )
-
             # build system prompt
             system_messages = [
                 m.text for m in state.messages if isinstance(m, ChatMessageSystem)
@@ -117,18 +113,40 @@ def codex_cli(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
-            # determine CODEX_HOME (we want this to be whatever sandbox working dir is)
-            working_dir = (await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)).strip()
-            if not working_dir.endswith("/"):
-                working_dir = f"{working_dir}/"
-            codex_home = f"{working_dir}.codex"
+            # determine CODEX_HOME (default to whatever sandbox working dir is)
+            if home_dir is None:
+                working_dir = await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)
+                codex_home = _join_path(working_dir, ".codex")
+            else:
+                # Resolve ~ and $VARS inside the sandbox
+                codex_home = await sandbox_exec(
+                    sbox, f'eval echo "{home_dir}"', user=user, cwd=cwd
+                )
             await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=user)
+
+            # location for agents_md
+            def codex_agents_md() -> str:
+                AGENTS_MD = "AGENTS.md"
+                if home_dir is not None:
+                    return _join_path(codex_home, AGENTS_MD)
+                elif cwd is not None:
+                    return _join_path(cwd, AGENTS_MD)
+                else:
+                    return AGENTS_MD
+
+            # location for config_toml (either codex_home or cwd/.codex )
+            async def codex_config_toml() -> str:
+                CONFIG_TOML = "config.toml"
+                if home_dir is not None:
+                    return _join_path(codex_home, CONFIG_TOML)
+                else:
+                    dir = ".codex" if cwd is None else _join_path(cwd, ".codex")
+                    await sandbox_exec(sbox, cmd=f"mkdir -p {dir}", user=user)
+                    return _join_path(dir, CONFIG_TOML)
 
             # write system messages to AGENTS.md
             if system_messages:
-                await sbox.write_file(
-                    codex_path("AGENTS.md"), "\n\n".join(system_messages)
-                )
+                await sbox.write_file(codex_agents_md(), "\n\n".join(system_messages))
 
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
@@ -158,12 +176,7 @@ def codex_cli(
                             exclude={"name", "tools"}, exclude_none=True
                         )
                     )
-                await sandbox_exec(
-                    sbox, cmd=f"mkdir -p {codex_path('.codex')}", user=user
-                )
-                await sbox.write_file(
-                    codex_path(".codex/config.toml"), to_toml(mcp_config)
-                )
+                await sbox.write_file(await codex_config_toml(), to_toml(mcp_config))
 
             # execute the agent (track debug output)
             debug_output: list[str] = []
@@ -236,6 +249,10 @@ def codex_cli(
     return agent_with(execute, name=name, description=description)
 
 
+def _join_path(base: str, path: str) -> str:
+    return os.path.join(base, path).replace("\\", "/")
+
+
 async def _last_rollout(
     sandbox: SandboxEnvironment, codex_home: str, user: str | None
 ) -> str | None:
@@ -245,7 +262,7 @@ async def _last_rollout(
             f"find '{codex_home}/sessions' -type f -name 'rollout-*.jsonl' -exec ls -t -- {{}} + | head -n 1",
             user=user,
         )
-        return rollout.strip()
+        return rollout
     except RuntimeError as ex:
         logger.warning(f"Error attempting to read rollout file: {ex}")
         return None
