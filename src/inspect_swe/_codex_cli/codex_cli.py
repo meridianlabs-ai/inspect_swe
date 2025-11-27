@@ -11,13 +11,14 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, ChatMessageUser, GenerateFilter
+from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import SandboxEnvironment, store
 from inspect_ai.util import sandbox as sandbox_env
 
 from inspect_swe._util._async import is_callable_coroutine
+from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.sandbox import sandbox_exec
 from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
@@ -147,14 +148,7 @@ def codex_cli(
                     codex_path("AGENTS.md"), "\n\n".join(system_messages)
                 )
 
-            # built full prompt
-            prompt = "\n\n".join(
-                [
-                    message.text
-                    for message in state.messages
-                    if isinstance(message, ChatMessageUser)
-                ]
-            )
+            prompt, has_assistant_response = build_user_prompt(state.messages)
 
             # build agent cmd
             cmd = [
@@ -201,8 +195,8 @@ def codex_cli(
                 agent_cmd = cmd.copy()
                 agent_cmd.append(agent_prompt)
 
-                # resume if requested
-                if attempt_count > 0:
+                # resume previous conversation
+                if has_assistant_response or attempt_count > 0:
                     agent_cmd.extend(["resume", "--last"])
 
                 # run agent
@@ -212,7 +206,7 @@ def codex_cli(
                     env={
                         "CODEX_HOME": codex_home,
                         "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
-                        "RUST_LOG": "debug",
+                        "RUST_LOG": "warning",
                     }
                     | (env or {}),
                     user=user,
