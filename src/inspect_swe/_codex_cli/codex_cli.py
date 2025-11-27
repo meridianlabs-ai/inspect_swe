@@ -116,9 +116,7 @@ def codex_cli(
             # determine CODEX_HOME (default to whatever sandbox working dir is)
             if home_dir is None:
                 working_dir = await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)
-                if not working_dir.endswith("/"):
-                    working_dir = f"{working_dir}/"
-                codex_home = f"{working_dir}.codex"
+                codex_home = _join_path(working_dir, ".codex")
             else:
                 # Resolve ~ and $VARS inside the sandbox
                 codex_home = await sandbox_exec(
@@ -126,33 +124,29 @@ def codex_cli(
                 )
             await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=user)
 
-            # helper to create codex cwd relative paths or paths within the codex home directory
-            def codex_path(file: str | None = None, subdir: str | None = None) -> str:
-                # If `home_dir` is set, ignore `subdir` and use resolved path of `home_dir`, since
-                # in this case, both `AGENTS.md` and `config.toml` should be in the home directory.
+            # location for agents_md
+            def codex_agents_md() -> str:
+                AGENTS_MD = "AGENTS.md"
                 if home_dir is not None:
-                    dir = codex_home
-                elif subdir is not None:
-                    dir = (
-                        subdir
-                        if cwd is None
-                        else os.path.join(cwd, subdir).replace("\\", "/")
-                    )
+                    return _join_path(codex_home, AGENTS_MD)
+                elif cwd is not None:
+                    return _join_path(cwd, AGENTS_MD)
                 else:
-                    dir = cwd
+                    return AGENTS_MD
 
-                if file is None:
-                    return dir
-
-                return (
-                    file if dir is None else os.path.join(dir, file).replace("\\", "/")
-                )
+            # location for config_toml (either codex_home or cwd/.codex )
+            async def codex_config_toml() -> str:
+                CONFIG_TOML = "config.toml"
+                if home_dir is not None:
+                    return _join_path(codex_home, CONFIG_TOML)
+                else:
+                    dir = ".codex" if cwd is None else _join_path(cwd, ".codex")
+                    await sandbox_exec(sbox, cmd=f"mkdir -p {dir}", user=user)
+                    return _join_path(dir, CONFIG_TOML)
 
             # write system messages to AGENTS.md
             if system_messages:
-                await sbox.write_file(
-                    codex_path("AGENTS.md"), "\n\n".join(system_messages)
-                )
+                await sbox.write_file(codex_agents_md(), "\n\n".join(system_messages))
 
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
@@ -182,15 +176,7 @@ def codex_cli(
                             exclude={"name", "tools"}, exclude_none=True
                         )
                     )
-                # `codex_home` was created above, so skip the sandbox call if it's the same
-                mcp_config_dir = codex_path(subdir=".codex")
-                if mcp_config_dir != codex_home:
-                    await sandbox_exec(
-                        sbox, cmd=f"mkdir -p {mcp_config_dir}", user=user
-                    )
-                await sbox.write_file(
-                    codex_path("config.toml", subdir=".codex"), to_toml(mcp_config)
-                )
+                await sbox.write_file(await codex_config_toml(), to_toml(mcp_config))
 
             # execute the agent (track debug output)
             debug_output: list[str] = []
@@ -261,6 +247,10 @@ def codex_cli(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+def _join_path(base: str, path: str) -> str:
+    return os.path.join(base, path).replace("\\", "/")
 
 
 async def _last_rollout(
