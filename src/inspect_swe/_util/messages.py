@@ -3,7 +3,7 @@ from inspect_ai.model import ChatMessage, ChatMessageAssistant, ChatMessageUser
 
 def build_user_prompt(messages: list[ChatMessage]) -> tuple[str, bool]:
     if messages and isinstance(messages[-1], ChatMessageAssistant):
-        raise ValueError("No user prompt after assistant message")
+        raise ValueError("Messages input ends with an assistant messages.")
 
     last_assistant_idx = next(
         (
