@@ -10,7 +10,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, ChatMessageUser, GenerateFilter
+from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.util import sandbox as sandbox_env
@@ -19,6 +19,7 @@ from pydantic_core import to_json
 
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
+from .._util.messages import build_user_prompt
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 
@@ -132,10 +133,7 @@ def claude_code(
                 cmd.append("--disallowed-tools")
                 cmd.append(",".join(disallowed_tools))
 
-            # user prompt
-            prompt = "\n\n".join(
-                [m.text for m in state.messages if isinstance(m, ChatMessageUser)]
-            )
+            prompt, has_assistant_response = build_user_prompt(state.messages)
 
             # resolve sandbox
             sbox = sandbox_env(sandbox)
@@ -145,11 +143,17 @@ def claude_code(
             agent_prompt = prompt
             attempt_count = 0
             while True:
-                # either starting a new session or resuming one
-                id_param = "--session-id" if attempt_count == 0 else "--resume"
-                agent_cmd = (
-                    [claude_binary, id_param, session_id] + cmd + ["--", agent_prompt]
-                )
+                # resume previous conversation
+                if has_assistant_response or attempt_count > 0:
+                    agent_cmd = (
+                        [claude_binary, "--continue"] + cmd + ["--", agent_prompt]
+                    )
+                else:
+                    agent_cmd = (
+                        [claude_binary, "--session-id", session_id]
+                        + cmd
+                        + ["--", agent_prompt]
+                    )
 
                 # run agent
                 result = await sbox.exec(
