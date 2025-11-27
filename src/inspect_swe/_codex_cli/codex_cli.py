@@ -121,17 +121,23 @@ def codex_cli(
                 codex_home = f"{working_dir}.codex"
             else:
                 # Resolve ~ and $VARS inside the sandbox
-                codex_home = await sandbox_exec(sbox, f'eval echo "{home_dir}"', user=user, cwd=cwd)
+                codex_home = await sandbox_exec(
+                    sbox, f'eval echo "{home_dir}"', user=user, cwd=cwd
+                )
             await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=user)
 
             # helper to create codex cwd relative paths or paths within the codex home directory
-            def codex_path(file: str = None, subdir: str = None) -> str:
+            def codex_path(file: str | None = None, subdir: str | None = None) -> str:
                 # If `home_dir` is set, ignore `subdir` and use resolved path of `home_dir`, since
                 # in this case, both `AGENTS.md` and `config.toml` should be in the home directory.
                 if home_dir is not None:
                     dir = codex_home
                 elif subdir is not None:
-                    dir = subdir if cwd is None else os.path.join(cwd, subdir).replace("\\", "/")
+                    dir = (
+                        subdir
+                        if cwd is None
+                        else os.path.join(cwd, subdir).replace("\\", "/")
+                    )
                 else:
                     dir = cwd
 
