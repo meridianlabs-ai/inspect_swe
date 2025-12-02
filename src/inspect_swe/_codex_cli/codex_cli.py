@@ -38,7 +38,7 @@ def codex_cli(
        and iterating on code across multiple languages.
     """),
     system_prompt: str | None = None,
-    model_config: str = "gpt-5-codex",
+    model_config: str = "gpt-5.1",
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     disallowed_tools: list[Literal["web_search"]] | None = None,
