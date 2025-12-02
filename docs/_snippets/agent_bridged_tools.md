@@ -1,6 +1,6 @@
 ## Bridged Tools {#bridged-tools}
 
-You can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the `bridged_tools` parameter. This is useful when you have tools that need to run on the host (e.g. tools that access host resources, databases, or APIs) but want them available to the agent running inside the sandbox.
+You can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the `bridged_tools` parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.
 
 Tools are specified via [`BridgedToolsSpec`](https://inspect.aisi.org.uk/reference/inspect_ai.agent.html#bridgedtoolsspec) which wraps a list of Inspect tools:
 
