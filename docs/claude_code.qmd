@@ -13,6 +13,8 @@ agent_disallowed_tool: "WebSearch"
 
 {{< include _snippets/agent_mcp_servers.md >}}
 
+{{< include _snippets/agent_bridged_tools.md >}}
+
 ## Installation
 
 By default, the agent will download the current stable version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:

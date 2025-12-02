@@ -6,6 +6,7 @@ The following options are supported for customizing the behavior of the agent:
 |------------------------------------|------------------------------------|
 | `system_prompt` | Additional system prompt to append to default system prompt. |
 | `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
+| `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
 | `disallowed_tools` | Optionally disallow tools (e.g. `"{{< meta agent_disallowed_tool >}}"`) |
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
