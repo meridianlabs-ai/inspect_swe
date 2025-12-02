@@ -132,7 +132,9 @@ def claude_code(
             cmd_allowed_tools: list[str] = []
             all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
             if all_mcp_servers:
-                mcp_server_args, mcp_allowed_tools = resolve_mcp_servers(all_mcp_servers)
+                mcp_server_args, mcp_allowed_tools = resolve_mcp_servers(
+                    all_mcp_servers
+                )
                 cmd.extend(mcp_server_args)
                 cmd_allowed_tools.extend(mcp_allowed_tools)
 
