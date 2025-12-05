@@ -1,6 +1,7 @@
 ## Unreleased
 
 - Use GPT 5.1 system prompt by default (includes guidance on using the `update_plan()` tool which is excluded from gpt-5-codex system prompt).
+- Update Inspect dependency to 0.3.152 (required for bridged tools).
 
 ## 0.2.27 (27 November 2025)
 
