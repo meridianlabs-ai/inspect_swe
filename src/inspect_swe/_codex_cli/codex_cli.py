@@ -7,6 +7,7 @@ from inspect_ai.agent import (
     Agent,
     AgentAttempts,
     AgentState,
+    BridgedToolsSpec,
     agent,
     agent_with,
     sandbox_agent_bridge,
@@ -39,6 +40,7 @@ def codex_cli(
     system_prompt: str | None = None,
     model_config: str = "gpt-5.1",
     mcp_servers: Sequence[MCPServerConfig] | None = None,
+    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     disallowed_tools: list[Literal["web_search"]] | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
@@ -65,6 +67,9 @@ def codex_cli(
         system_prompt: Additional system prompt to append to default system prompt.
         model_config: Model configuration profile (e.g. used to determine the system prompt).
         mcp_servers: MCP servers to make available to the agent.
+        bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
+            Each BridgedToolsSpec creates an MCP server that makes the specified
+            tools available to the agent running in the sandbox.
         disallowed_tools: Optionally disallow tools (currently only web_search).
         attempts: Configure agent to make multiple attempts.
         model: Model name to use (defaults to main model for task).
@@ -99,7 +104,12 @@ def codex_cli(
         store().set(MODEL_PORT, port)
 
         async with sandbox_agent_bridge(
-            state, model=model, filter=filter, retry_refusals=retry_refusals, port=port
+            state,
+            model=model,
+            filter=filter,
+            retry_refusals=retry_refusals,
+            port=port,
+            bridged_tools=bridged_tools,
         ) as bridge:
             # ensure codex is installed and get binary location
             codex_binary = await ensure_agent_binary_installed(
@@ -175,10 +185,11 @@ def codex_cli(
                 for key, value in config_overrides.items():
                     cmd.extend(["-c", f"{key}={value}"])
 
-            # register mcp servers
-            if mcp_servers:
+            # register mcp servers (combine static configs with bridged tools)
+            all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
+            if all_mcp_servers:
                 mcp_config: dict[str, Any] = {}
-                for mcp_server in mcp_servers or []:
+                for mcp_server in all_mcp_servers:
                     mcp_config[f"mcp_servers.{mcp_server.name}"] = (
                         mcp_server.model_dump(
                             exclude={"name", "tools"}, exclude_none=True
