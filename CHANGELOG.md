@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Codex CLI and Claude Code: Added `bridged_tools` parameter for exposing host-side Inspect tools to sandboxed agents via MCP protocol.
 - Use GPT 5.1 system prompt by default (includes guidance on using the `update_plan()` tool which is excluded from gpt-5-codex system prompt).
 - Update Inspect dependency to 0.3.152 (required for bridged tools).
 

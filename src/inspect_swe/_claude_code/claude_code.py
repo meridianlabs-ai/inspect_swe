@@ -6,6 +6,7 @@ from inspect_ai.agent import (
     Agent,
     AgentAttempts,
     AgentState,
+    BridgedToolsSpec,
     agent,
     agent_with,
     sandbox_agent_bridge,
@@ -33,6 +34,7 @@ def claude_code(
     """),
     system_prompt: str | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
+    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     disallowed_tools: list[str] | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
@@ -60,6 +62,9 @@ def claude_code(
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
         system_prompt: Additional system prompt to append to default system prompt.
         mcp_servers: MCP servers to make available to the agent.
+        bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
+            Each BridgedToolsSpec creates an MCP server that makes the specified
+            tools available to the agent running in the sandbox.
         disallowed_tools: List of tool names to disallow entirely.
         attempts: Configure agent to make multiple attempts.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
@@ -89,7 +94,12 @@ def claude_code(
         store().set(MODEL_PORT, port)
 
         async with sandbox_agent_bridge(
-            state, model=model, filter=filter, retry_refusals=retry_refusals, port=port
+            state,
+            model=model,
+            filter=filter,
+            retry_refusals=retry_refusals,
+            port=port,
+            bridged_tools=bridged_tools,
         ) as bridge:
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
@@ -118,10 +128,13 @@ def claude_code(
             if system_messages:
                 cmd.extend(["--append-system-prompt", "\n\n".join(system_messages)])
 
-            # mcp servers
+            # mcp servers (combine static configs with bridged tools)
             cmd_allowed_tools: list[str] = []
-            if mcp_servers:
-                mcp_server_args, mcp_allowed_tools = resolve_mcp_servers(mcp_servers)
+            all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
+            if all_mcp_servers:
+                mcp_server_args, mcp_allowed_tools = resolve_mcp_servers(
+                    all_mcp_servers
+                )
                 cmd.extend(mcp_server_args)
                 cmd_allowed_tools.extend(mcp_allowed_tools)
 
