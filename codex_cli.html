@@ -227,6 +227,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#basic-usage" id="toc-basic-usage" class="nav-link" data-scroll-target="#basic-usage">Basic Usage</a></li>
   <li><a href="#options" id="toc-options" class="nav-link" data-scroll-target="#options">Options</a></li>
   <li><a href="#mcp-servers" id="toc-mcp-servers" class="nav-link" data-scroll-target="#mcp-servers">MCP Servers</a></li>
+  <li><a href="#bridged-tools" id="toc-bridged-tools" class="nav-link" data-scroll-target="#bridged-tools">Bridged Tools</a></li>
   <li><a href="#installation-1" id="toc-installation-1" class="nav-link" data-scroll-target="#installation-1">Installation</a></li>
   <li><a href="#troubleshooting" id="toc-troubleshooting" class="nav-link" data-scroll-target="#troubleshooting">Troubleshooting</a></li>
   </ul>
@@ -320,24 +321,32 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td>MCP servers (see <a href="#mcp-servers">MCP Servers</a> below for details).</td>
 </tr>
 <tr class="even">
+<td><code>bridged_tools</code></td>
+<td>Host-side Inspect tools to expose via MCP (see <a href="#bridged-tools">Bridged Tools</a> below for details).</td>
+</tr>
+<tr class="odd">
 <td><code>disallowed_tools</code></td>
 <td>Optionally disallow tools (e.g.&nbsp;<code>"web_search"</code>)</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>attempts</code></td>
 <td>Allow the agent to have multiple scored attempts at solving the task.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>model</code></td>
 <td>Model name to use for agent (defaults to main model for task).</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>filter</code></td>
 <td>Filter for intercepting bridged model requests.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>retry_refusals</code></td>
 <td>Should refusals be retried? (pass number of times to retry)</td>
+</tr>
+<tr class="even">
+<td><code>home_dir</code></td>
+<td>Home directory to use for codex cli. When set, AGENTS.md and the MCP configuration will be written here rather than to .codex</td>
 </tr>
 <tr class="odd">
 <td><code>cwd</code></td>
@@ -413,6 +422,48 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p>Note that we run the MCP server using the <code>--offline</code> option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).</p>
 </section>
+<section id="bridged-tools" class="level2">
+<h2 class="anchored" data-anchor-id="bridged-tools">Bridged Tools</h2>
+<p>You can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the <code>bridged_tools</code> parameter. This allows you to run tools on the host (e.g.&nbsp;tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.</p>
+<p>Tools are specified via <a href="https://inspect.aisi.org.uk/reference/inspect_ai.agent.html#bridgedtoolsspec"><code>BridgedToolsSpec</code></a> which wraps a list of Inspect tools:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_ai <span class="im">import</span> Task, task</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_ai.agent <span class="im">import</span> BridgedToolsSpec</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_ai.dataset <span class="im">import</span> Sample</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_ai.tool <span class="im">import</span> tool</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_swe <span class="im">import</span> codex_cli</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="at">@tool</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> search_database():</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">async</span> <span class="kw">def</span> execute(query: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>        <span class="co">"""Search the internal database.</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="co">        Args:</span></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a><span class="co">            query: The search query.</span></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a><span class="co">        """</span></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a>        <span class="co"># This runs on the host, not in the sandbox</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="ss">f"Results for: </span><span class="sc">{</span>query<span class="sc">}</span><span class="ss">"</span></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> execute</span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="at">@task</span></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> investigator() <span class="op">-&gt;</span> Task:</span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> Task(</span>
+<span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a>        dataset<span class="op">=</span>[</span>
+<span id="cb6-23"><a href="#cb6-23" aria-hidden="true" tabindex="-1"></a>            Sample(<span class="bu">input</span><span class="op">=</span><span class="st">"Search for information about MCP protocols."</span>)</span>
+<span id="cb6-24"><a href="#cb6-24" aria-hidden="true" tabindex="-1"></a>        ],</span>
+<span id="cb6-25"><a href="#cb6-25" aria-hidden="true" tabindex="-1"></a>        solver<span class="op">=</span>codex_cli(</span>
+<span id="cb6-26"><a href="#cb6-26" aria-hidden="true" tabindex="-1"></a>            system_prompt<span class="op">=</span><span class="st">"Use the search tool to research."</span>,</span>
+<span id="cb6-27"><a href="#cb6-27" aria-hidden="true" tabindex="-1"></a>            bridged_tools<span class="op">=</span>[</span>
+<span id="cb6-28"><a href="#cb6-28" aria-hidden="true" tabindex="-1"></a>                BridgedToolsSpec(</span>
+<span id="cb6-29"><a href="#cb6-29" aria-hidden="true" tabindex="-1"></a>                    name<span class="op">=</span><span class="st">"host_tools"</span>,</span>
+<span id="cb6-30"><a href="#cb6-30" aria-hidden="true" tabindex="-1"></a>                    tools<span class="op">=</span>[search_database()]</span>
+<span id="cb6-31"><a href="#cb6-31" aria-hidden="true" tabindex="-1"></a>                )</span>
+<span id="cb6-32"><a href="#cb6-32" aria-hidden="true" tabindex="-1"></a>            ]</span>
+<span id="cb6-33"><a href="#cb6-33" aria-hidden="true" tabindex="-1"></a>        ),</span>
+<span id="cb6-34"><a href="#cb6-34" aria-hidden="true" tabindex="-1"></a>        sandbox<span class="op">=</span>(<span class="st">"docker"</span>, <span class="st">"Dockerfile"</span>),</span>
+<span id="cb6-35"><a href="#cb6-35" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>The <code>name</code> field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple <code>BridgedToolsSpec</code> instances to create separate MCP servers for different tool groups.</p>
+<p>See the <a href="https://inspect.aisi.org.uk/agent-bridge.html#bridged-tools">Bridged Tools</a> documentation for more details on the architecture and how tool execution flows between host and sandbox.</p>
+</section>
 <section id="installation-1" class="level2">
 <h2 class="anchored" data-anchor-id="installation-1">Installation</h2>
 <p>By default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can override this behaviour using the <code>version</code> option:</p>
@@ -449,20 +500,20 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>If you don’t ever want to rely on automatic downloads of Codex CLI (e.g.&nbsp;if you run your evaluations offline), you can use one of two approaches:</p>
 <ol type="1">
 <li><p>Pre-install the version of Codex CLI you want to use in the sandbox, then use <code>version="sandbox"</code>:</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>codex_cli(version<span class="op">=</span><span class="st">"sandbox"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>codex_cli(version<span class="op">=</span><span class="st">"sandbox"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
 <li><p>Download the version of Codex CLI you want to use into the cache, then specify that version explicitly:</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># download the agent binary during installation/configuration</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>download_agent_binary(<span class="st">"codex_cli"</span>, <span class="st">"0.29.0"</span>, <span class="st">"linux-x64"</span>)</span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="co"># reference that version in your task (no download will occur)</span></span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>codex_cli(version<span class="op">=</span><span class="st">"0.29.0"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># download the agent binary during installation/configuration</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>download_agent_binary(<span class="st">"codex_cli"</span>, <span class="st">"0.29.0"</span>, <span class="st">"linux-x64"</span>)</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="co"># reference that version in your task (no download will occur)</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>codex_cli(version<span class="op">=</span><span class="st">"0.29.0"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p>Note that the 5 most recently downloaded versions are retained in the cache. Use the <code>cached_agent_binaries()</code> function to list the contents of the cache.</p></li>
 </ol>
 </section>
 <section id="troubleshooting" class="level2">
 <h2 class="anchored" data-anchor-id="troubleshooting">Troubleshooting</h2>
 <p>If Codex CLI doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Codex CLI debug log after an evaluation task is complete. You can do this with:</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">inspect</span> trace dump <span class="at">--filter</span> <span class="st">"Codex CLI"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">inspect</span> trace dump <span class="at">--filter</span> <span class="st">"Codex CLI"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 
 
 </section>

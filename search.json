@@ -40,7 +40,7 @@
     "href": "codex_cli.html#options",
     "title": "Codex CLI",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmodel_config\nModel configuration profile (e.g. used to determine the system prompt). Defaults to gpt-5-codex.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"web_search\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorkding directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the web_search tool:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"web_search\"]\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmodel_config\nModel configuration profile (e.g. used to determine the system prompt). Defaults to gpt-5-codex.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"web_search\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\nhome_dir\nHome directory to use for codex cli. When set, AGENTS.md and the MCP configuration will be written here rather than to .codex\n\n\ncwd\nWorkding directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the web_search tool:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"web_search\"]\n)",
     "crumbs": [
       "Home",
       "Agents",
@@ -53,6 +53,18 @@
     "title": "Codex CLI",
     "section": "MCP Servers",
     "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Codex CLI. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MPC server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import codex_cli\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=codex_cli(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "codex_cli.html#bridged-tools",
+    "href": "codex_cli.html#bridged-tools",
+    "title": "Codex CLI",
+    "section": "Bridged Tools",
+    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import codex_cli\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=codex_cli(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
     "crumbs": [
       "Home",
       "Agents",
@@ -88,14 +100,42 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Claude Code: Pass model through to agent bridge to accomodate scenarios where a non-Inspect model is specified.\nClaude Code: Remove small_model setting as it conflicts with aforementioned fix to non-Inspect model."
+    "text": "Codex CLI and Claude Code: Added bridged_tools parameter for exposing host-side Inspect tools to sandboxed agents via MCP protocol.\nCodex CLI: Use GPT 5.1 system prompt by default (includes guidance on using the update_plan() tool which is excluded from gpt-5-codex system prompt).\nCode CLI: Add config_overrides parameter for overriding arbitrary config values.\nUpdate Inspect dependency to 0.3.152 (required for bridged tools)."
+  },
+  {
+    "objectID": "CHANGELOG.html#december-2025",
+    "href": "CHANGELOG.html#december-2025",
+    "title": "Inspect SWE",
+    "section": "",
+    "text": "Codex CLI and Claude Code: Added bridged_tools parameter for exposing host-side Inspect tools to sandboxed agents via MCP protocol.\nCodex CLI: Use GPT 5.1 system prompt by default (includes guidance on using the update_plan() tool which is excluded from gpt-5-codex system prompt).\nCode CLI: Add config_overrides parameter for overriding arbitrary config values.\nUpdate Inspect dependency to 0.3.152 (required for bridged tools)."
   },
   {
     "objectID": "CHANGELOG.html#november-2025",
     "href": "CHANGELOG.html#november-2025",
     "title": "Inspect SWE",
-    "section": "",
-    "text": "Claude Code: Pass model through to agent bridge to accomodate scenarios where a non-Inspect model is specified.\nClaude Code: Remove small_model setting as it conflicts with aforementioned fix to non-Inspect model."
+    "section": "0.2.27 (27 November 2025)",
+    "text": "0.2.27 (27 November 2025)\n\nCodex CLI: Use RUST_LOG=warning (rather than debug) to reduce amount of output produced by exec().\nCodex CLI: Enable setting a custom home_dir (override default of ~).\nHandle multiple run() calls to the same agent (resume session and send only new messages in prompt)."
+  },
+  {
+    "objectID": "CHANGELOG.html#november-2025-1",
+    "href": "CHANGELOG.html#november-2025-1",
+    "title": "Inspect SWE",
+    "section": "0.2.26 (15 November 2025)",
+    "text": "0.2.26 (15 November 2025)\n\nCopy agent binary executables to /var/tmp/ (more liberal default permissions)\nAgent binary chmod+x using “root” user for scenarios where they agent isn’t root."
+  },
+  {
+    "objectID": "CHANGELOG.html#november-2025-2",
+    "href": "CHANGELOG.html#november-2025-2",
+    "title": "Inspect SWE",
+    "section": "0.2.25 (07 November 2025)",
+    "text": "0.2.25 (07 November 2025)\n\nCodex CLI: Execute codex using the user passed to codex_cli()."
+  },
+  {
+    "objectID": "CHANGELOG.html#november-2025-3",
+    "href": "CHANGELOG.html#november-2025-3",
+    "title": "Inspect SWE",
+    "section": "0.2.24 (01 November 2025)",
+    "text": "0.2.24 (01 November 2025)\n\nClaude Code: Pass model through to agent bridge to accomodate scenarios where a non-Inspect model is specified.\nClaude Code: Remove small_model setting as it conflicts with aforementioned fix to non-Inspect model."
   },
   {
     "objectID": "CHANGELOG.html#october-2025",
@@ -250,7 +290,7 @@
     "href": "claude_code.html#options",
     "title": "Claude Code",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"WebSearch\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorkding directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebSearch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebSearch\"]\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"WebSearch\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorkding directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebSearch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebSearch\"]\n)",
     "crumbs": [
       "Home",
       "Agents",
@@ -263,6 +303,18 @@
     "title": "Claude Code",
     "section": "MCP Servers",
     "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Codex CLI. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MPC server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import codex_cli\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=claude_code(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Claude Code"
+    ]
+  },
+  {
+    "objectID": "claude_code.html#bridged-tools",
+    "href": "claude_code.html#bridged-tools",
+    "title": "Claude Code",
+    "section": "Bridged Tools",
+    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import claude_code\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=claude_code(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
     "crumbs": [
       "Home",
       "Agents",
