@@ -50,6 +50,7 @@ def codex_cli(
     user: str | None = None,
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "latest"] | str = "auto",
+    config_overrides: dict[str, str] | None = None,
 ) -> Agent:
     """Codex CLI.
 
@@ -79,6 +80,8 @@ def codex_cli(
             - "sandbox": Use the version of codex cli in the sandbox (raises `RuntimeError` if codex is not available in the sandbox)
             - "latest": Download and use the very latest version of codex cli.
             - "x.x.x": Download and use a specific version of codex cli.
+        config_overrides: Additional Codex CLI configuration overrides.
+            Each key-value pair is passed as `-c key=value` to the CLI.
     """
     # resolve model
     model = f"inspect/{model}" if model is not None else "inspect"
@@ -166,6 +169,11 @@ def codex_cli(
             # include web search if appropriate
             if "web_search" not in disallowed_tools:
                 cmd.extend(["-c", "tools.web_search=true"])
+
+            # apply config overrides
+            if config_overrides:
+                for key, value in config_overrides.items():
+                    cmd.extend(["-c", f"{key}={value}"])
 
             # register mcp servers
             if mcp_servers:
