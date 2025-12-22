@@ -188,7 +188,8 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#december-2025" id="toc-december-2025" class="nav-link active" data-scroll-target="#december-2025">0.2.28 (05 December 2025)</a></li>
+  <li><a href="#december-2025" id="toc-december-2025" class="nav-link active" data-scroll-target="#december-2025">0.2.29 (22 December 2025)</a></li>
+  <li><a href="#december-2025-1" id="toc-december-2025-1" class="nav-link" data-scroll-target="#december-2025-1">0.2.28 (05 December 2025)</a></li>
   <li><a href="#november-2025" id="toc-november-2025" class="nav-link" data-scroll-target="#november-2025">0.2.27 (27 November 2025)</a></li>
   <li><a href="#november-2025-1" id="toc-november-2025-1" class="nav-link" data-scroll-target="#november-2025-1">0.2.26 (15 November 2025)</a></li>
   <li><a href="#november-2025-2" id="toc-november-2025-2" class="nav-link" data-scroll-target="#november-2025-2">0.2.25 (07 November 2025)</a></li>
@@ -219,11 +220,18 @@ ul.task-list li input[type="checkbox"] {
 
 
 <section id="december-2025" class="level2">
-<h2 class="anchored" data-anchor-id="december-2025">0.2.28 (05 December 2025)</h2>
+<h2 class="anchored" data-anchor-id="december-2025">0.2.29 (22 December 2025)</h2>
+<ul>
+<li>Claude Code: Enable explicit specification of <code>opus_model</code>, <code>sonnet_model</code>, <code>haiku_model</code>, and <code>subagent_model</code>.</li>
+<li>Update Inspect dependency to 0.3.157 (required for changes to codex cli web search).</li>
+</ul>
+</section>
+<section id="december-2025-1" class="level2">
+<h2 class="anchored" data-anchor-id="december-2025-1">0.2.28 (05 December 2025)</h2>
 <ul>
 <li>Codex CLI and Claude Code: Added <code>bridged_tools</code> parameter for exposing host-side Inspect tools to sandboxed agents via MCP protocol.</li>
 <li>Codex CLI: Use GPT 5.1 system prompt by default (includes guidance on using the <code>update_plan()</code> tool which is excluded from gpt-5-codex system prompt).</li>
-<li>Code CLI: Add <code>config_overrides</code> parameter for overriding arbitrary config values.</li>
+<li>Codex CLI: Add <code>config_overrides</code> parameter for overriding arbitrary config values.</li>
 <li>Update Inspect dependency to 0.3.152 (required for bridged tools).</li>
 </ul>
 </section>

@@ -333,6 +333,22 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td>Model name to use for agent (defaults to main model for task).</td>
 </tr>
 <tr class="odd">
+<td><code>opus_model</code></td>
+<td>The model to use for <code>opus</code>, or for <code>opusplan</code> when Plan Mode is active. Defaults to <code>model</code>.</td>
+</tr>
+<tr class="even">
+<td><code>sonnet_model</code></td>
+<td>The model to use for <code>sonnet</code>, or for <code>opusplan</code> when Plan Mode is not active. Defaults to <code>model</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>haiku_model</code></td>
+<td>The model to use for haiku, or <a href="https://code.claude.com/docs/en/costs#background-token-usage">background functionality</a>. Defaults to <code>model</code>.</td>
+</tr>
+<tr class="even">
+<td><code>subagent_model</code></td>
+<td>The model to use for <a href="https://code.claude.com/docs/en/sub-agents">subagents</a>. Defaults to <code>model</code>.</td>
+</tr>
+<tr class="odd">
 <td><code>filter</code></td>
 <td>Filter for intercepting bridged model requests.</td>
 </tr>
