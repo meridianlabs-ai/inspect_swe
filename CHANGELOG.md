@@ -1,12 +1,13 @@
 ## Unreleased
 
+- Claude Code: Enable explicit specification of `opus_model`, `sonnet_model`, `haiku_model`, and `subagent_model`.
 - Update Inspect dependency to 0.3.157 (required for changes to codex cli web search).
 
 ## 0.2.28 (05 December 2025)
 
 - Codex CLI and Claude Code: Added `bridged_tools` parameter for exposing host-side Inspect tools to sandboxed agents via MCP protocol.
 - Codex CLI: Use GPT 5.1 system prompt by default (includes guidance on using the `update_plan()` tool which is excluded from gpt-5-codex system prompt).
-- Code CLI: Add `config_overrides` parameter for overriding arbitrary config values.
+- Codex CLI: Add `config_overrides` parameter for overriding arbitrary config values.
 - Update Inspect dependency to 0.3.152 (required for bridged tools).
 
 ## 0.2.27 (27 November 2025)

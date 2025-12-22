@@ -38,6 +38,10 @@ def claude_code(
     disallowed_tools: list[str] | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    opus_model: str | None = None,
+    sonnet_model: str | None = None,
+    haiku_model: str | None = None,
+    subagent_model: str | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     cwd: str | None = None,
@@ -68,6 +72,10 @@ def claude_code(
         disallowed_tools: List of tool names to disallow entirely.
         attempts: Configure agent to make multiple attempts.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
+        opus_model: The model to use for `opus`, or for `opusplan` when Plan Mode is active. Defaults to `model`.
+        sonnet_model: The model to use for `sonnet`, or for `opusplan` when Plan Mode is not active. Defaults to `model`.
+        haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
+        subagent_model: The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`.
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         cwd: Working directory to run claude code within.
@@ -83,6 +91,10 @@ def claude_code(
     """
     # resolve models
     model = f"inspect/{model}" if model is not None else "inspect"
+    opus_model = inspect_model(opus_model)
+    sonnet_model = inspect_model(sonnet_model)
+    haiku_model = inspect_model(haiku_model)
+    subagent_model = inspect_model(subagent_model)
 
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
@@ -176,11 +188,11 @@ def claude_code(
                         "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
                         "ANTHROPIC_API_KEY": "sk-ant-api03-DOq5tyLPrk9M4hPE",
                         "ANTHROPIC_MODEL": model,
-                        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
-                        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
-                        "CLAUDE_CODE_SUBAGENT_MODEL": model,
-                        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
-                        "ANTHROPIC_SMALL_FAST_MODEL": model,
+                        "ANTHROPIC_DEFAULT_OPUS_MODEL": opus_model or model,
+                        "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet_model or model,
+                        "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku_model or model,
+                        "CLAUDE_CODE_SUBAGENT_MODEL": subagent_model or model,
+                        "ANTHROPIC_SMALL_FAST_MODEL": haiku_model or model,
                         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                         "IS_SANDBOX": "1",
                     }
@@ -264,3 +276,12 @@ def resolve_mcp_servers(
         )
 
     return mcp_config_cmds, allowed_tools
+
+
+def inspect_model(model: str | None) -> str | None:
+    """Ensure that model name is prefaced with 'inspect/'."""
+    if model is not None:
+        if model != "inspect" and not model.startswith("inspect/"):
+            return f"inspect/{model}"
+
+    return model
