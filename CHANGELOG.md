@@ -1,3 +1,7 @@
+## Unreleased
+
+- Update Inspect dependency to 0.3.157 (required for changes to codex cli web search).
+
 ## 0.2.28 (05 December 2025)
 
 - Codex CLI and Claude Code: Added `bridged_tools` parameter for exposing host-side Inspect tools to sandboxed agents via MCP protocol.
