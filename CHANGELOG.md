@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.29 (22 December 2025)
 
 - Claude Code: Enable explicit specification of `opus_model`, `sonnet_model`, `haiku_model`, and `subagent_model`.
 - Update Inspect dependency to 0.3.157 (required for changes to codex cli web search).
