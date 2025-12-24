@@ -1,3 +1,8 @@
+## Unreleased
+
+- Agent Skills: Support for adding [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to Claude Code and Codex CLI agents.
+- Update Inspect dependency to 0.3.158 (required for skills implementation).
+
 ## 0.2.29 (22 December 2025)
 
 - Claude Code: Enable explicit specification of `opus_model`, `sonnet_model`, `haiku_model`, and `subagent_model`.

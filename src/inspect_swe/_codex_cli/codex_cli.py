@@ -1,5 +1,5 @@
-import os
 from logging import getLogger
+from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
 
@@ -14,12 +14,13 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import score
-from inspect_ai.tool import MCPServerConfig
+from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import SandboxEnvironment, store
 from inspect_ai.util import sandbox as sandbox_env
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.messages import build_user_prompt
+from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import sandbox_exec
 from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
@@ -39,6 +40,7 @@ def codex_cli(
     """),
     system_prompt: str | None = None,
     model_config: str = "gpt-5.1",
+    skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     disallowed_tools: list[Literal["web_search"]] | None = None,
@@ -66,6 +68,7 @@ def codex_cli(
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
         system_prompt: Additional system prompt to append to default system prompt.
         model_config: Model configuration profile (e.g. used to determine the system prompt).
+        skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
@@ -75,7 +78,7 @@ def codex_cli(
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
-        home_dir: Home directory to use for codex cli. If set, AGENTS.md and the MCP configuration will be written here.
+        home_dir: Home directory to use for codex cli. If set, AGENTS.md, skills, and the MCP configuration will be written here.
         cwd: Working directory to run codex cli within.
         env: Environment variables to set for codex cli
         user: User to execute codex cli with.
@@ -90,6 +93,9 @@ def codex_cli(
     """
     # resolve model
     model = f"inspect/{model}" if model is not None else "inspect"
+
+    # resolve skills
+    resolved_skills = read_skills(skills) if skills is not None else None
 
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
@@ -129,7 +135,7 @@ def codex_cli(
             # determine CODEX_HOME (default to whatever sandbox working dir is)
             if home_dir is None:
                 working_dir = await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)
-                codex_home = _join_path(working_dir, ".codex")
+                codex_home = join_path(working_dir, ".codex")
             else:
                 # Resolve ~ and $VARS inside the sandbox
                 codex_home = await sandbox_exec(
@@ -141,9 +147,9 @@ def codex_cli(
             def codex_agents_md() -> str:
                 AGENTS_MD = "AGENTS.md"
                 if home_dir is not None:
-                    return _join_path(codex_home, AGENTS_MD)
+                    return join_path(codex_home, AGENTS_MD)
                 elif cwd is not None:
-                    return _join_path(cwd, AGENTS_MD)
+                    return join_path(cwd, AGENTS_MD)
                 else:
                     return AGENTS_MD
 
@@ -151,15 +157,21 @@ def codex_cli(
             async def codex_config_toml() -> str:
                 CONFIG_TOML = "config.toml"
                 if home_dir is not None:
-                    return _join_path(codex_home, CONFIG_TOML)
+                    return join_path(codex_home, CONFIG_TOML)
                 else:
-                    dir = ".codex" if cwd is None else _join_path(cwd, ".codex")
+                    dir = ".codex" if cwd is None else join_path(cwd, ".codex")
                     await sandbox_exec(sbox, cmd=f"mkdir -p {dir}", user=user)
-                    return _join_path(dir, CONFIG_TOML)
+                    return join_path(dir, CONFIG_TOML)
 
             # write system messages to AGENTS.md
             if system_messages:
                 await sbox.write_file(codex_agents_md(), "\n\n".join(system_messages))
+
+            # install skills
+            if resolved_skills is not None:
+                await install_skills(
+                    resolved_skills, sbox, user, join_path(codex_home, "skills")
+                )
 
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
@@ -266,10 +278,6 @@ def codex_cli(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
-
-
-def _join_path(base: str, path: str) -> str:
-    return os.path.join(base, path).replace("\\", "/")
 
 
 async def _last_rollout(

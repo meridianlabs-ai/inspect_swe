@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
 
@@ -13,10 +14,12 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import score
-from inspect_ai.tool import MCPServerConfig
+from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 from pydantic_core import to_json
+
+from inspect_swe._util.path import join_path
 
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
@@ -33,6 +36,7 @@ def claude_code(
        and iterating on code across multiple languages.
     """),
     system_prompt: str | None = None,
+    skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     disallowed_tools: list[str] | None = None,
@@ -65,6 +69,7 @@ def claude_code(
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
         system_prompt: Additional system prompt to append to default system prompt.
+        skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
@@ -95,6 +100,9 @@ def claude_code(
     sonnet_model = inspect_model(sonnet_model)
     haiku_model = inspect_model(haiku_model)
     subagent_model = inspect_model(subagent_model)
+
+    # resolve skills
+    resolved_skills = read_skills(skills) if skills is not None else None
 
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
@@ -162,6 +170,14 @@ def claude_code(
 
             # resolve sandbox
             sbox = sandbox_env(sandbox)
+
+            # install skills
+            if resolved_skills is not None:
+                CLAUDE_SKILLS = ".claude/skills"
+                skills_dir = (
+                    join_path(cwd, CLAUDE_SKILLS) if cwd is not None else CLAUDE_SKILLS
+                )
+                await install_skills(resolved_skills, sbox, user, skills_dir)
 
             # execute the agent (track debug output)
             debug_output: list[str] = []
