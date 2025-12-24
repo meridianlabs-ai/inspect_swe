@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.30 (24 December 2025)
 
 - Agent Skills: Support for adding [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to Claude Code and Codex CLI agents.
 - Update Inspect dependency to 0.3.158 (required for skills implementation).
