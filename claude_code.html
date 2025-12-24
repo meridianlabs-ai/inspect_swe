@@ -313,58 +313,62 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td>Additional system prompt to append to default system prompt.</td>
 </tr>
 <tr class="even">
+<td><code>skills</code></td>
+<td>Additional <a href="https://inspect.aisi.org.uk/tools-standard.html#sec-skill">skills</a> to make available to the agent.</td>
+</tr>
+<tr class="odd">
 <td><code>mcp_servers</code></td>
 <td>MCP servers (see <a href="#mcp-servers">MCP Servers</a> below for details).</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>bridged_tools</code></td>
 <td>Host-side Inspect tools to expose via MCP (see <a href="#bridged-tools">Bridged Tools</a> below for details).</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>disallowed_tools</code></td>
 <td>Optionally disallow tools (e.g.&nbsp;<code>"WebSearch"</code>)</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>attempts</code></td>
 <td>Allow the agent to have multiple scored attempts at solving the task.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>model</code></td>
 <td>Model name to use for agent (defaults to main model for task).</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>opus_model</code></td>
 <td>The model to use for <code>opus</code>, or for <code>opusplan</code> when Plan Mode is active. Defaults to <code>model</code>.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>sonnet_model</code></td>
 <td>The model to use for <code>sonnet</code>, or for <code>opusplan</code> when Plan Mode is not active. Defaults to <code>model</code>.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>haiku_model</code></td>
 <td>The model to use for haiku, or <a href="https://code.claude.com/docs/en/costs#background-token-usage">background functionality</a>. Defaults to <code>model</code>.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>subagent_model</code></td>
 <td>The model to use for <a href="https://code.claude.com/docs/en/sub-agents">subagents</a>. Defaults to <code>model</code>.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>filter</code></td>
 <td>Filter for intercepting bridged model requests.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>retry_refusals</code></td>
 <td>Should refusals be retried? (pass number of times to retry)</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>cwd</code></td>
 <td>Workding directory for Claude Code session.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>env</code></td>
 <td>Environment variables to set for Claude Code.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>version</code></td>
 <td>Version of Claude Code to use (see <a href="#installation">Installation</a> below for details)</td>
 </tr>
