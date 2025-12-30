@@ -40,7 +40,7 @@
     "href": "codex_cli.html#options",
     "title": "Codex CLI",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmodel_config\nModel configuration profile (e.g. used to determine the system prompt). Defaults to gpt-5-codex.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"web_search\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\nhome_dir\nHome directory to use for codex cli. When set, AGENTS.md and the MCP configuration will be written here rather than to .codex\n\n\ncwd\nWorkding directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the web_search tool:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"web_search\"]\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmodel_config\nModel configuration profile (e.g. used to determine the system prompt). Defaults to gpt-5-codex.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"web_search\")\n\n\ncentaur\nRun in Centaur Mode, which makes Codex CLI available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\nhome_dir\nHome directory to use for codex cli. When set, AGENTS.md and the MCP configuration will be written here rather than to .codex\n\n\ncwd\nWorkding directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the web_search tool:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"web_search\"]\n)",
     "crumbs": [
       "Home",
       "Agents",
@@ -84,6 +84,18 @@
     ]
   },
   {
+    "objectID": "codex_cli.html#centaur-mode",
+    "href": "codex_cli.html#centaur-mode",
+    "title": "Codex CLI",
+    "section": "Centaur Mode",
+    "text": "Centaur Mode\n\n\n\n\n\n\nThe centaur mode feature described below requires the development version of the inspect_swe package. You can install the development version with:\npip install git+https://github.com/meridianlabs-ai/inspect_swe\n\n\n\nThe codex_cli() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes Codex CLI available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the codex_cli() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import codex_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=codex_cli(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/codex_cli -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=codex_cli(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
     "objectID": "codex_cli.html#troubleshooting",
     "href": "codex_cli.html#troubleshooting",
     "title": "Codex CLI",
@@ -100,14 +112,21 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Agent Skills: Support for adding skills to Claude Code and Codex CLI agents.\nUpdate Inspect dependency to 0.3.158 (required for skills implementation)."
+    "text": "Centaur Mode for running Claude Code and Codex CLI alongside the Inspect Human Agent."
+  },
+  {
+    "objectID": "CHANGELOG.html#unreleased",
+    "href": "CHANGELOG.html#unreleased",
+    "title": "Inspect SWE",
+    "section": "",
+    "text": "Centaur Mode for running Claude Code and Codex CLI alongside the Inspect Human Agent."
   },
   {
     "objectID": "CHANGELOG.html#december-2025",
     "href": "CHANGELOG.html#december-2025",
     "title": "Inspect SWE",
-    "section": "",
-    "text": "Agent Skills: Support for adding skills to Claude Code and Codex CLI agents.\nUpdate Inspect dependency to 0.3.158 (required for skills implementation)."
+    "section": "0.2.30 (24 December 2025)",
+    "text": "0.2.30 (24 December 2025)\n\nAgent Skills: Support for adding skills to Claude Code and Codex CLI agents.\nUpdate Inspect dependency to 0.3.158 (required for skills implementation)."
   },
   {
     "objectID": "CHANGELOG.html#december-2025-1",
@@ -304,7 +323,7 @@
     "href": "claude_code.html#options",
     "title": "Claude Code",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"WebSearch\")\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nopus_model\nThe model to use for opus, or for opusplan when Plan Mode is active. Defaults to model.\n\n\nsonnet_model\nThe model to use for sonnet, or for opusplan when Plan Mode is not active. Defaults to model.\n\n\nhaiku_model\nThe model to use for haiku, or background functionality. Defaults to model.\n\n\nsubagent_model\nThe model to use for subagents. Defaults to model.\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorkding directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebSearch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebSearch\"]\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"WebSearch\")\n\n\ncentaur\nRun in Centaur Mode, which makes Claude Code available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nopus_model\nThe model to use for opus, or for opusplan when Plan Mode is active. Defaults to model.\n\n\nsonnet_model\nThe model to use for sonnet, or for opusplan when Plan Mode is not active. Defaults to model.\n\n\nhaiku_model\nThe model to use for haiku, or background functionality. Defaults to model.\n\n\nsubagent_model\nThe model to use for subagents. Defaults to model.\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorkding directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebSearch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebSearch\"]\n)",
     "crumbs": [
       "Home",
       "Agents",
@@ -341,6 +360,18 @@
     "title": "Claude Code",
     "section": "Installation",
     "text": "Installation\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Claude Code in the sandbox, otherwise download the current stable version.\n\n\n\"sandbox\"\nUse the version of Claude Code in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"stable\"\nDownload and use the current stable version.\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Claude Code (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Claude Code you want to use in the sandbox, then use version=\"sandbox\":\nclaude_code(version=\"sandbox\")\nDownload the version of Claude Code you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"claude_code\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\nclaude_code(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Claude Code"
+    ]
+  },
+  {
+    "objectID": "claude_code.html#centaur-mode",
+    "href": "claude_code.html#centaur-mode",
+    "title": "Claude Code",
+    "section": "Centaur Mode",
+    "text": "Centaur Mode\n\n\n\n\n\n\nThe centaur mode feature described below requires the development version of the inspect_swe package. You can install the development version with:\npip install git+https://github.com/meridianlabs-ai/inspect_swe\n\n\n\nThe claude_code() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes Claude Code available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the claude_code() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/claude_code -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=claude_code(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
     "crumbs": [
       "Home",
       "Agents",
