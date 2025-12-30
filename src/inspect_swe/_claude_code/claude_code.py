@@ -1,3 +1,4 @@
+import shlex
 import uuid
 from pathlib import Path
 from textwrap import dedent
@@ -19,6 +20,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 from pydantic_core import to_json
 
+from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.path import join_path
 
 from .._util._async import is_callable_coroutine
@@ -40,6 +42,7 @@ def claude_code(
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     disallowed_tools: list[str] | None = None,
+    centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     opus_model: str | None = None,
@@ -75,6 +78,7 @@ def claude_code(
             Each BridgedToolsSpec creates an MCP server that makes the specified
             tools available to the agent running in the sandbox.
         disallowed_tools: List of tool names to disallow entirely.
+        centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
         opus_model: The model to use for `opus`, or for `opusplan` when Plan Mode is active. Defaults to `model`.
@@ -94,6 +98,10 @@ def claude_code(
             - "latest": Download and use the very latest version of claude code.
             - "x.x.x": Download and use a specific version of claude code.
     """
+    # resolve centaur
+    if centaur is True:
+        centaur = CentaurOptions()
+
     # resolve models
     model = f"inspect/{model}" if model is not None else "inspect"
     opus_model = inspect_model(opus_model)
@@ -131,13 +139,20 @@ def claude_code(
 
             # base options
             cmd = [
-                "--print",  # run without interactions
                 "--dangerously-skip-permissions",
-                "--debug",
-                "--verbose",
                 "--model",
                 model,
             ]
+
+            # add interactive options if not running as centaur
+            if centaur is False:
+                cmd.extend(
+                    [
+                        "--print",
+                        "--debug",
+                        "--verbose",
+                    ]
+                )
 
             # system prompt
             system_messages = [
@@ -179,82 +194,93 @@ def claude_code(
                 )
                 await install_skills(resolved_skills, sbox, user, skills_dir)
 
-            # execute the agent (track debug output)
-            debug_output: list[str] = []
-            agent_prompt = prompt
-            attempt_count = 0
-            while True:
-                # resume previous conversation
-                if has_assistant_response or attempt_count > 0:
-                    agent_cmd = (
-                        [claude_binary, "--continue"] + cmd + ["--", agent_prompt]
-                    )
-                else:
-                    agent_cmd = (
-                        [claude_binary, "--session-id", session_id]
-                        + cmd
-                        + ["--", agent_prompt]
-                    )
+            # define agent env
+            agent_env = {
+                "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
+                "ANTHROPIC_AUTH_TOKEN": "sk-ant-api03-DOq5tyLPrk9M4hPE",
+                "ANTHROPIC_MODEL": model,
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": opus_model or model,
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet_model or model,
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku_model or model,
+                "CLAUDE_CODE_SUBAGENT_MODEL": subagent_model or model,
+                "ANTHROPIC_SMALL_FAST_MODEL": haiku_model or model,
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                "IS_SANDBOX": "1",
+            } | (env or {})
 
-                # run agent
-                result = await sbox.exec(
-                    cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
-                    cwd=cwd,
-                    env={
-                        "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
-                        "ANTHROPIC_API_KEY": "sk-ant-api03-DOq5tyLPrk9M4hPE",
-                        "ANTHROPIC_MODEL": model,
-                        "ANTHROPIC_DEFAULT_OPUS_MODEL": opus_model or model,
-                        "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet_model or model,
-                        "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku_model or model,
-                        "CLAUDE_CODE_SUBAGENT_MODEL": subagent_model or model,
-                        "ANTHROPIC_SMALL_FAST_MODEL": haiku_model or model,
-                        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                        "IS_SANDBOX": "1",
-                    }
-                    | (env or {}),
-                    user=user,
-                    concurrency=False,
+            # centaur mode uses human_cli with custom instructions and bash rc
+            if centaur:
+                await run_claude_code_centaur(
+                    options=centaur,
+                    claude_cmd=[claude_binary] + cmd,
+                    agent_env=agent_env,
+                    state=state,
                 )
-
-                # track debug output
-                debug_output.append(result.stdout)
-                debug_output.append(result.stderr)
-
-                # raise for error
-                if not result.success:
-                    raise RuntimeError(
-                        f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
-                    )
-
-                # exit if we are at max_attempts
-                attempt_count += 1
-                if attempt_count >= attempts.attempts:
-                    break
-
-                # score this attempt
-                answer_scores = await score(state)
-
-                # break if we score 'correct'
-                if attempts.score_value(answer_scores[0].value) == 1.0:
-                    break
-
-                # otherwise update prompt with incorrect message and continue
-                else:
-                    if callable(attempts.incorrect_message):
-                        if not is_callable_coroutine(attempts.incorrect_message):
-                            raise ValueError(
-                                "The incorrect_message function must be async."
-                            )
-                        agent_prompt = await attempts.incorrect_message(
-                            state, answer_scores
+            else:
+                # execute the agent (track debug output)
+                debug_output: list[str] = []
+                agent_prompt = prompt
+                attempt_count = 0
+                while True:
+                    # resume previous conversation
+                    if has_assistant_response or attempt_count > 0:
+                        agent_cmd = (
+                            [claude_binary, "--continue"] + cmd + ["--", agent_prompt]
                         )
                     else:
-                        agent_prompt = attempts.incorrect_message
+                        agent_cmd = (
+                            [claude_binary, "--session-id", session_id]
+                            + cmd
+                            + ["--", agent_prompt]
+                        )
 
-            # trace debug info
-            debug_output.insert(0, "Claude Code Debug Output:")
-            trace("\n".join(debug_output))
+                    # run agent
+                    result = await sbox.exec(
+                        cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
+                        cwd=cwd,
+                        env=agent_env,
+                        user=user,
+                        concurrency=False,
+                    )
+
+                    # track debug output
+                    debug_output.append(result.stdout)
+                    debug_output.append(result.stderr)
+
+                    # raise for error
+                    if not result.success:
+                        raise RuntimeError(
+                            f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
+                        )
+
+                    # exit if we are at max_attempts
+                    attempt_count += 1
+                    if attempt_count >= attempts.attempts:
+                        break
+
+                    # score this attempt
+                    answer_scores = await score(state)
+
+                    # break if we score 'correct'
+                    if attempts.score_value(answer_scores[0].value) == 1.0:
+                        break
+
+                    # otherwise update prompt with incorrect message and continue
+                    else:
+                        if callable(attempts.incorrect_message):
+                            if not is_callable_coroutine(attempts.incorrect_message):
+                                raise ValueError(
+                                    "The incorrect_message function must be async."
+                                )
+                            agent_prompt = await attempts.incorrect_message(
+                                state, answer_scores
+                            )
+                        else:
+                            agent_prompt = attempts.incorrect_message
+
+                # trace debug info
+                debug_output.insert(0, "Claude Code Debug Output:")
+                trace("\n".join(debug_output))
 
         return bridge.state
 
@@ -301,3 +327,29 @@ def inspect_model(model: str | None) -> str | None:
             return f"inspect/{model}"
 
     return model
+
+
+async def run_claude_code_centaur(
+    options: CentaurOptions,
+    claude_cmd: list[str],
+    agent_env: dict[str, str],
+    state: AgentState,
+) -> None:
+    instructions = "Claude Code:\n\n - You may also use Claude Code via the 'claude' command.\n - Use 'claude --resume' if you need to resume a previous claude session."
+
+    # build .bashrc content
+    agent_env_vars = [f'export {k}="{v}"' for k, v in agent_env.items()]
+    claude_config = """echo '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true}' > "$HOME"/.claude.json"""
+    path_config = [
+        'mkdir -p "$HOME/.local/bin"',
+        'export PATH="$HOME/.local/bin:$PATH"',
+        f'ln -sf {claude_cmd[0]} "$HOME/.local/bin/claude"',
+    ]
+    alias_cmd = shlex.join(claude_cmd)
+    alias_cmd = "alias claude='" + alias_cmd.replace("'", "'\\''") + "'"
+    bashrc = "\n".join(
+        agent_env_vars + path_config + ["", claude_config, "", alias_cmd]
+    )
+
+    # run the human cli
+    await run_centaur(options, instructions, bashrc, state)
