@@ -1,3 +1,7 @@
+## Unreleased
+
+- [Centaur Mode](https://meridianlabs-ai.github.io/inspect_swe/claude_code.html#centaur-mode) for running Claude Code and Codex CLI alongside the Inspect [Human Agent](https://inspect.aisi.org.uk/human-agent.html).
+
 ## 0.2.30 (24 December 2025)
 
 - Agent Skills: Support for adding [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to Claude Code and Codex CLI agents.
