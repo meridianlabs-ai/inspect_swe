@@ -1,6 +1,5 @@
-from anthropic import BaseModel
 from inspect_ai.agent import AgentState, human_cli, run
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 
 class CentaurOptions(BaseModel):
