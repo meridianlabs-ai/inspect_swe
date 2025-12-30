@@ -17,7 +17,7 @@ from inspect_ai import Task, task
 from inspect_ai.dataset import json_dataset
 from inspect_ai.scorer import model_graded_qa
 
-from inspect_swe import codex_cli
+from inspect_swe import {{< meta agent >}}
 
 @task
 def system_explorer() -> Task:
@@ -32,7 +32,7 @@ def system_explorer() -> Task:
 You can also enable centaur mode from the CLI using a solver arg (`-S`):
 
 ```bash
-inspect eval ctf.py --solver inspect_swe/{{< meta agent >}} -S centaur=True
+inspect eval ctf.py --solver inspect_swe/{{< meta agent >}} -S centaur=true
 ```
 
 You can also pass `CentaurOptions` to further customize the behavior of the human agent. For example:
