@@ -56,6 +56,9 @@ version-file = "src/inspect_swe/_version.py"
 [tool.hatch.version.raw-options]
 local_scheme = "no-local-version" # Important for PyPI compatibility
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.ruff]
 extend-exclude = ["docs"]
 src = ["."]
