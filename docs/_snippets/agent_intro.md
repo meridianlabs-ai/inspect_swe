@@ -1,6 +1,6 @@
 ## Overview
 
-The `{{< meta agent >}}()` agent uses the the unattended mode of {{< meta agent_provider >}} [{{< meta agent_name >}}]({{< meta agent_url >}}) to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.
+The `{{< meta agent >}}()` agent uses the unattended mode of {{< meta agent_provider >}} [{{< meta agent_name >}}]({{< meta agent_url >}}) to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.
 
 ::: callout-note
 #### {{< meta agent_name >}} Installation

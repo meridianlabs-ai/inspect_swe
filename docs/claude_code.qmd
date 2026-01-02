@@ -3,7 +3,7 @@ title: Claude Code
 agent: claude_code
 agent_provider: "Anthropic"
 agent_name: "Claude Code"
-agent_url: "https://docs.anthropic.com/en/docs/claude-code/overview"
+agent_url: "https://code.claude.com/docs/en/overview"
 agent_disallowed_tool: "WebSearch"
 ---
 
