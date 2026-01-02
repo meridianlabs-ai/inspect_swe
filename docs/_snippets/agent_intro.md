@@ -17,7 +17,7 @@ from inspect_ai import Task, task
 from inspect_ai.dataset import json_dataset
 from inspect_ai.scorer import model_graded_qa
 
-from inspect_swe import codex_cli
+from inspect_swe import {{< meta agent >}}
 
 @task
 def system_explorer() -> Task:
