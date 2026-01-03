@@ -1,13 +1,5 @@
 ## Centaur Mode
 
-::: {.callout-note appearance="minimal"}
-The centaur mode feature described below requires the development version of the `inspect_swe` package. You can install the development version with:
-
-```bash
-pip install git+https://github.com/meridianlabs-ai/inspect_swe
-```
-:::
-
 The `{{< meta agent >}}()` agent can also be run in "centaur" mode which uses the Inspect AI [Human Agent](https://inspect.aisi.org.uk/human-agent.html) as the solver and makes [{{< meta agent_name >}}]({{< meta agent_url >}}) available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.
 
 Enable centaur mode by passing `centaur=True` to the `{{< meta agent >}}()` agent:

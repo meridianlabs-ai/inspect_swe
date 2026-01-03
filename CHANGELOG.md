@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.31 (03 January 2026)
 
 - [Centaur Mode](https://meridianlabs-ai.github.io/inspect_swe/claude_code.html#centaur-mode) for running Claude Code and Codex CLI alongside the Inspect [Human Agent](https://inspect.aisi.org.uk/human-agent.html).
 
