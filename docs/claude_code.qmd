@@ -3,7 +3,7 @@ title: Claude Code
 agent: claude_code
 agent_provider: "Anthropic"
 agent_name: "Claude Code"
-agent_url: "https://docs.anthropic.com/en/docs/claude-code/overview"
+agent_url: "https://code.claude.com/docs/en/overview"
 agent_disallowed_tool: "WebSearch"
 ---
 
@@ -29,7 +29,7 @@ The following options are supported for customizing the behavior of the agent:
 | `subagent_model` | The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`. |
 | `filter` | Filter for intercepting bridged model requests. |
 | `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
-| `cwd` | Workding directory for {{< meta agent_name >}} session. |
+| `cwd` | Working directory for {{< meta agent_name >}} session. |
 | `env` | Environment variables to set for {{< meta agent_name >}}. |
 | `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |
 

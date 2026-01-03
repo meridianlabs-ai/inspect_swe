@@ -1,6 +1,6 @@
 ## Overview
 
-The `{{< meta agent >}}()` agent uses the the unattended mode of {{< meta agent_provider >}} [{{< meta agent_name >}}]({{< meta agent_url >}}) to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.
+The `{{< meta agent >}}()` agent uses the unattended mode of {{< meta agent_provider >}} [{{< meta agent_name >}}]({{< meta agent_url >}}) to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.
 
 ::: callout-note
 #### {{< meta agent_name >}} Installation
@@ -17,7 +17,7 @@ from inspect_ai import Task, task
 from inspect_ai.dataset import json_dataset
 from inspect_ai.scorer import model_graded_qa
 
-from inspect_swe import codex_cli
+from inspect_swe import {{< meta agent >}}
 
 @task
 def system_explorer() -> Task:

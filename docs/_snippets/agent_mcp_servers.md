@@ -1,8 +1,8 @@
 ## MCP Servers {#mcp-servers}
 
-You can specify one or more [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro) (MCP) servers to provide additional tools to Codex CLI. Servers are specified via the [`MCPServerConfig`](https://inspect.aisi.org.uk/reference/inspect_ai.tool.html#mcpserverconfig) class and its Stdio and HTTP variants.
+You can specify one or more [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro) (MCP) servers to provide additional tools to {{< meta agent_name >}}. Servers are specified via the [`MCPServerConfig`](https://inspect.aisi.org.uk/reference/inspect_ai.tool.html#mcpserverconfig) class and its Stdio and HTTP variants.
 
-For example, here is a Dockerfile that makes the `server-memory` MPC server available in the sandbox container:
+For example, here is a Dockerfile that makes the `server-memory` MCP server available in the sandbox container:
 
 ``` dockerfile
 FROM python:3.12-bookworm
@@ -30,7 +30,7 @@ We can then use this MCP server in a task as follows:
 from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 from inspect_ai.tool import MCPServerConfigStdio
-from inspect_swe import codex_cli
+from inspect_swe import {{< meta agent >}}
 
 @task
 def investigator() -> Task:
