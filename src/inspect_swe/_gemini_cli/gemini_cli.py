@@ -25,10 +25,11 @@ from inspect_ai.util import sandbox as sandbox_env
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.messages import build_user_prompt
+from inspect_swe._util.sandbox import detect_sandbox_platform
 from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
-from .agentbinary import gemini_cli_binary_source
+from .agentbinary import ensure_node_available, gemini_cli_binary_source
 
 logger = getLogger(__file__)
 
@@ -45,6 +46,7 @@ def gemini_cli(
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    gemini_model: str = "gemini-2.5-pro",
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     cwd: str | None = None,
@@ -68,7 +70,10 @@ def gemini_cli(
         mcp_servers: MCP servers to make available to the agent
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP
         attempts: Configure agent to make multiple attempts
-        model: Model name to use (defaults to main model for task)
+        model: Model name to use for inspect bridge (defaults to main model for task)
+        gemini_model: Gemini model name to pass to CLI. This bypasses the auto-router.
+            Use "gemini-2.5-pro" (default) or "gemini-2.5-flash". The actual model
+            calls still go through the inspect bridge, but this disables the router.
         filter: Filter for intercepting bridged model requests
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         cwd: Working directory to run gemini cli within
@@ -101,13 +106,19 @@ def gemini_cli(
             port=port,
             bridged_tools=bridged_tools,
         ) as bridge:
-            # ensure gemini-cli is installed
-            gemini_binary = await ensure_agent_binary_installed(
-                gemini_cli_binary_source(), version, user, sandbox_env(sandbox)
-            )
-
             # resolve sandbox
             sbox = sandbox_env(sandbox)
+
+            # detect platform for node download if needed
+            platform = await detect_sandbox_platform(sbox)
+
+            # ensure node is available (downloads if not present)
+            node_binary = await ensure_node_available(sbox, platform, user)
+
+            # ensure gemini-cli is installed
+            gemini_binary = await ensure_agent_binary_installed(
+                gemini_cli_binary_source(), version, user, sbox
+            )
 
             # build system prompt from messages
             system_messages = [
@@ -128,10 +139,13 @@ def gemini_cli(
             # build base command
             # NOTE: gemini-cli is a JavaScript file, run with node
             # Use --max-old-space-size to increase heap size for large prompts
+            # Use --experimental-default-type=module because gemini.js uses ES modules
             cmd = [
-                "node",
+                node_binary,
                 "--max-old-space-size=4096",  # 4GB heap size
+                "--experimental-default-type=module",  # gemini.js uses ES modules
                 gemini_binary,
+                "--model", gemini_model,  # Specify model to bypass auto-router
                 "--yolo",  # Auto-approve all actions (YOLO mode)
                 "--output-format", "text",  # Text output format
             ]
