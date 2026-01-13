@@ -86,14 +86,15 @@ async def ensure_agent_binary_installed(
             resolved_version = version
 
         # write it into the container and return it
-        binary_path = (
-            f"/var/tmp/.5c95f967ca830048/{source.binary}-{resolved_version}-{platform}"
-        )
+        # Use the filename from cached_binary_path to preserve extensions (e.g., .js for JavaScript bundles)
+        cached_path = source.cached_binary_path(resolved_version, platform)
+        binary_filename = cached_path.name
+        binary_path = f"/var/tmp/.5c95f967ca830048/{binary_filename}"
         await sandbox.write_file(binary_path, binary_bytes)
         await sandbox_exec(sandbox, f"chmod +x {binary_path}", user="root")
         if source.post_install:
             await sandbox_exec(
-                sandbox, f"{binary_path} {source.post_install}", user=user
+                sandbox, f"BINARY_PATH={binary_path} {source.post_install}", user=user
             )
         return binary_path
 
@@ -118,7 +119,8 @@ async def download_agent_binary_async(
     if binary_data is None:
         # not in cache, download and verify checksum
         binary_data = await download_file(download_url)
-        if not verify_checksum(binary_data, expected_checksum):
+        # Skip checksum verification if no checksum is available
+        if expected_checksum and not verify_checksum(binary_data, expected_checksum):
             raise ValueError("Checksum verification failed")
 
         # apply post-download processing if provided (e.g., extract from tar.gz)
