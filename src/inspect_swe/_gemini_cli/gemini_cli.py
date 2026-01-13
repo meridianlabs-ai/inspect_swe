@@ -1,10 +1,3 @@
-"""Gemini CLI agent for Inspect.
-
-This agent uses Google's Gemini CLI running in a sandbox with
-model requests bridged to Inspect's model infrastructure.
-"""
-
-from logging import getLogger
 from textwrap import dedent
 from typing import Literal, Sequence
 
@@ -18,10 +11,10 @@ from inspect_ai.agent import (
     sandbox_agent_bridge,
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
-from inspect_ai.scorer import score
+from inspect_ai.scorer import Score, score
 from inspect_ai.tool import MCPServerConfig
-from inspect_ai.util import store
 from inspect_ai.util import sandbox as sandbox_env
+from inspect_ai.util import store
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.messages import build_user_prompt
@@ -30,8 +23,6 @@ from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
 from .agentbinary import ensure_node_available, gemini_cli_binary_source
-
-logger = getLogger(__file__)
 
 
 @agent
@@ -153,9 +144,8 @@ def gemini_cli(
             # Configure MCP server names if provided
             if mcp_servers or bridge.mcp_server_configs:
                 all_servers = list(mcp_servers or []) + list(bridge.mcp_server_configs)
-                server_names = [server.name for server in all_servers]
-                for name in server_names:
-                    cmd.extend(["--allowed-mcp-server-names", name])
+                for server in all_servers:
+                    cmd.extend(["--allowed-mcp-server-names", server.name])
 
             # build environment variables
             agent_env = {
@@ -220,21 +210,9 @@ def gemini_cli(
     return agent_with(execute, name=name, description=description)
 
 
-def _build_mcp_config(mcp_servers: Sequence[MCPServerConfig]) -> str:
-    """Build MCP configuration JSON for gemini-cli."""
-    import json
-
-    config: dict[str, dict[str, dict]] = {"mcpServers": {}}
-    for server in mcp_servers:
-        server_config = server.model_dump(exclude={"name", "tools"}, exclude_none=True)
-        config["mcpServers"][server.name] = server_config
-    return json.dumps(config)
-
-
 async def _get_incorrect_message(
-    attempts: AgentAttempts, state: AgentState, answer_scores: list
+    attempts: AgentAttempts, state: AgentState, answer_scores: list[Score]
 ) -> str:
-    """Get the incorrect message for retry attempts."""
     if callable(attempts.incorrect_message):
         if not is_callable_coroutine(attempts.incorrect_message):
             raise ValueError("The incorrect_message function must be async.")

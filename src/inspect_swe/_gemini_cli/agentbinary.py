@@ -1,10 +1,3 @@
-"""Binary source for Google Gemini CLI.
-
-Gemini CLI is distributed as a JavaScript bundle (gemini.js) from GitHub releases.
-It requires Node.js to run. If Node.js is not available in the sandbox, we download
-a standalone Node.js binary alongside gemini.js.
-"""
-
 import json
 import lzma
 import re
@@ -29,12 +22,6 @@ NODE_DOWNLOAD_BASE = "https://nodejs.org/dist"
 
 
 def gemini_cli_binary_source() -> AgentBinarySource:
-    """Binary source for Google Gemini CLI.
-
-    Gemini CLI is a JavaScript application distributed as a single bundled file.
-    Unlike claude_code which has platform-specific binaries, gemini-cli is
-    platform-independent but requires Node.js.
-    """
     cached_binary_dir = package_cache_dir("gemini-cli-downloads")
 
     async def resolve_version(
@@ -94,22 +81,16 @@ def gemini_cli_binary_source() -> AgentBinarySource:
 
 
 async def _get_latest_release() -> dict[str, Any]:
-    """Get the latest release from GitHub."""
     response = await download_text_file(f"{GITHUB_RELEASES_API}/latest")
     return json.loads(response)
 
 
 async def _get_release_by_tag(tag: str) -> dict[str, Any]:
-    """Get a specific release by tag."""
     response = await download_text_file(f"{GITHUB_RELEASES_API}/tags/{tag}")
     return json.loads(response)
 
 
 def _extract_checksum_from_body(body: str) -> str | None:
-    """Extract SHA256 checksum from release body if present.
-
-    GitHub releases often include checksums in the body text.
-    """
     if not body:
         return None
 
@@ -137,16 +118,7 @@ async def ensure_node_available(
     platform: SandboxPlatform,
     user: str | None = None,
 ) -> str:
-    """Ensure Node.js is available in the sandbox, downloading if necessary.
-
-    Args:
-        sandbox: The sandbox environment
-        platform: The detected platform
-        user: Optional user to run commands as
-
-    Returns:
-        Path to the node binary (either system node or downloaded)
-    """
+    """Returns path to node binary, downloading if not available in sandbox."""
     # Check if node is already available
     result = await sandbox.exec(bash_command("which node"), user=user)
     if result.success:
@@ -160,9 +132,8 @@ async def ensure_node_available(
 async def _download_and_install_node(
     sandbox: SandboxEnvironment,
     platform: SandboxPlatform,
-    user: str | None = None,
+    _user: str | None = None,
 ) -> str:
-    """Download and install Node.js to the sandbox."""
     # Map platform to Node.js archive name
     node_platform = _platform_to_node_platform(platform)
     archive_name = f"node-v{NODE_VERSION}-{node_platform}.tar.xz"
@@ -196,7 +167,6 @@ async def _download_and_install_node(
 
 
 def _platform_to_node_platform(platform: SandboxPlatform) -> str:
-    """Map SandboxPlatform to Node.js platform string."""
     platform_map = {
         "linux-x64": "linux-x64",
         "linux-x64-musl": "linux-x64",  # Node.js doesn't have musl-specific builds
@@ -209,7 +179,6 @@ def _platform_to_node_platform(platform: SandboxPlatform) -> str:
 
 
 def _extract_node_binary(archive_data: bytes, version: str, node_platform: str) -> bytes:
-    """Extract the node binary from a tar.xz archive."""
     # Decompress xz
     decompressed = lzma.decompress(archive_data)
 
