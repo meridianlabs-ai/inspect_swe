@@ -71,10 +71,7 @@ def gemini_cli_binary_source() -> AgentBinarySource:
     def list_cached_binaries() -> list[Path]:
         return list(cached_binary_dir.glob("gemini-*.js"))
 
-    # post_install command: make the JS file executable and ensure node is available
     # The actual execution will use "node <path>" directly
-    post_install_cmd = "chmod +x $BINARY_PATH"
-
     return AgentBinarySource(
         agent="gemini cli",
         binary="gemini",  # Note: This will be a .js file, run with node
@@ -82,7 +79,7 @@ def gemini_cli_binary_source() -> AgentBinarySource:
         cached_binary_path=cached_binary_path,
         list_cached_binaries=list_cached_binaries,
         post_download=None,
-        post_install=post_install_cmd,
+        post_install=None,
     )
 
 
