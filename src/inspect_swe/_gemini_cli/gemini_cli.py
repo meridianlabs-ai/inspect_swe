@@ -119,24 +119,29 @@ def gemini_cli(
             # build user prompt
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
-            # build base command
-            # NOTE: gemini-cli is a JavaScript file, run with node
-            cmd = [
-                "node",
-                gemini_binary,
-                "--non-interactive",  # Disable interactive prompts
-            ]
-
-            # add system prompt if provided
+            # Prepend system prompt to user prompt if provided
+            # (gemini-cli doesn't have a separate --system-prompt flag)
             if system_messages:
                 combined_system = "\n\n".join(system_messages)
-                cmd.extend(["--system-prompt", combined_system])
+                prompt = f"{combined_system}\n\n{prompt}"
 
-            # configure MCP servers if provided
+            # build base command
+            # NOTE: gemini-cli is a JavaScript file, run with node
+            # Use --max-old-space-size to increase heap size for large prompts
+            cmd = [
+                "node",
+                "--max-old-space-size=4096",  # 4GB heap size
+                gemini_binary,
+                "--yolo",  # Auto-approve all actions (YOLO mode)
+                "--output-format", "text",  # Text output format
+            ]
+
+            # Configure MCP server names if provided
             if mcp_servers or bridge.mcp_server_configs:
                 all_servers = list(mcp_servers or []) + list(bridge.mcp_server_configs)
-                mcp_config = _build_mcp_config(all_servers)
-                cmd.extend(["--mcp-config", mcp_config])
+                server_names = [server.name for server in all_servers]
+                for name in server_names:
+                    cmd.extend(["--allowed-mcp-server-names", name])
 
             # build environment variables
             agent_env = {
@@ -154,13 +159,12 @@ def gemini_cli(
             while True:
                 agent_cmd = cmd.copy()
 
-                # add prompt at the end
-                agent_cmd.extend(["--", agent_prompt])
-
                 # resume previous conversation if continuing
                 if has_assistant_response or attempt_count > 0:
-                    # Insert continue flag before the prompt
-                    agent_cmd.insert(-2, "--continue")
+                    agent_cmd.extend(["--resume", "latest"])
+
+                # add prompt as positional argument at the end
+                agent_cmd.append(agent_prompt)
 
                 # run agent - close stdin to prevent interactive mode
                 result = await sbox.exec(
