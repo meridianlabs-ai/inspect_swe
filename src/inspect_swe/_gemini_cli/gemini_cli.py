@@ -21,8 +21,11 @@ from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.sandbox import detect_sandbox_platform
 from inspect_swe._util.trace import trace
 
-from .._util.agentbinary import ensure_agent_binary_installed
-from .agentbinary import ensure_node_available, gemini_cli_binary_source
+from .agentbinary import (
+    ensure_gemini_cli_installed,
+    ensure_node_and_npm_available,
+    resolve_gemini_version,
+)
 
 
 @agent
@@ -103,12 +106,18 @@ def gemini_cli(
             # detect platform for node download if needed
             platform = await detect_sandbox_platform(sbox)
 
-            # ensure node is available (downloads if not present)
-            node_binary = await ensure_node_available(sbox, platform, user)
+            # ensure node and npm are available (downloads full distribution if needed)
+            node_binary, _ = await ensure_node_and_npm_available(
+                sbox, platform, user
+            )
 
-            # ensure gemini-cli is installed
-            gemini_binary = await ensure_agent_binary_installed(
-                gemini_cli_binary_source(), version, user, sbox
+            # resolve gemini version
+            gemini_version = await resolve_gemini_version(version)
+
+            # ensure gemini-cli is installed via npm bundle
+            # This gives us the full package including policy files for YOLO mode
+            gemini_binary = await ensure_gemini_cli_installed(
+                sbox, node_binary, gemini_version, platform, user
             )
 
             # build system prompt from messages
@@ -128,17 +137,14 @@ def gemini_cli(
                 prompt = f"{combined_system}\n\n{prompt}"
 
             # build base command
-            # NOTE: gemini-cli is a JavaScript file, run with node
-            # Use --max-old-space-size to increase heap size for large prompts
-            # Use --experimental-default-type=module because gemini.js uses ES modules
+            # The gemini binary from npm install is a shell script that invokes node
             cmd = [
-                node_binary,
-                "--max-old-space-size=4096",  # 4GB heap size
-                "--experimental-default-type=module",  # gemini.js uses ES modules
                 gemini_binary,
-                "--model", gemini_model,  # Specify model to bypass auto-router
+                "--model",
+                gemini_model,  # Specify model to bypass auto-router
                 "--yolo",  # Auto-approve all actions (YOLO mode)
-                "--output-format", "text",  # Text output format
+                "--output-format",
+                "text",  # Text output format
             ]
 
             # Configure MCP server names if provided
@@ -148,9 +154,13 @@ def gemini_cli(
                     cmd.extend(["--allowed-mcp-server-names", server.name])
 
             # build environment variables
+            # Add node to PATH so the gemini shell script can find it
+            node_dir = "/".join(node_binary.split("/")[:-1])  # Get bin directory
             agent_env = {
                 "GOOGLE_GEMINI_BASE_URL": f"http://localhost:{bridge.port}",
                 "GEMINI_API_KEY": "sk-inspect-bridge",  # Dummy key - proxy handles auth
+                "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
+                "HOME": "/tmp",  # Gemini CLI needs a home directory
             }
             if env:
                 agent_env.update(env)
