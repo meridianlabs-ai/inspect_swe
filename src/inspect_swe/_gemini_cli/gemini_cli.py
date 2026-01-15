@@ -1,3 +1,4 @@
+from logging import getLogger
 from textwrap import dedent
 from typing import Literal, Sequence
 
@@ -26,6 +27,8 @@ from .agentbinary import (
     ensure_node_and_npm_available,
     resolve_gemini_version,
 )
+
+logger = getLogger(__name__)
 
 
 @agent
@@ -193,9 +196,12 @@ def gemini_cli(
                 debug_output.append(result.stderr)
 
                 if not result.success:
-                    raise RuntimeError(
-                        f"Error executing gemini cli: {result.stdout}\n{result.stderr}"
-                    )
+                    # Don't crash - log warning and return gracefully with whatever
+                    # state was captured. This allows recovery from transient errors
+                    # (e.g., network issues) while preserving model events.
+                    error_msg = _clean_gemini_error(result.stdout, result.stderr)
+                    logger.warning(f"Gemini CLI exited with error: {error_msg}")
+                    break
 
                 attempt_count += 1
                 if attempt_count >= attempts.attempts:
@@ -228,3 +234,27 @@ async def _get_incorrect_message(
             raise ValueError("The incorrect_message function must be async.")
         return await attempts.incorrect_message(state, answer_scores)
     return attempts.incorrect_message
+
+
+def _clean_gemini_error(stdout: str, stderr: str) -> str:
+    """Clean up Gemini CLI error output by removing noise.
+
+    The Gemini CLI can output __THOUGHT_SIG__ tokens (internal reasoning signatures)
+    that clutter error messages. This function strips them out to make errors readable.
+    """
+    combined = f"{stdout}\n{stderr}"
+
+    # Remove __THOUGHT_SIG__ lines (they're base64-encoded internal data)
+    cleaned_lines = []
+    for line in combined.split("\n"):
+        if not line.startswith("__THOUGHT_SIG__:"):
+            cleaned_lines.append(line)
+
+    cleaned = "\n".join(cleaned_lines).strip()
+
+    # Truncate if still too long (some errors can be very verbose)
+    max_len = 2000
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len] + "... (truncated)"
+
+    return cleaned if cleaned else "Unknown error (no output)"
