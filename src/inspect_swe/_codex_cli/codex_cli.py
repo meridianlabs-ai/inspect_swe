@@ -1,5 +1,6 @@
-import os
+import shlex
 from logging import getLogger
+from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
 
@@ -14,12 +15,14 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import score
-from inspect_ai.tool import MCPServerConfig
+from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import SandboxEnvironment, store
 from inspect_ai.util import sandbox as sandbox_env
 
 from inspect_swe._util._async import is_callable_coroutine
+from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
+from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import sandbox_exec
 from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
@@ -39,9 +42,11 @@ def codex_cli(
     """),
     system_prompt: str | None = None,
     model_config: str = "gpt-5.1",
+    skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     disallowed_tools: list[Literal["web_search"]] | None = None,
+    centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     filter: GenerateFilter | None = None,
@@ -66,16 +71,18 @@ def codex_cli(
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
         system_prompt: Additional system prompt to append to default system prompt.
         model_config: Model configuration profile (e.g. used to determine the system prompt).
+        skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
             tools available to the agent running in the sandbox.
         disallowed_tools: Optionally disallow tools (currently only web_search).
+        centaur: Run in 'centaur' mode, which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts.
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
-        home_dir: Home directory to use for codex cli. If set, AGENTS.md and the MCP configuration will be written here.
+        home_dir: Home directory to use for codex cli. If set, AGENTS.md, skills, and the MCP configuration will be written here.
         cwd: Working directory to run codex cli within.
         env: Environment variables to set for codex cli
         user: User to execute codex cli with.
@@ -88,8 +95,15 @@ def codex_cli(
         config_overrides: Additional Codex CLI configuration overrides.
             Each key-value pair is passed as `-c key=value` to the CLI.
     """
+    # resolve centaur
+    if centaur is True:
+        centaur = CentaurOptions()
+
     # resolve model
     model = f"inspect/{model}" if model is not None else "inspect"
+
+    # resolve skills
+    resolved_skills = read_skills(skills) if skills is not None else None
 
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
@@ -129,7 +143,7 @@ def codex_cli(
             # determine CODEX_HOME (default to whatever sandbox working dir is)
             if home_dir is None:
                 working_dir = await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)
-                codex_home = _join_path(working_dir, ".codex")
+                codex_home = join_path(working_dir, ".codex")
             else:
                 # Resolve ~ and $VARS inside the sandbox
                 codex_home = await sandbox_exec(
@@ -141,9 +155,9 @@ def codex_cli(
             def codex_agents_md() -> str:
                 AGENTS_MD = "AGENTS.md"
                 if home_dir is not None:
-                    return _join_path(codex_home, AGENTS_MD)
+                    return join_path(codex_home, AGENTS_MD)
                 elif cwd is not None:
-                    return _join_path(cwd, AGENTS_MD)
+                    return join_path(cwd, AGENTS_MD)
                 else:
                     return AGENTS_MD
 
@@ -151,116 +165,153 @@ def codex_cli(
             async def codex_config_toml() -> str:
                 CONFIG_TOML = "config.toml"
                 if home_dir is not None:
-                    return _join_path(codex_home, CONFIG_TOML)
+                    return join_path(codex_home, CONFIG_TOML)
                 else:
-                    dir = ".codex" if cwd is None else _join_path(cwd, ".codex")
+                    dir = ".codex" if cwd is None else join_path(cwd, ".codex")
                     await sandbox_exec(sbox, cmd=f"mkdir -p {dir}", user=user)
-                    return _join_path(dir, CONFIG_TOML)
+                    return join_path(dir, CONFIG_TOML)
 
             # write system messages to AGENTS.md
             if system_messages:
                 await sbox.write_file(codex_agents_md(), "\n\n".join(system_messages))
 
+            # install skills
+            if resolved_skills is not None:
+                await install_skills(
+                    resolved_skills, sbox, user, join_path(codex_home, "skills")
+                )
+
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
             # build agent cmd
-            cmd = [
-                codex_binary,
-                "exec",
-                # real model is passed to the bridge above, this just affects defaults e.g. system prompt
-                "--model",
-                model_config,
-                "--skip-git-repo-check",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "--color",
-                "never",
-            ]
+            cmd = [codex_binary]
+
+            # headless
+            if centaur is False:
+                cmd.extend(["exec", "--color", "never", "--skip-git-repo-check"])
+
+            # default cli args
+            cmd.extend(
+                [
+                    # real model is passed to the bridge above, this just affects defaults e.g. system prompt
+                    "--model",
+                    model_config,
+                    "--dangerously-bypass-approvals-and-sandbox",
+                ]
+            )
 
             # include web search if appropriate
             if "web_search" not in disallowed_tools:
-                cmd.extend(["-c", "tools.web_search=true"])
+                cmd.extend(["--enable", "web_search_request"])
 
             # apply config overrides
             if config_overrides:
                 for key, value in config_overrides.items():
                     cmd.extend(["-c", f"{key}={value}"])
 
+            # build toml config
+            toml_config: dict[str, Any] = {}
+
             # register mcp servers (combine static configs with bridged tools)
             all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
             if all_mcp_servers:
-                mcp_config: dict[str, Any] = {}
                 for mcp_server in all_mcp_servers:
-                    mcp_config[f"mcp_servers.{mcp_server.name}"] = (
+                    toml_config[f"mcp_servers.{mcp_server.name}"] = (
                         mcp_server.model_dump(
                             exclude={"name", "tools"}, exclude_none=True
                         )
                     )
-                await sbox.write_file(await codex_config_toml(), to_toml(mcp_config))
 
-            # execute the agent (track debug output)
-            debug_output: list[str] = []
-            agent_prompt = prompt
-            attempt_count = 0
-            while True:
-                # append prompt
-                agent_cmd = cmd.copy()
-                agent_cmd.append(agent_prompt)
+            # model provider if we are in centaur mode
+            if centaur:
+                toml_config["preferred_auth_method"] = "apikey"
+                toml_config["model_provider"] = "openai-proxy"
+                toml_config["model_providers.openai-proxy"] = {
+                    "name": "OpenAI Proxy",
+                    "base_url": f"http://localhost:{bridge.port}/v1",
+                    "env_key": "OPENAI_API_KEY",
+                    "wire_api": "responses",
+                }
 
-                # resume previous conversation
-                if has_assistant_response or attempt_count > 0:
-                    agent_cmd.extend(["resume", "--last"])
+            # write toml config if we have it
+            if len(toml_config) > 0:
+                await sbox.write_file(await codex_config_toml(), to_toml(toml_config))
 
-                # run agent
-                result = await sbox.exec(
-                    cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
-                    cwd=cwd,
-                    env={
-                        "CODEX_HOME": codex_home,
-                        "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
-                        "RUST_LOG": "warning",
-                    }
-                    | (env or {}),
-                    user=user,
+            # setup agent env
+            agent_env = {
+                "CODEX_HOME": codex_home,
+                "OPENAI_API_KEY": "api-key",
+                "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
+                "RUST_LOG": "warning",
+            } | (env or {})
+
+            if centaur:
+                await _run_codex_cli_centaur(
+                    options=centaur,
+                    codex_cmd=cmd,
+                    agent_env=agent_env,
+                    state=state,
                 )
+            else:
+                # execute the agent (track debug output)
+                debug_output: list[str] = []
+                agent_prompt = prompt
+                attempt_count = 0
+                while True:
+                    # append prompt
+                    agent_cmd = cmd.copy()
+                    agent_cmd.append(agent_prompt)
 
-                # record output for debug
-                debug_output.append(result.stdout)
-                debug_output.append(result.stderr)
+                    # resume previous conversation
+                    if has_assistant_response or attempt_count > 0:
+                        agent_cmd.extend(["resume", "--last"])
 
-                # raise for error
-                if not result.success:
-                    raise RuntimeError(
-                        f"Error executing codex cli agent: {result.stdout}\n{result.stderr}"
+                    # run agent
+                    result = await sbox.exec(
+                        cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
+                        cwd=cwd,
+                        env=agent_env,
+                        user=user,
                     )
 
-                # exit if we are at max_attempts
-                attempt_count += 1
-                if attempt_count >= attempts.attempts:
-                    break
+                    # record output for debug
+                    debug_output.append(result.stdout)
+                    debug_output.append(result.stderr)
 
-                # score this attempt
-                answer_scores = await score(state)
-
-                # break if we score 'correct'
-                if attempts.score_value(answer_scores[0].value) == 1.0:
-                    break
-
-                # otherwise update prompt with incorrect message and continue
-                else:
-                    if callable(attempts.incorrect_message):
-                        if not is_callable_coroutine(attempts.incorrect_message):
-                            raise ValueError(
-                                "The incorrect_message function must be async."
-                            )
-                        agent_prompt = await attempts.incorrect_message(
-                            state, answer_scores
+                    # raise for error
+                    if not result.success:
+                        raise RuntimeError(
+                            f"Error executing codex cli agent: {result.stdout}\n{result.stderr}"
                         )
-                    else:
-                        agent_prompt = attempts.incorrect_message
 
-            # trace debug info
-            debug_output.insert(0, "Codex CLI Debug Output:")
-            trace("\n".join(debug_output))
+                    # exit if we are at max_attempts
+                    attempt_count += 1
+                    if attempt_count >= attempts.attempts:
+                        break
+
+                    # score this attempt
+                    answer_scores = await score(state)
+
+                    # break if we score 'correct'
+                    if attempts.score_value(answer_scores[0].value) == 1.0:
+                        break
+
+                    # otherwise update prompt with incorrect message and continue
+                    else:
+                        if callable(attempts.incorrect_message):
+                            if not is_callable_coroutine(attempts.incorrect_message):
+                                raise ValueError(
+                                    "The incorrect_message function must be async."
+                                )
+                            agent_prompt = await attempts.incorrect_message(
+                                state, answer_scores
+                            )
+                        else:
+                            agent_prompt = attempts.incorrect_message
+
+                # trace debug info
+                debug_output.insert(0, "Codex CLI Debug Output:")
+                trace("\n".join(debug_output))
 
         # return success
         return bridge.state
@@ -268,8 +319,22 @@ def codex_cli(
     return agent_with(execute, name=name, description=description)
 
 
-def _join_path(base: str, path: str) -> str:
-    return os.path.join(base, path).replace("\\", "/")
+async def _run_codex_cli_centaur(
+    options: CentaurOptions,
+    codex_cmd: list[str],
+    agent_env: dict[str, str],
+    state: AgentState,
+) -> None:
+    instructions = "Codex CLI:\n\n - You may also use Codex CLI via the 'codex' command.\n - Use 'codex resume' if you need to resume a previous codex session."
+
+    # build .bashrc content
+    agent_env_vars = [f'export {k}="{v}"' for k, v in agent_env.items()]
+    alias_cmd = shlex.join(codex_cmd)
+    alias_cmd = "alias codex='" + alias_cmd.replace("'", "'\\''") + "'"
+    bashrc = "\n".join(agent_env_vars + ["", alias_cmd])
+
+    # run the human cli
+    await run_centaur(options, instructions, bashrc, state)
 
 
 async def _last_rollout(

@@ -17,15 +17,17 @@ The following options are supported for customizing the behavior of the agent:
 |------------------------------------|------------------------------------|
 | `system_prompt` | Additional system prompt to append to default system prompt. |
 | `model_config` | Model configuration profile (e.g. used to determine the system prompt). Defaults to `gpt-5-codex`. |
+| `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
 | `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
 | `disallowed_tools` | Optionally disallow tools (e.g. `"{{< meta agent_disallowed_tool >}}"`) |
+| `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended. | 
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
 | `filter` | Filter for intercepting bridged model requests. |
 | `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
 | `home_dir` | Home directory to use for codex cli. When set, AGENTS.md and the MCP configuration will be written here rather than to .codex
-| `cwd` | Workding directory for {{< meta agent_name >}} session. |
+| `cwd` | Working directory for {{< meta agent_name >}} session. |
 | `env` | Environment variables to set for {{< meta agent_name >}}. |
 | `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |
 
@@ -59,5 +61,7 @@ By default, the agent will download the current stable version of {{< meta agent
 : {tbl-colwidths=\[25,75\]}
 
 {{< include _snippets/agent_installation.md >}}
+
+{{< include _snippets/agent_centaur.md >}}
 
 {{< include _snippets/agent_troubleshooting.md >}}
