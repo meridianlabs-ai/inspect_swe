@@ -158,7 +158,7 @@ def get_available_sandboxes() -> List[Literal["docker", "k8s"]]:
 
 def run_example(
     example: str,
-    agent: Literal["claude_code", "codex_cli"],
+    agent: Literal["claude_code", "codex_cli", "mini_swe_agent"],
     model: str,
     sandbox: str | None = None,
 ) -> list[EvalLog]:
