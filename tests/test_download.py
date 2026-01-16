@@ -2,12 +2,11 @@ from typing import Literal
 
 import pytest
 from inspect_swe import (
-    _list_cached_wheels,
-    _wheels_cache_dir,
     cached_agent_binaries,
     download_agent_binary,
     download_wheels_tarball,
 )
+from inspect_swe._util.agentwheel import _list_cached_wheels, _wheels_cache_dir
 
 
 @pytest.mark.slow

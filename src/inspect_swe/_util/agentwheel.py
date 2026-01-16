@@ -23,15 +23,15 @@ from .trace import trace
 
 @dataclass
 class AgentWheelSource:
-    agent: str  # Human-readable
-    package: str  # PyPI package
-    binary: str  # CLI entrypoint
-    default_version: str  # Pinned default version
+    agent: Literal["mini-swe-agent"]  # Human-readable
+    package: Literal["mini-swe-agent"]  # PyPI package
+    binary: Literal["mini"]  # CLI entrypoint
+    default_version: Literal["1.17.4"]  # Default stable version
 
 
 async def ensure_agent_wheel_installed(
     source: AgentWheelSource,
-    version: Literal["auto", "sandbox"] | str = "auto",
+    version: Literal["stable", "sandbox", "latest"] | str = "stable",
     user: str | None = None,
     sandbox: SandboxEnvironment | None = None,
 ) -> str:
@@ -40,8 +40,9 @@ async def ensure_agent_wheel_installed(
     Args:
         source: Agent wheel source configuration
         version: Version to install. Options:
-            - "auto": Check sandbox first, install default version if not found
+            - "stable": Download and install the default version
             - "sandbox": Use only what's in sandbox, error if not found
+            - "latest": Download and install latest version from PyPI
             - Specific version string (e.g., "1.17.4")
         user: User to run commands as in sandbox
         sandbox: Sandbox environment (uses default if not provided)
@@ -52,20 +53,22 @@ async def ensure_agent_wheel_installed(
     # resolve sandbox
     sandbox = sandbox or sandbox_env()
 
-    # look in the sandbox first if we need to
-    if version in ("auto", "sandbox"):
+    # "sandbox" means only use what's already installed
+    if version == "sandbox":
         result = await sandbox.exec(bash_command(f"which {source.binary}"), user=user)
         if result.success:
             binary_path = result.stdout.strip()
             trace(f"Using {source.agent} installed in sandbox: {binary_path}")
             return binary_path
+        raise RuntimeError(f"unable to locate {source.agent} in sandbox")
 
-        # if version == "sandbox" and we don't find it that's an error
-        if version == "sandbox":
-            raise RuntimeError(f"unable to locate {source.agent} in sandbox")
-
-        # otherwise use default pinned version
+    # "stable" means use default pinned version
+    if version == "stable":
         version = source.default_version
+
+    # "latest" means fetch latest from PyPI (version=None in download)
+    if version == "latest":
+        version = None  # type: ignore[assignment]
 
     # detect the sandbox target platform and python version
     platform = await detect_sandbox_platform(sandbox)
@@ -86,13 +89,13 @@ async def ensure_agent_wheel_installed(
         sandbox_tarball_path = f"/var/tmp/.{source.package}-{resolved_version}.tar.gz"
         await sandbox.write_file(sandbox_tarball_path, tarball)
 
-        # extract and install
+        # extract and install (paths quoted for safety)
         install_cmd = f"""
 set -e
-mkdir -p /var/tmp/{source.package}-wheels
-tar -xzf {sandbox_tarball_path} -C /var/tmp/{source.package}-wheels
-pip install --no-index --find-links /var/tmp/{source.package}-wheels {source.package}
-rm -rf /var/tmp/{source.package}-wheels {sandbox_tarball_path}
+mkdir -p "/var/tmp/{source.package}-wheels"
+tar -xzf "{sandbox_tarball_path}" -C "/var/tmp/{source.package}-wheels"
+pip install --no-index --find-links "/var/tmp/{source.package}-wheels" "{source.package}"
+rm -rf "/var/tmp/{source.package}-wheels" "{sandbox_tarball_path}"
 """
         await sandbox_exec(sandbox, install_cmd, user=user)
 
@@ -107,6 +110,7 @@ rm -rf /var/tmp/{source.package}-wheels {sandbox_tarball_path}
 
 
 #  Platform Mapping: SandboxPlatform -> pip platform strings
+# https://packaging.python.org/en/latest/specifications/platform-compatibility-tags/
 PIP_PLATFORMS: dict[SandboxPlatform, str] = {
     "linux-x64": "manylinux2014_x86_64",
     "linux-arm64": "manylinux2014_aarch64",
@@ -128,13 +132,13 @@ async def detect_python_version(
     # Detects Python version in sandbox.
     result = await sandbox.exec(bash_command("python3 --version"), user=user)
     if not result.success:
-        raise RuntimeError(f"Failed to detect Python version: {result.stderr}")
+        raise RuntimeError("Python 3 not found in sandbox (required for agent)")
 
     # Parse "Python 3.12.0" -> "312"
-    match = re.search(r"Python (\d+)\.(\d+)", result.stdout)
+    match = re.search(r"Python (\S+)", result.stdout)
     if not match:
         raise RuntimeError(f"Could not parse Python version: {result.stdout}")
-    return f"{match.group(1)}{match.group(2)}"
+    return match.group(1)
 
 
 # mirror of cleanup_cached_binaries in _util/agentbinary.py
@@ -157,7 +161,7 @@ def write_cached_wheels(
     cleanup_wheel_cache(list_cached_fn, keep_count)
 
 
-# mirror of cleanup_cached_binaries in _util/agentbinary.py
+# mirror of _cleanup_binary_cache in _util/agentbinary.py
 def cleanup_wheel_cache(
     list_cached_fn: Callable[[], list[Path]],
     keep_count: int = 5,
@@ -167,7 +171,7 @@ def cleanup_wheel_cache(
         return
     cache_files.sort(key=lambda f: f.stat().st_atime)
     for file_path in cache_files[:-keep_count]:
-        file_path.unlink()
+        file_path.unlink(missing_ok=True)
 
 
 def _wheels_cache_dir(package_name: str) -> Path:
