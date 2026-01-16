@@ -159,7 +159,9 @@ def mini_swe_agent(
                         "MSWEA_CONFIGURED": "true",  # Skip interactive setup wizard
                         "MSWEA_MODEL_NAME": model,
                         "OPENAI_API_BASE": f"http://localhost:{bridge.port}/v1",
+                        "OPENAI_API_KEY": "sk-none",
                         "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
+                        "ANTHROPIC_API_KEY": "sk-none",
                     }
                     | (env or {}),
                     user=user,

@@ -29,6 +29,7 @@ def run_terminal_bench(
     task_args: dict[str, str | list[str]] = {}
     if eval_names is not None:
         task_args["eval_names"] = eval_names
+    task_args["model"] = model
 
     return eval(
         "examples/terminal_bench_test",
@@ -42,17 +43,26 @@ def run_terminal_bench(
 @skip_if_no_docker
 @skip_if_no_terminal_bench
 @pytest.mark.slow
-def test_mini_swe_agent_terminal_bench_constraints_scheduling() -> None:
-    """Test mini-swe-agent on constraints-scheduling challenge.
+@pytest.mark.parametrize(
+    "model, challenge, score",
+    [
+        ("openai/gpt-5-mini", "constraints-scheduling", 1.0),
+        ("openai/gpt-5-mini", "break-filter-js-from-html", 0),
+    ],
+)
+def test_mini_swe_agent_terminal_bench_challenges(model, challenge, score) -> None:
+    """Test mini-swe-agent on constraints-scheduling challenges.
 
-    This challenge has 5/5 pass rate with GPT-5-Mini on the official leaderboard.
-    See https://www.tbench.ai/leaderboard/terminal-bench/2.0/mini-swe-agent/unknown/gpt-5-mini%40openai/c69027b9099bb7ac63a753b310e31cfef9cc20dce2d1c6c88956c8a854d7ac16
-
-    Note: This test verifies the integration works. Agent success rate may vary.
+    This test verifies the integration works. Agent success rate may vary.
+    Challenges were picked based on their consistency on the official leaderboard and cost running.
+    constraints-scheduling: this challenge has 5/5 pass rate with GPT-5-Mini on the official leaderboard. See https://www.tbench.ai/leaderboard/terminal-bench/2.0/mini-swe-agent/unknown/gpt-5-mini%40openai/c69027b9099bb7ac63a753b310e31cfef9cc20dce2d1c6c88956c8a854d7ac16
+    break-filter-js-from-html: this challenge has 0/5 pass rate. See https://www.tbench.ai/leaderboard/terminal-bench/2.0/mini-swe-agent/unknown/gpt-5-mini%40openai/b33421492e86b07de2a01bc2205f7e7d2fdc36446a84787265d99e5e138fdaaa
     """
     logs = run_terminal_bench(
-        model="openai/gpt-5-mini",
-        eval_names=["constraints-scheduling"],
+        model=model,
+        eval_names=[
+            challenge,
+        ],
     )
     assert len(logs) == 1
     log = logs[0]
@@ -67,4 +77,4 @@ def test_mini_swe_agent_terminal_bench_constraints_scheduling() -> None:
     assert score.metrics is not None, "No metrics in score"
     accuracy = score.metrics.get("accuracy")
     assert accuracy is not None, "No accuracy metric"
-    assert accuracy.value == 1.0, f"Task failed: accuracy={accuracy.value}"
+    assert accuracy.value == score, f"Task failed: accuracy={accuracy.value}"
