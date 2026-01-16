@@ -40,6 +40,7 @@ dev = [
     "pytest-dotenv",
     "types-PyYAML",
     "IPython",
+    "inspect-evals",
 ]
 doc = ["quarto-cli==1.7.31"]
 

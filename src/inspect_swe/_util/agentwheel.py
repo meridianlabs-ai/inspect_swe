@@ -94,7 +94,7 @@ async def ensure_agent_wheel_installed(
 set -e
 mkdir -p "/var/tmp/{source.package}-wheels"
 tar -xzf "{sandbox_tarball_path}" -C "/var/tmp/{source.package}-wheels"
-pip install --no-index --find-links "/var/tmp/{source.package}-wheels" "{source.package}"
+pip install --no-index --find-links "/var/tmp/{source.package}-wheels" --break-system-packages "{source.package}"
 rm -rf "/var/tmp/{source.package}-wheels" "{sandbox_tarball_path}"
 """
         await sandbox_exec(sandbox, install_cmd, user=user)
