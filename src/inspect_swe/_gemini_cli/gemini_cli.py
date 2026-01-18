@@ -1,6 +1,7 @@
+import json
 from logging import getLogger
 from textwrap import dedent
-from typing import Literal, Sequence
+from typing import Any, Literal, Sequence
 
 from inspect_ai.agent import (
     Agent,
@@ -14,6 +15,7 @@ from inspect_ai.agent import (
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import Score, score
 from inspect_ai.tool import MCPServerConfig
+from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 
@@ -29,6 +31,41 @@ from .agentbinary import (
 )
 
 logger = getLogger(__name__)
+
+# Gemini CLI home directory
+GEMINI_HOME = "/tmp"
+GEMINI_SETTINGS_PATH = f"{GEMINI_HOME}/.gemini/settings.json"
+
+
+def _build_mcp_server_config(server: MCPServerConfig) -> dict[str, Any]:
+    """Build Gemini CLI settings.json MCP server config from MCPServerConfig.
+
+    Gemini CLI (v0.24+) supports transport configuration via:
+    - url + type: "http" → StreamableHTTPClientTransport (preferred)
+    - url + type: "sse" → SSEClientTransport
+    - httpUrl → StreamableHTTPClientTransport (deprecated but supported)
+    - command → StdioClientTransport (for stdio servers)
+    """
+    config: dict[str, Any] = {}
+
+    # Handle HTTP-based MCP servers (including bridged tools)
+    if isinstance(server, MCPServerConfigHTTP):
+        # Use url + type: "http" for streamable HTTP transport
+        # This is the preferred format in newer Gemini CLI versions (v0.24+)
+        config["url"] = server.url
+        config["type"] = "http"
+
+        if server.headers:
+            config["headers"] = server.headers
+    else:
+        # For stdio servers, pass command and args
+        config["command"] = server.command  # type: ignore[attr-defined]
+        if hasattr(server, "args") and server.args:  # type: ignore[attr-defined]
+            config["args"] = server.args  # type: ignore[attr-defined]
+        if hasattr(server, "env") and server.env:  # type: ignore[attr-defined]
+            config["env"] = server.env  # type: ignore[attr-defined]
+
+    return config
 
 
 @agent
@@ -123,6 +160,22 @@ def gemini_cli(
                 sbox, node_binary, gemini_version, platform, user
             )
 
+            # Write MCP server configs to settings.json
+            # Gemini CLI discovers MCP servers from settings.json, not CLI args
+            all_servers = list(mcp_servers or []) + list(bridge.mcp_server_configs)
+
+            if all_servers:
+                mcp_servers_config = {
+                    server.name: _build_mcp_server_config(server)
+                    for server in all_servers
+                }
+                settings = {"mcpServers": mcp_servers_config}
+                settings_json = json.dumps(settings, indent=2)
+
+                # Create .gemini directory and write settings.json
+                await sbox.exec(["mkdir", "-p", f"{GEMINI_HOME}/.gemini"], user=user)
+                await sbox.write_file(GEMINI_SETTINGS_PATH, settings_json)
+
             # build system prompt from messages
             system_messages = [
                 m.text for m in state.messages if isinstance(m, ChatMessageSystem)
@@ -151,10 +204,9 @@ def gemini_cli(
             ]
 
             # Configure MCP server names if provided
-            if mcp_servers or bridge.mcp_server_configs:
-                all_servers = list(mcp_servers or []) + list(bridge.mcp_server_configs)
-                for server in all_servers:
-                    cmd.extend(["--allowed-mcp-server-names", server.name])
+            # (all_servers defined earlier when writing settings.json)
+            for server in all_servers:
+                cmd.extend(["--allowed-mcp-server-names", server.name])
 
             # build environment variables
             # Add node to PATH so the gemini shell script can find it
