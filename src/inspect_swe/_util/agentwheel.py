@@ -87,7 +87,12 @@ async def ensure_agent_wheel_installed(
 
         # write tarball to sandbox
         sandbox_tarball_path = f"/var/tmp/.{source.package}-{resolved_version}.tar.gz"
-        await sandbox.write_file(sandbox_tarball_path, tarball)
+        try:
+            await sandbox.write_file(sandbox_tarball_path, tarball)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to write tarball to sandbox at {sandbox_tarball_path}: {e}"
+            ) from e
 
         # extract and install (paths quoted for safety)
         install_cmd = f"""
@@ -135,10 +140,11 @@ async def detect_python_version(
         raise RuntimeError("Python 3 not found in sandbox (required for agent)")
 
     # Parse "Python 3.12.0" -> "312"
-    match = re.search(r"Python (\S+)", result.stdout)
+    match = re.search(r"Python (\d+)\.(\d+)", result.stdout)
     if not match:
         raise RuntimeError(f"Could not parse Python version: {result.stdout}")
-    return match.group(1)
+    # Return "312" format for pip compatibility
+    return f"{match.group(1)}{match.group(2)}"
 
 
 # mirror of cleanup_cached_binaries in _util/agentbinary.py
