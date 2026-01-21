@@ -147,9 +147,7 @@ def gemini_cli(
             platform = await detect_sandbox_platform(sbox)
 
             # ensure node and npm are available (downloads full distribution if needed)
-            node_binary, _ = await ensure_node_and_npm_available(
-                sbox, platform, user
-            )
+            node_binary, _ = await ensure_node_and_npm_available(sbox, platform, user)
 
             # resolve gemini version
             gemini_version = await resolve_gemini_version(version)
@@ -224,6 +222,7 @@ def gemini_cli(
             debug_output: list[str] = []
             agent_prompt = prompt
             attempt_count = 0
+            cli_error_msg: str | None = None
 
             while True:
                 agent_cmd = cmd.copy()
@@ -248,12 +247,10 @@ def gemini_cli(
                 debug_output.append(result.stderr)
 
                 if not result.success:
-                    # Don't crash - log warning and return gracefully with whatever
-                    # state was captured. This allows recovery from transient errors
-                    # (e.g., network issues) while preserving model events.
-                    error_msg = _clean_gemini_error(result.stdout, result.stderr)
-                    logger.warning(f"Gemini CLI exited with error: {error_msg}")
-                    break
+                    cli_error_msg = _clean_gemini_error(result.stdout, result.stderr)
+                    raise RuntimeError(
+                        f"Error executing gemini cli agent: {cli_error_msg}"
+                    )
 
                 attempt_count += 1
                 if attempt_count >= attempts.attempts:
