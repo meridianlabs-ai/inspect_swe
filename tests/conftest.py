@@ -1,7 +1,9 @@
 import importlib
 import os
 import subprocess
+from dataclasses import dataclass
 from typing import Any, Callable, List, Literal, TypeVar, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from inspect_ai import eval
@@ -170,3 +172,27 @@ def run_example(
     if sandbox is not None:
         task_args["sandbox"] = sandbox
     return eval(example_file, model=model, limit=1, task_args=task_args)
+
+
+# --- Mock sandbox utilities ---
+
+
+@dataclass
+class MockExecResult:
+    """Mock result from sandbox.exec()."""
+
+    success: bool
+    stdout: str = ""
+    stderr: str = ""
+    returncode: int = 0
+
+
+def create_mock_sandbox(
+    success: bool, stdout: str = "", stderr: str = "", returncode: int = 0
+) -> MagicMock:
+    """Create a mock sandbox with a predefined exec result."""
+    mock_sandbox = MagicMock()
+    mock_sandbox.exec = AsyncMock(
+        return_value=MockExecResult(success, stdout, stderr, returncode)
+    )
+    return mock_sandbox
