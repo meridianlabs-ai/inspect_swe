@@ -256,6 +256,7 @@ def download_wheels_tarball(
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
+            # TODO: could add more specific error handling based on stderr if needed for improved behaviors such as retries
             raise RuntimeError(
                 f"pip download failed for {package_spec}: {result.stderr}"
             )

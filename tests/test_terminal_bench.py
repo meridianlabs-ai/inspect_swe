@@ -29,8 +29,6 @@ def run_terminal_bench(
     task_args: dict[str, str | list[str]] = {}
     if eval_names is not None:
         task_args["eval_names"] = eval_names
-    task_args["model"] = model
-
     return eval(
         "examples/terminal_bench_test",
         model=model,
@@ -73,8 +71,9 @@ def test_mini_swe_agent_terminal_bench_challenges(model, challenge, score) -> No
     assert log.results.scores is not None, "No scores in results"
     assert len(log.results.scores) > 0, "Empty scores list"
 
-    score = log.results.scores[0]
-    assert score.metrics is not None, "No metrics in score"
-    accuracy = score.metrics.get("accuracy")
+    expected_score = score  # Preserve parameter before shadowing
+    score_result = log.results.scores[0]
+    assert score_result.metrics is not None, "No metrics in score"
+    accuracy = score_result.metrics.get("accuracy")
     assert accuracy is not None, "No accuracy metric"
-    assert accuracy.value == score, f"Task failed: accuracy={accuracy.value}"
+    assert accuracy.value == expected_score, f"Task failed: accuracy={accuracy.value}"

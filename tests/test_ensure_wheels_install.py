@@ -97,7 +97,12 @@ def verify_mini_installation() -> Scorer:
         if requested_version == "stable":
             expected_version = MINI_SWE_AGENT_SOURCE.default_version
         elif requested_version == "latest":
-            expected_version = get_pypi_latest_version(MINI_SWE_AGENT_SOURCE.package)
+            try:
+                expected_version = get_pypi_latest_version(
+                    MINI_SWE_AGENT_SOURCE.package
+                )
+            except Exception as e:
+                pytest.skip(f"Could not fetch latest version from PyPI: {e}")
         else:
             expected_version = requested_version
 
