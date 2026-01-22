@@ -9,7 +9,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter
+from inspect_ai.model import ChatMessageSystem, GenerateFilter, get_model
 from inspect_ai.scorer import score
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
@@ -94,6 +94,9 @@ def mini_swe_agent(
         port = store().get(MODEL_PORT, 4000) + 1
         store().set(MODEL_PORT, port)
 
+        # resolve sandbox once for reuse
+        sbox = sandbox_env(sandbox)
+
         async with sandbox_agent_bridge(
             state,
             model=inspect_model,
@@ -106,7 +109,7 @@ def mini_swe_agent(
                 source=MINI_SWE_AGENT_SOURCE,
                 version=version,
                 user=user,
-                sandbox=sandbox_env(sandbox),
+                sandbox=sbox,
             )
 
             # base command options
@@ -121,7 +124,7 @@ def mini_swe_agent(
                 cmd.extend(["--cost-limit", str(cost_limit)])
 
             # build user prompt
-            prompt, has_assistant_response = build_user_prompt(state.messages)
+            prompt, _ = build_user_prompt(state.messages)
 
             # add system prompt context if provided
             full_prompt = prompt
@@ -137,9 +140,6 @@ def mini_swe_agent(
                     f"System instructions:\n{system_context}\n\nTask:\n{prompt}"
                 )
 
-            # resolve sandbox
-            sbox = sandbox_env(sandbox)
-
             # execute the agent
             debug_output: list[str] = []
             agent_prompt = full_prompt
@@ -150,14 +150,14 @@ def mini_swe_agent(
                 agent_cmd = cmd + ["--task", agent_prompt]
 
                 # run agent
-                # Use /dev/null for stdin instead of closing it, so prompt_toolkit
-                # doesn't fail at module import time when checking stdin.fileno()
                 result = await sbox.exec(
                     cmd=["bash", "-c", 'exec 0</dev/null "$@"', "bash"] + agent_cmd,
                     cwd=cwd,
                     env={
                         "MSWEA_CONFIGURED": "true",  # Skip interactive setup wizard
-                        "MSWEA_MODEL_NAME": model,
+                        "MSWEA_MODEL_NAME": model
+                        if model is not None
+                        else get_model().name,
                         "OPENAI_API_BASE": f"http://localhost:{bridge.port}/v1",
                         "OPENAI_API_KEY": "sk-none",
                         "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
