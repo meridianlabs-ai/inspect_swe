@@ -1,0 +1,31 @@
+---
+title: Gemini CLI
+agent: gemini_cli
+agent_provider: "Google"
+agent_name: "Gemini CLI"
+agent_url: "https://github.com/google-gemini/gemini-cli"
+agent_disallowed_tool: "web_search"
+---
+
+{{< include _snippets/agent_intro.md >}}
+
+{{< include _snippets/agent_options.md >}}
+
+{{< include _snippets/agent_mcp_servers.md >}}
+
+## Installation
+
+By default, the agent will download the current stable version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `"auto"` | Use any available version of {{< meta agent_name >}} in the sandbox, otherwise download the latest version. |
+| `"sandbox"` | Use the version of {{< meta agent_name >}} in the sandbox (raises `RuntimeError` if not available in the sandbox) |
+| `"latest"` | Download and use the very latest version. |
+| `"x.x.x-preview.y"` | Download and use a specific version number. |
+
+: {tbl-colwidths=\[25,75\]}
+
+{{< include _snippets/agent_installation.md >}}
+
+{{< include _snippets/agent_troubleshooting.md >}}

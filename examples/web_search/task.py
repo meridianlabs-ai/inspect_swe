@@ -3,12 +3,12 @@ from typing import Literal
 from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 from inspect_ai.util import SandboxEnvironmentType
-from inspect_swe import claude_code, codex_cli
+from inspect_swe import claude_code, codex_cli, gemini_cli
 
 
 @task
 def web_search(
-    agent: Literal["claude_code", "codex_cli"] = "claude_code",
+    agent: Literal["claude_code", "codex_cli", "gemini_cli"] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
     # setup agent
@@ -18,6 +18,8 @@ def web_search(
             solver = claude_code(system_prompt=system_prompt)
         case "codex_cli":
             solver = codex_cli(system_prompt=system_prompt)
+        case "gemini_cli":
+            solver = gemini_cli(system_prompt=system_prompt)
 
     # create task
     return Task(

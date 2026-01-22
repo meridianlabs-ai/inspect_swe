@@ -6,6 +6,7 @@ from tests.conftest import (
     run_example,
     skip_if_no_anthropic,
     skip_if_no_docker,
+    skip_if_no_google,
     skip_if_no_openai,
 )
 
@@ -46,3 +47,21 @@ def test_codex_cli_web_search(sandbox: str) -> None:
         ),
         None,
     )
+
+
+@pytest.mark.api
+@skip_if_no_google
+@skip_if_no_docker
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_gemini_cli_web_search(sandbox: str) -> None:
+    log = run_example(
+        "web_search", "gemini_cli", "google/gemini-2.5-pro", sandbox=sandbox
+    )[0]
+    assert log.status == "success"
+    assert log.samples
+    assistant_messages = [
+        m for m in log.samples[0].messages if isinstance(m, ChatMessageAssistant)
+    ]
+    # Check for web search tool usage (adjust based on Gemini CLI's tool naming)
+    tool_calls = [tc for m in assistant_messages for tc in (m.tool_calls or [])]
+    assert next((tc for tc in tool_calls if "search" in tc.function.lower()), None)

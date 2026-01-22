@@ -38,6 +38,7 @@ dev = [
     "pytest",
     "anthropic",
     "openai",
+    "google-genai",
     "pytest-dotenv",
     "types-PyYAML",
     "IPython",
