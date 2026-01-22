@@ -48,7 +48,9 @@ def run_terminal_bench(
         ("openai/gpt-5-mini", "break-filter-js-from-html", 0),
     ],
 )
-def test_mini_swe_agent_terminal_bench_challenges(model, challenge, score) -> None:
+def test_mini_swe_agent_terminal_bench_challenges(
+    model: str, challenge: str, score: float
+) -> None:
     """Test mini-swe-agent on constraints-scheduling challenges.
 
     This test verifies the integration works. Agent success rate may vary.

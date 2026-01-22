@@ -23,7 +23,7 @@ def get_pypi_latest_version(package_name: str) -> str:
     url = f"https://pypi.org/pypi/{package_name}/json"
     with urllib.request.urlopen(url, timeout=10) as response:
         data = json.loads(response.read().decode())
-        return data["info"]["version"]
+        return str(data["info"]["version"])
 
 
 # Default version for testing
@@ -94,6 +94,7 @@ def verify_mini_installation() -> Scorer:
         expected_path = state.metadata.get("binary_path", "unknown")
 
         # Resolve expected version
+        expected_version: str
         if requested_version == "stable":
             expected_version = MINI_SWE_AGENT_SOURCE.default_version
         elif requested_version == "latest":

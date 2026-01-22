@@ -1,4 +1,6 @@
+from pathlib import Path
 from typing import Literal
+from unittest.mock import MagicMock
 
 import pytest
 from inspect_swe import (
@@ -57,7 +59,7 @@ def test_codex_cli_binary_download() -> None:
 def test_mini_swe_agent_wheels_download(
     version: str | None,
     platform: Literal["linux-x64", "linux-arm64", "linux-x64-musl", "linux-arm64-musl"],
-    wheels_cache_cleanup,
+    wheels_cache_cleanup: Path,
 ) -> None:
     """Test mini-swe-agent wheels download and caching."""
     tarball, resolved_version = download_wheels_tarball(
@@ -106,7 +108,9 @@ def test_mini_swe_agent_unsupported_platform() -> None:
         platform_to_pip_platform("unsupported-platform")  # type: ignore[arg-type]
 
 
-def test_mini_swe_agent_pip_failure_preserves_error(mock_pip_download_failure) -> None:
+def test_mini_swe_agent_pip_failure_preserves_error(
+    mock_pip_download_failure: MagicMock,
+) -> None:
     """Test that pip download failures include the original error message.
 
     This verifies that when pip fails, users see the actual pip error
@@ -130,7 +134,7 @@ def test_mini_swe_agent_pip_failure_preserves_error(mock_pip_download_failure) -
 
 
 @pytest.mark.slow
-def test_mini_swe_agent_cache_hit(wheels_cache_cleanup) -> None:
+def test_mini_swe_agent_cache_hit(wheels_cache_cleanup: Path) -> None:
     """Test that downloading the same version twice uses cache on second request."""
     version = "1.17.4"
     platform: Literal[
