@@ -270,6 +270,25 @@ def gemini_cli(
             debug_output.insert(0, "Gemini CLI Debug Output:")
             trace("\n".join(debug_output))
 
+            # Debug: log bridge state before returning
+            last_msg = bridge.state.messages[-1] if bridge.state.messages else None
+            has_pending = (
+                last_msg
+                and last_msg.role == "assistant"
+                and getattr(last_msg, "tool_calls", None)
+            )
+            logger.info(
+                f"Gemini CLI completed: attempt_count={attempt_count}, "
+                f"result.success={result.success}, "
+                f"num_messages={len(bridge.state.messages)}, "
+                f"has_pending_tool_calls={has_pending}"
+            )
+            if has_pending:
+                logger.warning(
+                    f"Gemini CLI exited with pending tool calls: "
+                    f"{[tc.function for tc in last_msg.tool_calls]}"
+                )
+
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
