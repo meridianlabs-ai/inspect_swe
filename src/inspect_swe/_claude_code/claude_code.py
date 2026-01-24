@@ -4,6 +4,7 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
 
+import anyio
 from inspect_ai.agent import (
     Agent,
     AgentAttempts,
@@ -51,6 +52,7 @@ def claude_code(
     subagent_model: str | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
+    retry_timeouts: int | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -87,6 +89,7 @@ def claude_code(
         subagent_model: The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`.
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
+        retry_timeouts: Should timeouts be retried? (pass number of times to retry)
         cwd: Working directory to run claude code within.
         env: Environment variables to set for claude code.
         user: User to execute claude code with.
@@ -221,9 +224,10 @@ def claude_code(
                 debug_output: list[str] = []
                 agent_prompt = prompt
                 attempt_count = 0
+                timeout_count = 0
                 while True:
                     # resume previous conversation
-                    if has_assistant_response or attempt_count > 0:
+                    if has_assistant_response or attempt_count > 0 or timeout_count > 0:
                         agent_cmd = (
                             [claude_binary, "--continue"] + cmd + ["--", agent_prompt]
                         )
@@ -249,9 +253,26 @@ def claude_code(
 
                     # raise for error
                     if not result.success:
+                        # see if this is a timeout and we are retrying timeouts
+                        if (
+                            "request timed out" in result.stderr.lower()
+                            and retry_timeouts is not None
+                            and timeout_count < retry_timeouts
+                        ):
+                            timeout_count += 1
+                            delay = min(2**timeout_count, 60)
+                            trace(
+                                f"Retrying timed out request (retry {timeout_count}, waiting {delay} seconds)."
+                            )
+                            await anyio.sleep(delay)
+                            continue
+
                         raise RuntimeError(
                             f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
                         )
+
+                    # reset timeout counter
+                    timeout_count = 0
 
                     # exit if we are at max_attempts
                     attempt_count += 1
