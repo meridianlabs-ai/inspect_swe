@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.11.4",
     "pyyaml",
     "sniffio",
+    "anyio",
     "typing_extensions>=4.9.0",
 ]
 
