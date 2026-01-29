@@ -1,4 +1,5 @@
 import json
+import shlex
 from logging import getLogger
 from textwrap import dedent
 from typing import Any, Literal, Sequence
@@ -20,6 +21,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 
 from inspect_swe._util._async import is_callable_coroutine
+from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.sandbox import detect_sandbox_platform
 from inspect_swe._util.trace import trace
@@ -60,10 +62,10 @@ def _build_mcp_server_config(server: MCPServerConfig) -> dict[str, Any]:
     else:
         # For stdio servers, pass command and args
         config["command"] = server.command  # type: ignore[attr-defined]
-        if hasattr(server, "args") and server.args:  # type: ignore[attr-defined]
-            config["args"] = server.args  # type: ignore[attr-defined]
-        if hasattr(server, "env") and server.env:  # type: ignore[attr-defined]
-            config["env"] = server.env  # type: ignore[attr-defined]
+        if hasattr(server, "args") and server.args:
+            config["args"] = server.args
+        if hasattr(server, "env") and server.env:
+            config["env"] = server.env
 
     return config
 
@@ -78,6 +80,7 @@ def gemini_cli(
     system_prompt: str | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+    centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     gemini_model: str = "gemini-2.5-pro",
@@ -103,6 +106,7 @@ def gemini_cli(
         system_prompt: Additional system prompt to append
         mcp_servers: MCP servers to make available to the agent
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP
+        centaur: Run in 'centaur' mode, which makes Gemini CLI available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts
         model: Model name to use for inspect bridge (defaults to main model for task)
         gemini_model: Gemini model name to pass to CLI. This bypasses the auto-router.
@@ -120,6 +124,10 @@ def gemini_cli(
             - "stable"/"latest": Download and use the latest version
             - "x.x.x": Download and use a specific version
     """
+    # resolve centaur
+    if centaur is True:
+        centaur = CentaurOptions()
+
     # resolve model - use "inspect/" prefix pattern for bridge
     model = f"inspect/{model}" if model is not None else "inspect"
 
@@ -196,10 +204,13 @@ def gemini_cli(
                 gemini_binary,
                 "--model",
                 gemini_model,  # Specify model to bypass auto-router
-                "--yolo",  # Auto-approve all actions (YOLO mode)
                 "--output-format",
                 "text",  # Text output format
             ]
+
+            # Add --yolo only for non-centaur mode (let user approve actions in centaur)
+            if centaur is False:
+                cmd.append("--yolo")
 
             # Configure MCP server names if provided
             # (all_servers defined earlier when writing settings.json)
@@ -218,57 +229,67 @@ def gemini_cli(
             if env:
                 agent_env.update(env)
 
-            # execute agent with retry loop
-            debug_output: list[str] = []
-            agent_prompt = prompt
-            attempt_count = 0
-            cli_error_msg: str | None = None
-
-            while True:
-                agent_cmd = cmd.copy()
-
-                # resume previous conversation if continuing
-                if has_assistant_response or attempt_count > 0:
-                    agent_cmd.extend(["--resume", "latest"])
-
-                # add prompt as positional argument at the end
-                agent_cmd.append(agent_prompt)
-
-                # run agent - close stdin to prevent interactive mode
-                result = await sbox.exec(
-                    cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
-                    cwd=cwd,
-                    env=agent_env,
-                    user=user,
-                    concurrency=False,
+            if centaur:
+                await _run_gemini_cli_centaur(
+                    options=centaur,
+                    gemini_cmd=cmd,
+                    agent_env=agent_env,
+                    state=state,
                 )
+            else:
+                # execute agent with retry loop
+                debug_output: list[str] = []
+                agent_prompt = prompt
+                attempt_count = 0
+                cli_error_msg: str | None = None
 
-                debug_output.append(result.stdout)
-                debug_output.append(result.stderr)
+                while True:
+                    agent_cmd = cmd.copy()
 
-                if not result.success:
-                    cli_error_msg = _clean_gemini_error(result.stdout, result.stderr)
-                    raise RuntimeError(
-                        f"Error executing gemini cli agent: {cli_error_msg}"
+                    # resume previous conversation if continuing
+                    if has_assistant_response or attempt_count > 0:
+                        agent_cmd.extend(["--resume", "latest"])
+
+                    # add prompt as positional argument at the end
+                    agent_cmd.append(agent_prompt)
+
+                    # run agent - close stdin to prevent interactive mode
+                    result = await sbox.exec(
+                        cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
+                        cwd=cwd,
+                        env=agent_env,
+                        user=user,
+                        concurrency=False,
                     )
 
-                attempt_count += 1
-                if attempt_count >= attempts.attempts:
-                    break
+                    debug_output.append(result.stdout)
+                    debug_output.append(result.stderr)
 
-                # score and check for success
-                answer_scores = await score(bridge.state)
-                if attempts.score_value(answer_scores[0].value) == 1.0:
-                    break
+                    if not result.success:
+                        cli_error_msg = _clean_gemini_error(
+                            result.stdout, result.stderr
+                        )
+                        raise RuntimeError(
+                            f"Error executing gemini cli agent: {cli_error_msg}"
+                        )
 
-                # update prompt for retry
-                agent_prompt = await _get_incorrect_message(
-                    attempts, bridge.state, answer_scores
-                )
+                    attempt_count += 1
+                    if attempt_count >= attempts.attempts:
+                        break
 
-            # trace debug output
-            debug_output.insert(0, "Gemini CLI Debug Output:")
-            trace("\n".join(debug_output))
+                    # score and check for success
+                    answer_scores = await score(bridge.state)
+                    if attempts.score_value(answer_scores[0].value) == 1.0:
+                        break
+
+                    # update prompt for retry
+                    agent_prompt = await _get_incorrect_message(
+                        attempts, bridge.state, answer_scores
+                    )
+
+                # trace debug output
+                debug_output.insert(0, "Gemini CLI Debug Output:")
+                trace("\n".join(debug_output))
 
         return bridge.state
 
@@ -307,3 +328,23 @@ def _clean_gemini_error(stdout: str, stderr: str) -> str:
         cleaned = cleaned[:max_len] + "... (truncated)"
 
     return cleaned if cleaned else "Unknown error (no output)"
+
+
+async def _run_gemini_cli_centaur(
+    options: CentaurOptions,
+    gemini_cmd: list[str],
+    agent_env: dict[str, str],
+    state: AgentState,
+) -> None:
+    instructions = "Gemini CLI:\n\n - You may also use Gemini CLI via the 'gemini' command.\n - Use 'gemini --resume latest' if you need to resume a previous session."
+
+    # build .bashrc content - only export vars needed for the gemini alias,
+    # not HOME which would break human_cli (PATH is needed for node)
+    centaur_env = {k: v for k, v in agent_env.items() if k != "HOME"}
+    agent_env_vars = [f'export {k}="{v}"' for k, v in centaur_env.items()]
+    alias_cmd = shlex.join(gemini_cmd)
+    alias_cmd = "alias gemini='" + alias_cmd.replace("'", "'\\''") + "'"
+    bashrc = "\n".join(agent_env_vars + ["", alias_cmd])
+
+    # run the human cli
+    await run_centaur(options, instructions, bashrc, state)
