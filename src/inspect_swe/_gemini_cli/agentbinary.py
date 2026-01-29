@@ -27,7 +27,7 @@ SANDBOX_INSTALL_DIR = "/var/tmp/.5c95f967ca830048"
 
 async def _get_latest_release() -> dict[str, Any]:
     response = await download_text_file(f"{GITHUB_RELEASES_API}/latest")
-    return json.loads(response)
+    return dict(json.loads(response))
 
 
 async def resolve_gemini_version(
@@ -41,7 +41,7 @@ async def resolve_gemini_version(
 
     if version in ["stable", "latest"]:
         release = await _get_latest_release()
-        return release["tag_name"].lstrip("v")
+        return str(release["tag_name"]).lstrip("v")
 
     # Assume it's a specific version
     return version
@@ -72,7 +72,9 @@ async def ensure_node_and_npm_available(
     npm_path = f"{SANDBOX_INSTALL_DIR}/node/bin/npm"
 
     # Check if already installed
-    result = await sandbox.exec(bash_command(f"test -x {node_path} && test -x {npm_path}"), user=user)
+    result = await sandbox.exec(
+        bash_command(f"test -x {node_path} && test -x {npm_path}"), user=user
+    )
     if result.success:
         return node_path, npm_path
 
@@ -220,7 +222,16 @@ def _create_gemini_cli_bundle(version: str, platform: SandboxPlatform) -> bytes:
 
         # Run npm install with --os/--cpu to get correct native modules for sandbox
         result = subprocess.run(
-            ["npm", "install", "--no-audit", "--no-fund", "--os", "linux", "--cpu", cpu],
+            [
+                "npm",
+                "install",
+                "--no-audit",
+                "--no-fund",
+                "--os",
+                "linux",
+                "--cpu",
+                cpu,
+            ],
             cwd=tmpdir,
             capture_output=True,
             text=True,
@@ -284,10 +295,7 @@ async def _install_gemini_cli_npm(
 
     # Extract bundle in sandbox
     result = await sandbox.exec(
-        bash_command(
-            f"tar -xzf {bundle_path} -C {install_dir} && "
-            f"rm -f {bundle_path}"
-        ),
+        bash_command(f"tar -xzf {bundle_path} -C {install_dir} && rm -f {bundle_path}"),
         user="root",
         timeout=60,
     )

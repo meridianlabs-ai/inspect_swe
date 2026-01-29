@@ -10,7 +10,9 @@ from inspect_swe import claude_code, codex_cli, gemini_cli
 
 
 @solver
-def multi_call_solver(agent_type: Literal["claude_code", "codex_cli", "gemini_cli"]) -> Solver:
+def multi_call_solver(
+    agent_type: Literal["claude_code", "codex_cli", "gemini_cli"],
+) -> Solver:
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         # create agent
         system_prompt = "Answer simple questions concisely"
