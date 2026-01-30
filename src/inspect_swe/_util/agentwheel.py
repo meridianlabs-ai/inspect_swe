@@ -154,23 +154,6 @@ def platform_to_pip_platform(platform: SandboxPlatform) -> str:
     return PIP_PLATFORMS[platform]
 
 
-async def detect_python_version(
-    sandbox: SandboxEnvironment,
-    user: str | None = None,
-) -> str:
-    # Detects Python version in sandbox.
-    result = await sandbox.exec(bash_command("python3 --version"), user=user)
-    if not result.success:
-        raise RuntimeError("Python 3 not found in sandbox (required for agent)")
-
-    # Parse "Python 3.12.0" -> "312"
-    match = re.search(r"Python (\d+)\.(\d+)", result.stdout)
-    if not match:
-        raise RuntimeError(f"Could not parse Python version: {result.stdout}")
-    # Return "312" format for pip compatibility
-    return f"{match.group(1)}{match.group(2)}"
-
-
 # mirror of cleanup_cached_binaries in _util/agentbinary.py
 def read_cached_wheels(cache_path: Path) -> bytes | None:
     if not cache_path.exists():

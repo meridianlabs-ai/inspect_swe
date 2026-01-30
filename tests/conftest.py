@@ -174,30 +174,6 @@ def run_example(
     return eval(example_file, model=model, limit=1, task_args=task_args)
 
 
-# --- Mock sandbox utilities ---
-
-
-@dataclass
-class MockExecResult:
-    """Mock result from sandbox.exec()."""
-
-    success: bool
-    stdout: str = ""
-    stderr: str = ""
-    returncode: int = 0
-
-
-def create_mock_sandbox_with_result(
-    success: bool, stdout: str = "", stderr: str = "", returncode: int = 0
-) -> MagicMock:
-    """Create a mock sandbox with a predefined exec result."""
-    mock_sandbox = MagicMock()
-    mock_sandbox.exec = AsyncMock(
-        return_value=MockExecResult(success, stdout, stderr, returncode)
-    )
-    return mock_sandbox
-
-
 # --- Wheels cache utilities ---
 
 

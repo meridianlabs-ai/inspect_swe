@@ -9,12 +9,9 @@ from inspect_ai.scorer import Score, Scorer, Target, scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
 from inspect_swe._mini_swe_agent.mini_swe_agent import MINI_SWE_AGENT_SOURCE
-from inspect_swe._util.agentwheel import (
-    detect_python_version,
-    ensure_agent_wheel_installed,
-)
+from inspect_swe._util.agentwheel import ensure_agent_wheel_installed
 
-from tests.conftest import create_mock_sandbox_with_result, skip_if_no_docker
+from tests.conftest import skip_if_no_docker
 
 
 # https://docs.pypi.org/api/json/#get-a-project
@@ -41,31 +38,6 @@ TEST_MINI_SWE_VERSION = "1.17.4"
     ],
     ids=["py312", "py311", "py310", "py39", "py38"],
 )
-def test_detect_python_version_parsing(version_output: str, expected: str) -> None:
-    """Test parsing various Python version strings."""
-    mock_sandbox = create_mock_sandbox_with_result(success=True, stdout=version_output)
-    result = asyncio.run(detect_python_version(mock_sandbox))
-    assert result == expected
-
-
-def test_detect_python_version_not_found() -> None:
-    """Test error when python3 command fails."""
-    mock_sandbox = create_mock_sandbox_with_result(
-        success=False, stderr="python3: command not found"
-    )
-    with pytest.raises(RuntimeError, match="Python 3 not found in sandbox"):
-        asyncio.run(detect_python_version(mock_sandbox))
-
-
-def test_detect_python_version_unparseable() -> None:
-    """Test error when version output cannot be parsed."""
-    mock_sandbox = create_mock_sandbox_with_result(
-        success=True, stdout="some garbage output\n"
-    )
-    with pytest.raises(RuntimeError, match="Could not parse Python version"):
-        asyncio.run(detect_python_version(mock_sandbox))
-
-
 # Integration tests for ensure_agent_wheel_installed in sandbox
 
 
@@ -109,8 +81,10 @@ def verify_mini_installation() -> Scorer:
         else:
             expected_version = requested_version
 
-        # Check which mini
-        result = await sbox.exec(["bash", "-c", "which mini"])
+        # Check which mini (uv tool install puts binaries in ~/.local/bin)
+        result = await sbox.exec(
+            ["bash", "-c", "export PATH=$HOME/.local/bin:$PATH && which mini"]
+        )
         if not result.success:
             return Score(
                 value=0,
@@ -132,7 +106,13 @@ def verify_mini_installation() -> Scorer:
             )
 
         # Verify binary is executable
-        result = await sbox.exec(["test", "-x", binary_path])
+        result = await sbox.exec(
+            [
+                "bash",
+                "-c",
+                f"export PATH=$HOME/.local/bin:$PATH && test -x {binary_path}",
+            ]
+        )
         if not result.success:
             return Score(
                 value=0,
