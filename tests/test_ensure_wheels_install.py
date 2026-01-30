@@ -14,7 +14,7 @@ from inspect_swe._util.agentwheel import (
     ensure_agent_wheel_installed,
 )
 
-from tests.conftest import create_mock_sandbox, skip_if_no_docker
+from tests.conftest import create_mock_sandbox_with_result, skip_if_no_docker
 
 
 # https://docs.pypi.org/api/json/#get-a-project
@@ -43,14 +43,14 @@ TEST_MINI_SWE_VERSION = "1.17.4"
 )
 def test_detect_python_version_parsing(version_output: str, expected: str) -> None:
     """Test parsing various Python version strings."""
-    mock_sandbox = create_mock_sandbox(success=True, stdout=version_output)
+    mock_sandbox = create_mock_sandbox_with_result(success=True, stdout=version_output)
     result = asyncio.run(detect_python_version(mock_sandbox))
     assert result == expected
 
 
 def test_detect_python_version_not_found() -> None:
     """Test error when python3 command fails."""
-    mock_sandbox = create_mock_sandbox(
+    mock_sandbox = create_mock_sandbox_with_result(
         success=False, stderr="python3: command not found"
     )
     with pytest.raises(RuntimeError, match="Python 3 not found in sandbox"):
@@ -59,7 +59,9 @@ def test_detect_python_version_not_found() -> None:
 
 def test_detect_python_version_unparseable() -> None:
     """Test error when version output cannot be parsed."""
-    mock_sandbox = create_mock_sandbox(success=True, stdout="some garbage output\n")
+    mock_sandbox = create_mock_sandbox_with_result(
+        success=True, stdout="some garbage output\n"
+    )
     with pytest.raises(RuntimeError, match="Could not parse Python version"):
         asyncio.run(detect_python_version(mock_sandbox))
 
@@ -137,17 +139,21 @@ def verify_mini_installation() -> Scorer:
                 explanation=f"{binary_path} is not executable",
             )
 
-        # Verify installed version via pip show
-        result = await sbox.exec(["pip", "show", "mini-swe-agent"])
+        # Verify installed version via uv tool list (uv tool install, not pip)
+        result = await sbox.exec(["bash", "-c", "/var/tmp/.uv tool list"])
         if result.success:
+            # Output format: "mini-swe-agent v1.17.4"
             for line in result.stdout.split("\n"):
-                if line.startswith("Version:"):
-                    actual_version = line.split(":", 1)[1].strip()
-                    if actual_version != expected_version:
-                        return Score(
-                            value=0,
-                            explanation=f"Version mismatch: expected {expected_version}, got {actual_version}",
-                        )
+                if "mini-swe-agent" in line:
+                    # Extract version from "mini-swe-agent v1.17.4" format
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        actual_version = parts[1].lstrip("v")
+                        if actual_version != expected_version:
+                            return Score(
+                                value=0,
+                                explanation=f"Version mismatch: expected {expected_version}, got {actual_version}",
+                            )
                     break
 
         return Score(

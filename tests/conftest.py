@@ -187,7 +187,7 @@ class MockExecResult:
     returncode: int = 0
 
 
-def create_mock_sandbox(
+def create_mock_sandbox_with_result(
     success: bool, stdout: str = "", stderr: str = "", returncode: int = 0
 ) -> MagicMock:
     """Create a mock sandbox with a predefined exec result."""

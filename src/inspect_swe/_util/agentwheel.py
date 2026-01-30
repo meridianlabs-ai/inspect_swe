@@ -29,6 +29,19 @@ class AgentWheelSource:
     default_version: Literal["1.17.4"]  # Default stable version
 
 
+# uv binary distribution configuration
+UV_GITHUB_RELEASES = "https://github.com/astral-sh/uv/releases/download"
+UV_VERSION = "0.9.27"  # Pin to stable version
+
+# Map SandboxPlatform to uv GitHub release artifact names
+UV_PLATFORM_ARTIFACTS: dict[SandboxPlatform, str] = {
+    "linux-x64": "uv-x86_64-unknown-linux-gnu.tar.gz",
+    "linux-arm64": "uv-aarch64-unknown-linux-gnu.tar.gz",
+    "linux-x64-musl": "uv-x86_64-unknown-linux-musl.tar.gz",
+    "linux-arm64-musl": "uv-aarch64-unknown-linux-musl.tar.gz",
+}
+
+
 async def ensure_agent_wheel_installed(
     source: AgentWheelSource,
     version: Literal["stable", "sandbox", "latest"] | str = "stable",
@@ -70,18 +83,21 @@ async def ensure_agent_wheel_installed(
     if version == "latest":
         version = None  # type: ignore[assignment]
 
-    # detect the sandbox target platform and python version
+    # detect the sandbox target platform
     platform = await detect_sandbox_platform(sandbox)
-    python_version = await detect_python_version(sandbox, user)
 
     # use concurrency so multiple samples don't attempt the same download
     async with concurrency(f"{source.binary}-install", 1, visible=False):
-        # download wheels (caching handled internally by download_wheels_tarball)
+        # ensure uv is installed in sandbox
+        uv_path = await ensure_uv_in_sandbox(sandbox, platform, user)
+
+        # download wheels on host (using pip download with Python 3.11)
+        # uv will use --python 3.11 to match these wheels
         tarball, resolved_version = download_wheels_tarball(
             package_name=source.package,
             version=version,
             platform=platform,
-            python_version=python_version,
+            python_version="311",
         )
         trace(f"Using {source.agent} wheels: {resolved_version} ({platform})")
 
@@ -94,18 +110,26 @@ async def ensure_agent_wheel_installed(
                 f"Failed to write tarball to sandbox at {sandbox_tarball_path}: {e}"
             ) from e
 
-        # extract and install (paths quoted for safety)
+        # extract and install with uv (no Python required in sandbox)
+        # use --python 3.11 to match the wheels we downloaded
+        wheels_dir = f"/var/tmp/{source.package}-wheels"
         install_cmd = f"""
 set -e
-mkdir -p "/var/tmp/{source.package}-wheels"
-tar -xzf "{sandbox_tarball_path}" -C "/var/tmp/{source.package}-wheels"
-pip install --no-index --find-links "/var/tmp/{source.package}-wheels" --break-system-packages "{source.package}"
-rm -rf "/var/tmp/{source.package}-wheels" "{sandbox_tarball_path}"
+mkdir -p "{wheels_dir}"
+tar -xzf "{sandbox_tarball_path}" -C "{wheels_dir}"
+{uv_path} tool install --python 3.11 --no-index --find-links "{wheels_dir}" {source.package}=={resolved_version}
+rm -rf "{wheels_dir}" "{sandbox_tarball_path}"
 """
         await sandbox_exec(sandbox, install_cmd, user=user)
 
         # verify installation and return binary path
-        result = await sandbox.exec(bash_command(f"which {source.binary}"), user=user)
+        # uv tool install puts binaries in ~/.local/bin, add to PATH
+        result = await sandbox.exec(
+            bash_command(
+                f"export PATH=$HOME/.local/bin:$PATH && which {source.binary}"
+            ),
+            user=user,
+        )
         if not result.success:
             raise RuntimeError(f"{source.agent} not found after installation")
 
@@ -196,6 +220,102 @@ def _wheels_cache_key(
 def _list_cached_wheels(package_name: str) -> list[Path]:
     """List all cached wheel tarballs for a package."""
     return list(_wheels_cache_dir(package_name).glob(f"{package_name}-*.tar.gz"))
+
+
+def download_uv_binary(platform: SandboxPlatform, version: str = UV_VERSION) -> bytes:
+    """Download uv binary for the target platform from GitHub releases.
+
+    Downloads and extracts the pre-built uv binary from GitHub releases on the host.
+
+    Args:
+        platform: Target sandbox platform
+        version: uv version to download (defaults to UV_VERSION constant)
+
+    Returns:
+        Binary contents of the uv executable
+
+    Raises:
+        RuntimeError: If download fails or platform is unsupported
+    """
+    # Get artifact name for platform
+    if platform not in UV_PLATFORM_ARTIFACTS:
+        raise RuntimeError(f"Unsupported platform for uv: {platform}")
+    artifact = UV_PLATFORM_ARTIFACTS[platform]
+
+    # Download from GitHub releases using curl
+    url = f"{UV_GITHUB_RELEASES}/{version}/{artifact}"
+    trace(f"Downloading uv binary: {version} ({platform}) from {url}")
+
+    result = subprocess.run(
+        ["curl", "--proto", "=https", "--tlsv1.2", "-LsSf", url],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to download uv binary from {url}: {result.stderr.decode()}"
+        )
+
+    tarball_bytes = result.stdout
+
+    # Extract uv binary from tarball on host
+    with tarfile.open(fileobj=BytesIO(tarball_bytes), mode="r:gz") as tar:
+        # The tarball contains: uv-{triple}/uv
+        uv_members = [m for m in tar.getmembers() if m.name.endswith("/uv")]
+        if not uv_members:
+            raise RuntimeError("Could not find uv binary in downloaded tarball")
+
+        uv_member = uv_members[0]
+        uv_file = tar.extractfile(uv_member)
+        if uv_file is None:
+            raise RuntimeError("Could not extract uv binary from tarball")
+
+        uv_binary = uv_file.read()
+
+    trace(f"Downloaded uv binary: {version} ({platform}), size: {len(uv_binary)} bytes")
+    return uv_binary
+
+
+async def ensure_uv_in_sandbox(
+    sandbox: SandboxEnvironment,
+    platform: SandboxPlatform,
+    user: str | None = None,
+    version: str = UV_VERSION,
+) -> str:
+    """Ensure uv binary is available in the sandbox.
+
+    Downloads uv binary on the host and transfers it to the sandbox if not already present.
+
+    Args:
+        sandbox: Sandbox environment
+        platform: Target sandbox platform
+        user: User to run commands as in sandbox
+        version: uv version to install (defaults to UV_VERSION constant)
+
+    Returns:
+        Path to the uv binary in the sandbox
+    """
+    uv_path = "/var/tmp/.uv"
+
+    # Check if uv already exists and is executable
+    result = await sandbox.exec(
+        bash_command(f"test -x {uv_path} && echo ok"), user=user
+    )
+    if result.success and "ok" in result.stdout:
+        trace(f"Using existing uv binary in sandbox: {uv_path}")
+        return uv_path
+
+    # Download uv binary on host
+    trace(f"Installing uv {version} in sandbox")
+    uv_binary = download_uv_binary(platform, version)
+
+    # Write to sandbox
+    await sandbox.write_file(uv_path, uv_binary)
+
+    # Make executable
+    await sandbox_exec(sandbox, f"chmod +x {uv_path}", user=user)
+
+    trace(f"Installed uv in sandbox: {uv_path}")
+    return uv_path
 
 
 def download_wheels_tarball(

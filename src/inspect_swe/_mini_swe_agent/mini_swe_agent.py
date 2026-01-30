@@ -159,6 +159,7 @@ def mini_swe_agent(
                         if model is not None
                         else get_model().name,
                         "OPENAI_API_BASE": f"http://localhost:{bridge.port}/v1",
+                        # actual key is handled by inspect, mini-swe needs it to approve setup
                         "OPENAI_API_KEY": "sk-none",
                         "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
                         "ANTHROPIC_API_KEY": "sk-none",
@@ -169,8 +170,8 @@ def mini_swe_agent(
                 )
 
                 # track debug output
-                debug_output.append(result.stdout)
-                debug_output.append(result.stderr)
+                debug_output.append(f"[stdout]\n{result.stdout}")
+                debug_output.append(f"[stderr]\n{result.stderr}")
 
                 # raise for error
                 if not result.success:
