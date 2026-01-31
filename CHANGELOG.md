@@ -1,5 +1,6 @@
 ## 0.2.32 (31 January 2026)
 
+- Claude Code: Set "auto" version to 2.1.3 (which avoids a not yet fixed compaction bug with gateways).
 - Claude Code: Add `retry_timeouts` option for retrying "Request timed out" errors a configurable number of times.
 - Claude Code: Add CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS environment variable.
 

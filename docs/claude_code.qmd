@@ -51,7 +51,9 @@ For example, here we specify a custom system prompt and disallow the `{{< meta a
 
 ## Installation
 
-By default, the agent will download the current stable version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:
+By default, the "auto" `version` will download Claude Code 2.1.3 (from Jan 5th, 2025) and copy it to the sandbox. This version avoids a not yet fixed compaction bug with gateways.
+
+You can override this behaviour using the `version` option:
 
 | Option | Description |
 |------------------------------------|------------------------------------|
