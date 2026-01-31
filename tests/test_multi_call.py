@@ -38,11 +38,11 @@ def check_multi_call(
         m for m in sample.messages if isinstance(m, ChatMessageAssistant)
     ]
 
-    # Codex CLI includes 2 scaffold messages in conversation history
+    # Codex CLI includes extra scaffold messages in conversation history
     match agent:
         case "claude_code":
             assert len(user_messages) == 4
         case "codex_cli":
-            assert len(user_messages) == 6
+            assert len(user_messages) == 12
 
     assert len(assistant_messages) == 4
