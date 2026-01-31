@@ -1,6 +1,7 @@
-## Unreleased
+## 0.2.32 (31 January 2026)
 
 - Claude Code: Add `retry_timeouts` option for retrying "Request timed out" errors a configurable number of times.
+- Claude Code: Add CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS environment variable.
 
 ## 0.2.31 (03 January 2026)
 

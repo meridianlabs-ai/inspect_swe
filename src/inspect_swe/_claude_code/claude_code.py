@@ -208,6 +208,7 @@ def claude_code(
                 "CLAUDE_CODE_SUBAGENT_MODEL": subagent_model or model,
                 "ANTHROPIC_SMALL_FAST_MODEL": haiku_model or model,
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
                 "IS_SANDBOX": "1",
             } | (env or {})
 
