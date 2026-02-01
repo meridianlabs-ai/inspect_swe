@@ -1,4 +1,5 @@
 from ._claude_code.claude_code import claude_code
+from ._claude_code.transcripts import claude_code_transcripts
 from ._codex_cli.codex_cli import codex_cli
 from ._tools.download import AgentBinary, cached_agent_binaries, download_agent_binary
 from ._util.centaur import CentaurOptions
@@ -12,6 +13,7 @@ except ImportError:
 
 __all__ = [
     "claude_code",
+    "claude_code_transcripts",
     "codex_cli",
     "download_agent_binary",
     "cached_agent_binaries",

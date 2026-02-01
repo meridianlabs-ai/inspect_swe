@@ -39,8 +39,10 @@ dev = [
     "anthropic",
     "openai",
     "pytest-dotenv",
+    "pytest-asyncio",
     "types-PyYAML",
     "IPython",
+    "inspect-scout"
 ]
 doc = ["quarto-cli==1.7.31"]
 
