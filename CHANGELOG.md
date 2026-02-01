@@ -1,6 +1,6 @@
 ## Unreleased
 
-- `claude_code_transcripts()` function for import Claude Code sessions into Inspect Scout transcript databases.
+- `claude_code_transcripts()` function for importing Claude Code sessions into Inspect Scout transcript databases.
 
 ## 0.2.32 (31 January 2026)
 
