@@ -4,6 +4,7 @@ from tests.conftest import (
     run_example,
     skip_if_no_anthropic,
     skip_if_no_docker,
+    skip_if_no_google,
     skip_if_no_openai,
 )
 
@@ -20,7 +21,13 @@ def test_codex_cli_skills() -> None:
     check_skills("codex_cli", "openai/gpt-5.1-codex")
 
 
-def check_skills(agent: Literal["claude_code", "codex_cli"], model: str) -> None:
+@skip_if_no_google
+@skip_if_no_docker
+def test_gemini_cli_skills() -> None:
+    check_skills("gemini_cli", "google/gemini-2.5-pro")
+
+
+def check_skills(agent: Literal["claude_code", "codex_cli", "gemini_cli"], model: str) -> None:
     log = run_example("skills", agent, model)[0]
     assert log.status == "success"
     assert log.samples
