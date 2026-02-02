@@ -36,38 +36,28 @@ from .agentbinary import (
 
 logger = getLogger(__name__)
 
-# Gemini CLI home directory
-GEMINI_HOME = "/tmp"
-GEMINI_SETTINGS_PATH = f"{GEMINI_HOME}/.gemini/settings.json"
-
 
 def _build_mcp_server_config(server: MCPServerConfig) -> dict[str, Any]:
     """Build Gemini CLI settings.json MCP server config from MCPServerConfig.
 
-    Gemini CLI (v0.24+) supports transport configuration via:
-    - url + type: "http" → StreamableHTTPClientTransport (preferred)
-    - url + type: "sse" → SSEClientTransport
-    - httpUrl → StreamableHTTPClientTransport (deprecated but supported)
-    - command → StdioClientTransport (for stdio servers)
+    Gemini CLI infers transport type from which field is present:
+    - command → stdio transport
+    - url/httpUrl → HTTP transport
+
+    The 'type' field is NOT used in Gemini CLI's settings.json format.
     """
-    config: dict[str, Any] = {}
+    # Use model_dump() for complete serialization, excluding name, tools, and type
+    # Gemini CLI infers transport from command/url presence, not from 'type' field
+    config = server.model_dump(exclude={"name", "tools", "type"}, exclude_none=True)
 
-    # Handle HTTP-based MCP servers (including bridged tools)
+    # For HTTP transport, Gemini CLI uses 'httpUrl' field for broader compatibility
     if isinstance(server, MCPServerConfigHTTP):
-        # Use url + type: "http" for streamable HTTP transport
-        # This is the preferred format in newer Gemini CLI versions (v0.24+)
-        config["url"] = server.url
-        config["type"] = "http"
+        if "url" in config:
+            config["httpUrl"] = config.pop("url")
 
-        if server.headers:
-            config["headers"] = server.headers
-    else:
-        # For stdio servers, pass command and args
-        config["command"] = server.command  # type: ignore[attr-defined]
-        if hasattr(server, "args") and server.args:
-            config["args"] = server.args
-        if hasattr(server, "env") and server.env:
-            config["env"] = server.env
+    # Convert Path objects to strings for cwd
+    if "cwd" in config and not isinstance(config["cwd"], str):
+        config["cwd"] = str(config["cwd"])
 
     return config
 
@@ -185,6 +175,10 @@ def gemini_cli(
             # Gemini CLI discovers MCP servers from settings.json, not CLI args
             all_servers = list(mcp_servers or []) + list(bridge.mcp_server_configs)
 
+            # Detect home directory in sandbox (needed for settings.json location)
+            home_result = await sbox.exec(["sh", "-c", "echo $HOME"], user=user)
+            sandbox_home = home_result.stdout.strip() or "/root"
+
             if all_servers:
                 mcp_servers_config = {
                     server.name: _build_mcp_server_config(server)
@@ -193,9 +187,11 @@ def gemini_cli(
                 settings = {"mcpServers": mcp_servers_config}
                 settings_json = json.dumps(settings, indent=2)
 
-                # Create .gemini directory and write settings.json
-                await sbox.exec(["mkdir", "-p", f"{GEMINI_HOME}/.gemini"], user=user)
-                await sbox.write_file(GEMINI_SETTINGS_PATH, settings_json)
+                # Create .gemini directory and write settings.json to actual home
+                # (not /tmp, so MCP servers can use npm cache from the real home)
+                gemini_settings_dir = f"{sandbox_home}/.gemini"
+                await sbox.exec(["mkdir", "-p", gemini_settings_dir], user=user)
+                await sbox.write_file(f"{gemini_settings_dir}/settings.json", settings_json)
 
             # build system prompt from messages
             system_messages = [
@@ -239,7 +235,7 @@ def gemini_cli(
                 "GOOGLE_GEMINI_BASE_URL": f"http://localhost:{bridge.port}",
                 "GEMINI_API_KEY": "sk-inspect-bridge",  # Dummy key - proxy handles auth
                 "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
-                "HOME": "/tmp",  # Gemini CLI needs a home directory
+                "HOME": sandbox_home,  # Use detected sandbox home for config + npm cache
             }
             if env:
                 agent_env.update(env)
