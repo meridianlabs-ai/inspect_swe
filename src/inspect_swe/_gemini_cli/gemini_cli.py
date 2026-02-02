@@ -1,6 +1,7 @@
 import json
 import shlex
 from logging import getLogger
+from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
 
@@ -15,7 +16,7 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import Score, score
-from inspect_ai.tool import MCPServerConfig
+from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
@@ -23,6 +24,7 @@ from inspect_ai.util import store
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
+from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import detect_sandbox_platform
 from inspect_swe._util.trace import trace
 
@@ -78,6 +80,7 @@ def gemini_cli(
        Capable of writing, testing, debugging, and iterating on code.
     """),
     system_prompt: str | None = None,
+    skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     centaur: bool | CentaurOptions = False,
@@ -104,6 +107,7 @@ def gemini_cli(
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description
         system_prompt: Additional system prompt to append
+        skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP
         centaur: Run in 'centaur' mode, which makes Gemini CLI available to an Inspect `human_cli()` agent rather than running it unattended.
@@ -131,6 +135,9 @@ def gemini_cli(
     # resolve model - use "inspect/" prefix pattern for bridge
     model = f"inspect/{model}" if model is not None else "inspect"
 
+    # resolve skills
+    resolved_skills = read_skills(skills) if skills is not None else None
+
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
@@ -150,6 +157,14 @@ def gemini_cli(
         ) as bridge:
             # resolve sandbox
             sbox = sandbox_env(sandbox)
+
+            # install skills
+            if resolved_skills is not None:
+                GEMINI_SKILLS = ".gemini/skills"
+                skills_dir = (
+                    join_path(cwd, GEMINI_SKILLS) if cwd is not None else GEMINI_SKILLS
+                )
+                await install_skills(resolved_skills, sbox, user, skills_dir)
 
             # detect platform for node download if needed
             platform = await detect_sandbox_platform(sbox)
