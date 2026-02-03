@@ -20,12 +20,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from inspect_ai.event import Event, ModelEvent
-from inspect_ai.model._chat_message import ChatMessage
+from inspect_ai.model import ChatMessage, stable_message_ids
 
 if TYPE_CHECKING:
     from inspect_scout import Transcript
 
-from ..._util.message_ids import stable_message_ids
 from .client import (
     CLAUDE_CODE_SOURCE_TYPE,
     discover_session_files,
