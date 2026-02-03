@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from inspect_ai.event import (
+    CompactionEvent,
     Event,
     InfoEvent,
     ModelEvent,
@@ -637,9 +638,10 @@ async def process_parsed_events(
             if is_compact_boundary(event):
                 compaction_info = extract_compaction_info(event)
                 if compaction_info:
-                    yield to_info_event(
-                        source="compaction",
-                        data=compaction_info,
+                    yield CompactionEvent(
+                        source="claude_code",
+                        tokens_before=compaction_info.pop("preTokens", None),
+                        metadata=compaction_info,
                         timestamp=timestamp,
                     )
 
