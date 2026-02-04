@@ -34,31 +34,6 @@ from .agentbinary import (
 )
 
 
-def _build_mcp_server_config(server: MCPServerConfig) -> dict[str, Any]:
-    """Build Gemini CLI settings.json MCP server config from MCPServerConfig.
-
-    Gemini CLI infers transport type from which field is present:
-    - command → stdio transport
-    - url/httpUrl → HTTP transport
-
-    The 'type' field is NOT used in Gemini CLI's settings.json format.
-    """
-    # Use model_dump() for complete serialization, excluding name, tools, and type
-    # Gemini CLI infers transport from command/url presence, not from 'type' field
-    config = server.model_dump(exclude={"name", "tools", "type"}, exclude_none=True)
-
-    # For HTTP transport, Gemini CLI uses 'httpUrl' field for broader compatibility
-    if isinstance(server, MCPServerConfigHTTP):
-        if "url" in config:
-            config["httpUrl"] = config.pop("url")
-
-    # Convert Path objects to strings for cwd
-    if "cwd" in config and not isinstance(config["cwd"], str):
-        config["cwd"] = str(config["cwd"])
-
-    return config
-
-
 @agent
 def gemini_cli(
     name: str = "Gemini CLI",
@@ -188,7 +163,9 @@ def gemini_cli(
                 # (not /tmp, so MCP servers can use npm cache from the real home)
                 gemini_settings_dir = f"{sandbox_home}/.gemini"
                 await sbox.exec(["mkdir", "-p", gemini_settings_dir], user=user)
-                await sbox.write_file(f"{gemini_settings_dir}/settings.json", settings_json)
+                await sbox.write_file(
+                    f"{gemini_settings_dir}/settings.json", settings_json
+                )
 
             # build system prompt
             system_messages = [
@@ -311,6 +288,22 @@ def gemini_cli(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+def _build_mcp_server_config(server: MCPServerConfig) -> dict[str, Any]:
+    """Build Gemini CLI MCP server config dict from MCPServerConfig."""
+    config = server.model_dump(exclude={"name", "tools", "type"}, exclude_none=True)
+
+    # For HTTP transport, Gemini CLI uses 'httpUrl' field
+    if isinstance(server, MCPServerConfigHTTP):
+        if "url" in config:
+            config["httpUrl"] = config.pop("url")
+
+    # Convert Path objects to strings for cwd
+    if "cwd" in config and not isinstance(config["cwd"], str):
+        config["cwd"] = str(config["cwd"])
+
+    return config
 
 
 def _clean_gemini_error(stdout: str, stderr: str) -> str:
