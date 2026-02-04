@@ -1,6 +1,5 @@
 import json
 import shlex
-from logging import getLogger
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
@@ -15,7 +14,7 @@ from inspect_ai.agent import (
     sandbox_agent_bridge,
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
-from inspect_ai.scorer import Score, score
+from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_ai.util import sandbox as sandbox_env
@@ -33,8 +32,6 @@ from .agentbinary import (
     ensure_node_and_npm_available,
     resolve_gemini_version,
 )
-
-logger = getLogger(__name__)
 
 
 def _build_mcp_server_config(server: MCPServerConfig) -> dict[str, Any]:
@@ -122,7 +119,7 @@ def gemini_cli(
     if centaur is True:
         centaur = CentaurOptions()
 
-    # resolve model - use "inspect/" prefix pattern for bridge
+    # resolve model
     model = f"inspect/{model}" if model is not None else "inspect"
 
     # resolve skills
@@ -132,9 +129,9 @@ def gemini_cli(
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
     async def execute(state: AgentState) -> AgentState:
-        # determine port (use new port for each execution)
+        # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "gemini_cli_model_port"
-        port = store().get(MODEL_PORT, 13131) + 1
+        port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
         async with sandbox_agent_bridge(
@@ -173,16 +170,16 @@ def gemini_cli(
 
             # Write MCP server configs to settings.json
             # Gemini CLI discovers MCP servers from settings.json, not CLI args
-            all_servers = list(mcp_servers or []) + list(bridge.mcp_server_configs)
+            all_mcp_servers = list(mcp_servers or []) + list(bridge.mcp_server_configs)
 
             # Detect home directory in sandbox (needed for settings.json location)
             home_result = await sbox.exec(["sh", "-c", "echo $HOME"], user=user)
             sandbox_home = home_result.stdout.strip() or "/root"
 
-            if all_servers:
+            if all_mcp_servers:
                 mcp_servers_config = {
                     server.name: _build_mcp_server_config(server)
-                    for server in all_servers
+                    for server in all_mcp_servers
                 }
                 settings = {"mcpServers": mcp_servers_config}
                 settings_json = json.dumps(settings, indent=2)
@@ -193,14 +190,13 @@ def gemini_cli(
                 await sbox.exec(["mkdir", "-p", gemini_settings_dir], user=user)
                 await sbox.write_file(f"{gemini_settings_dir}/settings.json", settings_json)
 
-            # build system prompt from messages
+            # build system prompt
             system_messages = [
                 m.text for m in state.messages if isinstance(m, ChatMessageSystem)
             ]
             if system_prompt is not None:
                 system_messages.append(system_prompt)
 
-            # build user prompt
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
             # Prepend system prompt to user prompt if provided
@@ -224,16 +220,15 @@ def gemini_cli(
                 cmd.append("--yolo")
 
             # Configure MCP server names if provided
-            # (all_servers defined earlier when writing settings.json)
-            for server in all_servers:
+            # (all_mcp_servers defined earlier when writing settings.json)
+            for server in all_mcp_servers:
                 cmd.extend(["--allowed-mcp-server-names", server.name])
 
-            # build environment variables
-            # Add node to PATH so the gemini shell script can find it
+            # setup agent env (add node to PATH so the gemini shell script can find it)
             node_dir = "/".join(node_binary.split("/")[:-1])  # Get bin directory
             agent_env = {
                 "GOOGLE_GEMINI_BASE_URL": f"http://localhost:{bridge.port}",
-                "GEMINI_API_KEY": "sk-inspect-bridge",  # Dummy key - proxy handles auth
+                "GEMINI_API_KEY": "api-key",
                 "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
                 "HOME": sandbox_home,  # Use detected sandbox home for config + npm cache
             }
@@ -248,7 +243,7 @@ def gemini_cli(
                     state=state,
                 )
             else:
-                # execute agent with retry loop
+                # execute the agent (track debug output)
                 debug_output: list[str] = []
                 agent_prompt = prompt
                 attempt_count = 0
@@ -257,14 +252,14 @@ def gemini_cli(
                 while True:
                     agent_cmd = cmd.copy()
 
-                    # resume previous conversation if continuing
+                    # resume previous conversation
                     if has_assistant_response or attempt_count > 0:
                         agent_cmd.extend(["--resume", "latest"])
 
                     # add prompt as positional argument at the end
                     agent_cmd.append(agent_prompt)
 
-                    # run agent - close stdin to prevent interactive mode
+                    # run agent
                     result = await sbox.exec(
                         cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
                         cwd=cwd,
@@ -273,9 +268,11 @@ def gemini_cli(
                         concurrency=False,
                     )
 
+                    # track debug output
                     debug_output.append(result.stdout)
                     debug_output.append(result.stderr)
 
+                    # raise for error
                     if not result.success:
                         cli_error_msg = _clean_gemini_error(
                             result.stdout, result.stderr
@@ -284,19 +281,28 @@ def gemini_cli(
                             f"Error executing gemini cli agent: {cli_error_msg}"
                         )
 
+                    # exit if we are at max_attempts
                     attempt_count += 1
                     if attempt_count >= attempts.attempts:
                         break
 
                     # score and check for success
                     answer_scores = await score(bridge.state)
+                    # break if we score 'correct'
                     if attempts.score_value(answer_scores[0].value) == 1.0:
                         break
 
                     # update prompt for retry
-                    agent_prompt = await _get_incorrect_message(
-                        attempts, bridge.state, answer_scores
-                    )
+                    if callable(attempts.incorrect_message):
+                        if not is_callable_coroutine(attempts.incorrect_message):
+                            raise ValueError(
+                                "The incorrect_message function must be async."
+                            )
+                        agent_prompt = await attempts.incorrect_message(
+                            bridge.state, answer_scores
+                        )
+                    else:
+                        agent_prompt = attempts.incorrect_message
 
                 # trace debug output
                 debug_output.insert(0, "Gemini CLI Debug Output:")
@@ -305,16 +311,6 @@ def gemini_cli(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
-
-
-async def _get_incorrect_message(
-    attempts: AgentAttempts, state: AgentState, answer_scores: list[Score]
-) -> str:
-    if callable(attempts.incorrect_message):
-        if not is_callable_coroutine(attempts.incorrect_message):
-            raise ValueError("The incorrect_message function must be async.")
-        return await attempts.incorrect_message(state, answer_scores)
-    return attempts.incorrect_message
 
 
 def _clean_gemini_error(stdout: str, stderr: str) -> str:
@@ -347,7 +343,7 @@ async def _run_gemini_cli_centaur(
     agent_env: dict[str, str],
     state: AgentState,
 ) -> None:
-    instructions = "Gemini CLI:\n\n - You may also use Gemini CLI via the 'gemini' command.\n - Use 'gemini --resume latest' if you need to resume a previous session."
+    instructions = "Gemini CLI:\n\n - You may also use Gemini CLI via the 'gemini' command.\n - Use 'gemini --resume latest' if you need to resume a previous gemini session."
 
     # build .bashrc content - only export vars needed for the gemini alias,
     # not HOME which would break human_cli (PATH is needed for node)
