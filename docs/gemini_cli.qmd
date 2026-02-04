@@ -9,9 +9,39 @@ agent_disallowed_tool: "web_search"
 
 {{< include _snippets/agent_intro.md >}}
 
-{{< include _snippets/agent_options.md >}}
+## Options
+
+The following options are supported for customizing the behavior of the agent:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Additional system prompt to append to default system prompt. |
+| `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
+| `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
+| `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
+| `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Gemini CLI available to an Inspect `human_cli()` agent rather than running it unattended. |
+| `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
+| `model` | Model name to use for agent (defaults to main model for task). |
+| `gemini_model` | Gemini model name to pass to CLI. This bypasses the auto-router. Use `"gemini-2.5-pro"` (default) or `"gemini-2.5-flash"`. |
+| `filter` | Filter for intercepting bridged model requests. |
+| `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
+| `cwd` | Working directory for {{< meta agent_name >}} session. |
+| `env` | Environment variables to set for {{< meta agent_name >}}. |
+| `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |
+
+: {tbl-colwidths=\[25,75\]}
+
+For example, here we specify a custom system prompt:
+
+```python
+{{< meta agent >}}(
+    system_prompt="You are an ace system researcher."
+)
+```
 
 {{< include _snippets/agent_mcp_servers.md >}}
+
+{{< include _snippets/agent_bridged_tools.md >}}
 
 ## Installation
 
@@ -27,5 +57,7 @@ By default, the agent will download the current stable version of {{< meta agent
 : {tbl-colwidths=\[25,75\]}
 
 {{< include _snippets/agent_installation.md >}}
+
+{{< include _snippets/agent_centaur.md >}}
 
 {{< include _snippets/agent_troubleshooting.md >}}
