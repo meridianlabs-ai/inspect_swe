@@ -202,15 +202,13 @@ def gemini_cli(
                 cmd.extend(["--allowed-mcp-server-names", server.name])
 
             # setup agent env (add node to PATH so the gemini shell script can find it)
-            node_dir = "/".join(node_binary.split("/")[:-1])  # Get bin directory
+            node_dir = str(Path(node_binary).parent)
             agent_env = {
                 "GOOGLE_GEMINI_BASE_URL": f"http://localhost:{bridge.port}",
                 "GEMINI_API_KEY": "api-key",
                 "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
                 "HOME": sandbox_home,  # Use detected sandbox home for config + npm cache
-            }
-            if env:
-                agent_env.update(env)
+            } | (env or {})
 
             if centaur:
                 await _run_gemini_cli_centaur(
@@ -224,7 +222,6 @@ def gemini_cli(
                 debug_output: list[str] = []
                 agent_prompt = prompt
                 attempt_count = 0
-                cli_error_msg: str | None = None
 
                 while True:
                     agent_cmd = cmd.copy()
@@ -295,11 +292,9 @@ def _build_mcp_server_config(server: MCPServerConfig) -> dict[str, Any]:
     config = server.model_dump(exclude={"name", "tools", "type"}, exclude_none=True)
 
     # For HTTP transport, Gemini CLI uses 'httpUrl' field
-    if isinstance(server, MCPServerConfigHTTP):
-        if "url" in config:
-            config["httpUrl"] = config.pop("url")
+    if isinstance(server, MCPServerConfigHTTP) and "url" in config:
+        config["httpUrl"] = config.pop("url")
 
-    # Convert Path objects to strings for cwd
     if "cwd" in config and not isinstance(config["cwd"], str):
         config["cwd"] = str(config["cwd"])
 
@@ -314,15 +309,12 @@ def _clean_gemini_error(stdout: str, stderr: str) -> str:
     """
     combined = f"{stdout}\n{stderr}"
 
-    # Remove __THOUGHT_SIG__ lines (they're base64-encoded internal data)
-    cleaned_lines = []
-    for line in combined.split("\n"):
-        if not line.startswith("__THOUGHT_SIG__:"):
-            cleaned_lines.append(line)
+    cleaned_lines = [
+        line for line in combined.split("\n") if not line.startswith("__THOUGHT_SIG__:")
+    ]
 
     cleaned = "\n".join(cleaned_lines).strip()
 
-    # Truncate if still too long (some errors can be very verbose)
     max_len = 2000
     if len(cleaned) > max_len:
         cleaned = cleaned[:max_len] + "... (truncated)"
