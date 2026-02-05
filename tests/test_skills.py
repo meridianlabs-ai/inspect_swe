@@ -27,7 +27,9 @@ def test_gemini_cli_skills() -> None:
     check_skills("gemini_cli", "google/gemini-2.5-pro")
 
 
-def check_skills(agent: Literal["claude_code", "codex_cli", "gemini_cli"], model: str) -> None:
+def check_skills(
+    agent: Literal["claude_code", "codex_cli", "gemini_cli"], model: str
+) -> None:
     log = run_example("skills", agent, model)[0]
     assert log.status == "success"
     assert log.samples
