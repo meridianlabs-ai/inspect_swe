@@ -1,3 +1,7 @@
+## Unreleased
+
+- Gemini CLI: New `gemini_cli()` agent for Google Gemini.
+
 ## 0.2.32 (31 January 2026)
 
 - Claude Code: Set "auto" version to 2.1.3 (which avoids a not yet fixed compaction bug with gateways).
