@@ -29,7 +29,7 @@ from inspect_swe._util.trace import trace
 
 from .agentbinary import (
     ensure_gemini_cli_installed,
-    ensure_node_and_npm_available,
+    ensure_node_available,
     resolve_gemini_version,
 )
 
@@ -131,8 +131,8 @@ def gemini_cli(
             # detect platform for node download if needed
             platform = await detect_sandbox_platform(sbox)
 
-            # ensure node and npm are available (downloads full distribution if needed)
-            node_binary, _ = await ensure_node_and_npm_available(sbox, platform, user)
+            # ensure node is available (downloads node binary if needed)
+            node_binary = await ensure_node_available(sbox, platform, user)
 
             # resolve gemini version
             gemini_version = await resolve_gemini_version(version)

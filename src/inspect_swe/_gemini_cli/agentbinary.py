@@ -32,30 +32,25 @@ async def resolve_gemini_version(
     return version
 
 
-async def ensure_node_and_npm_available(
+async def ensure_node_available(
     sandbox: SandboxEnvironment,
     platform: SandboxPlatform,
     user: str | None = None,
-) -> tuple[str, str]:
-    """Ensure Node.js and npm are available in the sandbox.
+) -> str:
+    """Ensure Node.js is available in the sandbox.
 
-    Returns tuple of (node_path, npm_path).
+    Returns the path to the node binary.
     """
     node_path = f"{SANDBOX_INSTALL_DIR}/node/bin/node"
-    npm_path = f"{SANDBOX_INSTALL_DIR}/node/bin/npm"
 
-    result = await sandbox.exec(
-        bash_command(f"test -x {node_path} && test -x {npm_path}"), user=user
-    )
+    result = await sandbox.exec(bash_command(f"test -x {node_path}"), user=user)
     if result.success:
-        return node_path, npm_path
+        return node_path
 
     # Check if node is available system-wide
-    result = await sandbox.exec(bash_command("which node && which npm"), user=user)
+    result = await sandbox.exec(bash_command("which node"), user=user)
     if result.success:
-        paths = result.stdout.strip().split("\n")
-        if len(paths) == 2:
-            return paths[0], paths[1]
+        return result.stdout.strip()
 
     async with concurrency("node-npm-install", 1, visible=False):
         return await _download_and_install_node(sandbox, platform)
@@ -123,54 +118,40 @@ def _platform_to_node_arch(platform: SandboxPlatform) -> str:
 async def _download_and_install_node(
     sandbox: SandboxEnvironment,
     platform: SandboxPlatform,
-) -> tuple[str, str]:
-    """Download and install full Node.js distribution including npm."""
+) -> str:
+    """Download Node.js and install the node binary to the sandbox."""
     node_arch = _platform_to_node_arch(platform)
     archive_name = f"node-v{NODE_VERSION}-{node_arch}.tar.xz"
     download_url = f"https://nodejs.org/dist/v{NODE_VERSION}/{archive_name}"
 
-    cache_dir = package_cache_dir("node-full-downloads")
-    cache_path = cache_dir / f"node-v{NODE_VERSION}-{node_arch}.tar"
+    cache_dir = package_cache_dir("node-binary-downloads")
+    cache_path = cache_dir / f"node-v{NODE_VERSION}-{node_arch}"
 
     if cache_path.exists():
         with open(cache_path, "rb") as f:
-            tar_data = f.read()
+            node_binary_data = f.read()
     else:
         archive_data = await download_file(download_url)
-
-        # Decompress xz to tar (keep as tar for caching)
         tar_data = lzma.decompress(archive_data)
 
+        # Extract the node binary from the tar
+        with tarfile.open(fileobj=BytesIO(tar_data)) as tar:
+            member = tar.getmember(f"node-v{NODE_VERSION}-{node_arch}/bin/node")
+            extracted = tar.extractfile(member)
+            assert extracted is not None
+            node_binary_data = extracted.read()
+
         cache_dir.mkdir(parents=True, exist_ok=True)
-        with open(cache_path, "wb") as f:
-            f.write(tar_data)
+        with open(cache_path, "wb") as cache_file:
+            cache_file.write(node_binary_data)
 
-    # Extract to sandbox by writing tar and extracting with tar command
-    # This is MUCH faster than extracting file-by-file through the sandbox interface
-    install_dir = f"{SANDBOX_INSTALL_DIR}/node"
-    tar_path = f"{SANDBOX_INSTALL_DIR}/node.tar"
+    node_path = f"{SANDBOX_INSTALL_DIR}/node/bin/node"
 
-    await sandbox_exec(sandbox, f"mkdir -p {SANDBOX_INSTALL_DIR}", user="root")
-    await sandbox.write_file(tar_path, tar_data)
+    await sandbox_exec(sandbox, f"mkdir -p {SANDBOX_INSTALL_DIR}/node/bin", user="root")
+    await sandbox.write_file(node_path, node_binary_data)
+    await sandbox_exec(sandbox, f"chmod +x {node_path}", user="root")
 
-    result = await sandbox.exec(
-        bash_command(
-            f"mkdir -p {install_dir} && "
-            f"tar -xf {tar_path} -C {install_dir} --strip-components=1 && "
-            f"rm -f {tar_path}"
-        ),
-        user="root",
-        timeout=60,
-    )
-    if not result.success:
-        raise RuntimeError(
-            f"Failed to extract Node.js tar:\nstdout: {result.stdout}\nstderr: {result.stderr}"
-        )
-
-    node_path = f"{install_dir}/bin/node"
-    npm_path = f"{install_dir}/bin/npm"
-
-    return node_path, npm_path
+    return node_path
 
 
 def _create_bundle(version: str, platform: SandboxPlatform) -> bytes:
