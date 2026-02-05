@@ -188,7 +188,8 @@ def _create_gemini_cli_bundle(version: str, platform: SandboxPlatform) -> bytes:
     Uses --os and --cpu flags to install native modules for the target platform.
     """
     # Extract cpu from platform (e.g., "linux-x64" -> "x64", "linux-arm64" -> "arm64")
-    cpu = platform.split("-")[-1]
+    # Note: platform format is "linux-{cpu}" or "linux-{cpu}-musl", so index [1] gets the cpu
+    cpu = platform.split("-")[1]
 
     cache_dir = package_cache_dir("gemini-cli-bundles")
     cache_path = cache_dir / f"gemini-cli-bundle-{version}-{platform}.tar.gz"
