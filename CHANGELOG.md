@@ -1,3 +1,7 @@
+## Unreleased
+
+- Gemini CLI: New `gemini_cli()` agent for Google Gemini.
+
 ## 0.2.34 (10 February 2026)
 
 - Agent execution: Redirect stdin using `exec 0</dev/null;`
