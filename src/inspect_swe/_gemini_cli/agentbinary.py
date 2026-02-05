@@ -34,16 +34,10 @@ async def resolve_gemini_version(
     version: Literal["auto", "sandbox", "stable", "latest"] | str,
 ) -> str:
     """Resolve version string to an actual semver version."""
-    if version in ["auto", "sandbox"]:
-        # For auto/sandbox, we'll check if already installed later
-        # Return "latest" as fallback
-        return await resolve_gemini_version("latest")
-
-    if version in ["stable", "latest"]:
+    if version in ["auto", "sandbox", "stable", "latest"]:
         release = await _get_latest_release()
         return str(release["tag_name"]).lstrip("v")
 
-    # Assume it's a specific version
     return version
 
 
@@ -176,7 +170,7 @@ async def ensure_gemini_cli_installed(
         )
         if result.success:
             installed_version = result.stdout.strip()
-            if installed_version == version or version in ["auto", "sandbox"]:
+            if installed_version == version:
                 return gemini_binary
 
     # Install via npm bundle
@@ -281,7 +275,7 @@ async def _install_gemini_cli_npm(
     """
     # Create bundle on host (runs npm install with network access)
     # Run in thread pool since it's blocking I/O
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     bundle_data = await loop.run_in_executor(
         None, lambda: _create_gemini_cli_bundle(version, platform)
     )
