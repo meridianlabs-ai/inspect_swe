@@ -304,13 +304,14 @@ def _build_mcp_server_config(server: MCPServerConfig) -> dict[str, Any]:
 def _clean_gemini_error(stdout: str, stderr: str) -> str:
     """Clean up Gemini CLI error output by removing noise.
 
-    The Gemini CLI can output __THOUGHT_SIG__ tokens (internal reasoning signatures)
-    that clutter error messages. This function strips them out to make errors readable.
+    The Gemini CLI output can include embedded <think> tags (reasoning content
+    preserved by the bridge) that clutter error messages. This function strips
+    them out to make errors readable.
     """
     combined = f"{stdout}\n{stderr}"
 
     cleaned_lines = [
-        line for line in combined.split("\n") if not line.startswith("__THOUGHT_SIG__:")
+        line for line in combined.split("\n") if not line.strip().startswith("<think")
     ]
 
     cleaned = "\n".join(cleaned_lines).strip()
