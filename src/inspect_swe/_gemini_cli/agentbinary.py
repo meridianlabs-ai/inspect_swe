@@ -21,13 +21,6 @@ NODE_VERSION = "20.11.0"
 SANDBOX_INSTALL_DIR = "/var/tmp/.5c95f967ca830048"
 
 
-async def _fetch_latest_release() -> dict[str, Any]:
-    """Fetch the latest release from GitHub."""
-    releases_url = "https://api.github.com/repos/google-gemini/gemini-cli/releases"
-    release_json = await download_text_file(f"{releases_url}/latest")
-    return dict(json.loads(release_json))
-
-
 async def resolve_gemini_version(
     version: Literal["auto", "sandbox", "stable", "latest"] | str,
 ) -> str:
@@ -37,23 +30,6 @@ async def resolve_gemini_version(
         return str(release["tag_name"]).lstrip("v")
 
     return version
-
-
-def _platform_to_node_arch(platform: SandboxPlatform) -> str:
-    """Map SandboxPlatform to Node.js architecture string.
-
-    Node.js doesn't have musl-specific builds, so musl platforms
-    use the standard glibc builds.
-    """
-    platform_map = {
-        "linux-x64": "linux-x64",
-        "linux-x64-musl": "linux-x64",
-        "linux-arm64": "linux-arm64",
-        "linux-arm64-musl": "linux-arm64",
-    }
-    if platform not in platform_map:
-        raise ValueError(f"Unsupported platform: {platform}")
-    return platform_map[platform]
 
 
 async def ensure_node_and_npm_available(
@@ -83,6 +59,65 @@ async def ensure_node_and_npm_available(
 
     async with concurrency("node-npm-install", 1, visible=False):
         return await _download_and_install_node(sandbox, platform)
+
+
+async def ensure_gemini_cli_installed(
+    sandbox: SandboxEnvironment,
+    node_path: str,
+    version: str,
+    platform: SandboxPlatform,
+    user: str | None = None,
+) -> str:
+    """Install Gemini CLI via npm and return path to the gemini binary.
+
+    This installs the full @google/gemini-cli package including all policy files,
+    ensuring YOLO mode and other features work correctly.
+    """
+    gemini_install_dir = f"{SANDBOX_INSTALL_DIR}/gemini-cli"
+    gemini_binary = f"{gemini_install_dir}/node_modules/.bin/gemini"
+
+    result = await sandbox.exec(
+        bash_command(f"test -x {gemini_binary}"),
+        user=user,
+    )
+    if result.success:
+        result = await sandbox.exec(
+            cmd=[node_path, gemini_binary, "--version"],
+            user=user,
+        )
+        if result.success:
+            installed_version = result.stdout.strip()
+            if installed_version == version:
+                return gemini_binary
+
+    async with concurrency("gemini-cli-install", 1, visible=False):
+        return await _install_bundle(
+            sandbox, version, gemini_install_dir, platform, user
+        )
+
+
+async def _fetch_latest_release() -> dict[str, Any]:
+    """Fetch the latest release from GitHub."""
+    releases_url = "https://api.github.com/repos/google-gemini/gemini-cli/releases"
+    release_json = await download_text_file(f"{releases_url}/latest")
+    return dict(json.loads(release_json))
+
+
+def _platform_to_node_arch(platform: SandboxPlatform) -> str:
+    """Map SandboxPlatform to Node.js architecture string.
+
+    Node.js doesn't have musl-specific builds, so musl platforms
+    use the standard glibc builds.
+    """
+    platform_map = {
+        "linux-x64": "linux-x64",
+        "linux-x64-musl": "linux-x64",
+        "linux-arm64": "linux-arm64",
+        "linux-arm64-musl": "linux-arm64",
+    }
+    if platform not in platform_map:
+        raise ValueError(f"Unsupported platform: {platform}")
+    return platform_map[platform]
 
 
 async def _download_and_install_node(
@@ -136,41 +171,6 @@ async def _download_and_install_node(
     npm_path = f"{install_dir}/bin/npm"
 
     return node_path, npm_path
-
-
-async def ensure_gemini_cli_installed(
-    sandbox: SandboxEnvironment,
-    node_path: str,
-    version: str,
-    platform: SandboxPlatform,
-    user: str | None = None,
-) -> str:
-    """Install Gemini CLI via npm and return path to the gemini binary.
-
-    This installs the full @google/gemini-cli package including all policy files,
-    ensuring YOLO mode and other features work correctly.
-    """
-    gemini_install_dir = f"{SANDBOX_INSTALL_DIR}/gemini-cli"
-    gemini_binary = f"{gemini_install_dir}/node_modules/.bin/gemini"
-
-    result = await sandbox.exec(
-        bash_command(f"test -x {gemini_binary}"),
-        user=user,
-    )
-    if result.success:
-        result = await sandbox.exec(
-            cmd=[node_path, gemini_binary, "--version"],
-            user=user,
-        )
-        if result.success:
-            installed_version = result.stdout.strip()
-            if installed_version == version:
-                return gemini_binary
-
-    async with concurrency("gemini-cli-install", 1, visible=False):
-        return await _install_bundle(
-            sandbox, version, gemini_install_dir, platform, user
-        )
 
 
 def _create_bundle(version: str, platform: SandboxPlatform) -> bytes:
