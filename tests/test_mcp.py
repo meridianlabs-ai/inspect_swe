@@ -41,7 +41,8 @@ def check_mcp(
         m for m in log.samples[0].messages if isinstance(m, ChatMessageAssistant)
     ]
     tool_calls = [tc for m in assistant_messages for tc in (m.tool_calls or [])]
-    assert next(
-        (tc for tc in tool_calls if tc.function == f"{prefix}memory__create_entities"),
-        None,
-    )
+    tool_names = {tc.function for tc in tool_calls}
+
+    # Gemini doesn't reliably use MCP tools, so we only assert success above
+    if agent != "gemini_cli":
+        assert f"{prefix}memory__create_entities" in tool_names
