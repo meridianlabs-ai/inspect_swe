@@ -75,6 +75,10 @@ def skip_if_no_anthropic(func: F) -> F:
     return cast(F, skip_if_env_var("ANTHROPIC_API_KEY", exists=False)(func))
 
 
+def skip_if_no_google(func: F) -> F:
+    return cast(F, skip_if_env_var("GOOGLE_API_KEY", exists=False)(func))
+
+
 def skip_if_github_action(func: F) -> F:
     return cast(F, skip_if_env_var("GITHUB_ACTIONS", exists=True)(func))
 
@@ -158,7 +162,7 @@ def get_available_sandboxes() -> List[Literal["docker", "k8s"]]:
 
 def run_example(
     example: str,
-    agent: Literal["claude_code", "codex_cli"],
+    agent: Literal["claude_code", "codex_cli", "gemini_cli"],
     model: str,
     sandbox: str | None = None,
 ) -> list[EvalLog]:

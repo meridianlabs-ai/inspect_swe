@@ -5,8 +5,13 @@ from inspect_ai.dataset import Sample
 from inspect_ai.util import SandboxEnvironmentType
 from inspect_swe import claude_code
 from inspect_swe._codex_cli.codex_cli import codex_cli
+from inspect_swe._gemini_cli.gemini_cli import gemini_cli
 
-from tests.conftest import get_available_sandboxes, skip_if_no_anthropic
+from tests.conftest import (
+    get_available_sandboxes,
+    skip_if_no_anthropic,
+    skip_if_no_google,
+)
 
 
 @skip_if_no_anthropic
@@ -49,6 +54,31 @@ def test_codex_cli_options(sandbox: str) -> None:
     log = eval(
         system_explorer(
             codex_cli(
+                system_prompt=f"This is a part of the system prompt {SYSTEM_PROMPT_CANARY}.",
+                model=PASSED_MODEL,
+            ),
+            sandbox=sandbox,
+        ),
+        model=PASSED_MODEL,
+    )[0]
+    assert log.status == "success"
+    log_json = log.model_dump_json(exclude_none=True)
+    assert SYSTEM_PROMPT_CANARY in log_json
+    assert PASSED_MODEL in log_json
+
+
+@skip_if_no_google
+@pytest.mark.parametrize(
+    "sandbox",
+    get_available_sandboxes(),
+)
+def test_gemini_cli_options(sandbox: str) -> None:
+    SYSTEM_PROMPT_CANARY = "32C507F0-9347-4DB2-8061-907682DD34EB"
+    PASSED_MODEL = "google/gemini-2.5-pro"
+
+    log = eval(
+        system_explorer(
+            gemini_cli(
                 system_prompt=f"This is a part of the system prompt {SYSTEM_PROMPT_CANARY}.",
                 model=PASSED_MODEL,
             ),
