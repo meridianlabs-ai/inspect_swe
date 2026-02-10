@@ -262,7 +262,8 @@ def claude_code(
                     if not result.success:
                         # see if this is a timeout and we are retrying timeouts
                         if (
-                            "request timed out" in result.stderr.lower()
+                            "request timed out"
+                            in (result.stdout.lower() + result.stderr.lower())
                             and retry_timeouts is not None
                             and timeout_count < retry_timeouts
                         ):
