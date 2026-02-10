@@ -1,6 +1,7 @@
 ## Unreleased
 
 - Claude Code: Look for request timeout errors in stdout as well as stderr.
+- Claude Code: Restore default "auto" version behavior (download latest stable version).
 
 ## 0.2.32 (31 January 2026)
 
