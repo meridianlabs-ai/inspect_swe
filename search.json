@@ -112,14 +112,28 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Centaur Mode for running Claude Code and Codex CLI alongside the Inspect Human Agent.\nUpdate Inspect dependency to 0.3.159 (required for human agent integration)."
+    "text": "Claude Code: Look for request timeout errors in stdout as well as stderr.\nClaude Code: Restore default “auto” version behavior (download latest stable version)."
+  },
+  {
+    "objectID": "CHANGELOG.html#february-2026",
+    "href": "CHANGELOG.html#february-2026",
+    "title": "Inspect SWE",
+    "section": "",
+    "text": "Claude Code: Look for request timeout errors in stdout as well as stderr.\nClaude Code: Restore default “auto” version behavior (download latest stable version)."
   },
   {
     "objectID": "CHANGELOG.html#january-2026",
     "href": "CHANGELOG.html#january-2026",
     "title": "Inspect SWE",
-    "section": "",
-    "text": "Centaur Mode for running Claude Code and Codex CLI alongside the Inspect Human Agent.\nUpdate Inspect dependency to 0.3.159 (required for human agent integration)."
+    "section": "0.2.32 (31 January 2026)",
+    "text": "0.2.32 (31 January 2026)\n\nClaude Code: Set “auto” version to 2.1.3 (which avoids a not yet fixed compaction bug with gateways).\nClaude Code: Add retry_timeouts option for retrying “Request timed out” errors a configurable number of times.\nClaude Code: Add CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS environment variable."
+  },
+  {
+    "objectID": "CHANGELOG.html#january-2026-1",
+    "href": "CHANGELOG.html#january-2026-1",
+    "title": "Inspect SWE",
+    "section": "0.2.31 (03 January 2026)",
+    "text": "0.2.31 (03 January 2026)\n\nCentaur Mode for running Claude Code and Codex CLI alongside the Inspect Human Agent.\nUpdate Inspect dependency to 0.3.159 (required for human agent integration)."
   },
   {
     "objectID": "CHANGELOG.html#december-2025",
@@ -323,7 +337,7 @@
     "href": "claude_code.html#options",
     "title": "Claude Code",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"WebSearch\")\n\n\ncentaur\nRun in Centaur Mode, which makes Claude Code available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nopus_model\nThe model to use for opus, or for opusplan when Plan Mode is active. Defaults to model.\n\n\nsonnet_model\nThe model to use for sonnet, or for opusplan when Plan Mode is not active. Defaults to model.\n\n\nhaiku_model\nThe model to use for haiku, or background functionality. Defaults to model.\n\n\nsubagent_model\nThe model to use for subagents. Defaults to model.\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorking directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebSearch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebSearch\"]\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"WebSearch\")\n\n\ncentaur\nRun in Centaur Mode, which makes Claude Code available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nopus_model\nThe model to use for opus, or for opusplan when Plan Mode is active. Defaults to model.\n\n\nsonnet_model\nThe model to use for sonnet, or for opusplan when Plan Mode is not active. Defaults to model.\n\n\nhaiku_model\nThe model to use for haiku, or background functionality. Defaults to model.\n\n\nsubagent_model\nThe model to use for subagents. Defaults to model.\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\nretry_timeouts\nShould timeouts be retried? (pass number of times to retry)\n\n\ncwd\nWorking directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebSearch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebSearch\"]\n)",
     "crumbs": [
       "Home",
       "Agents",
