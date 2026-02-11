@@ -241,7 +241,8 @@ def claude_code(
 
                     # run agent
                     result = await sbox.exec(
-                        cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
+                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
+                        + agent_cmd,
                         cwd=cwd,
                         env=agent_env,
                         user=user,
@@ -270,7 +271,7 @@ def claude_code(
                             continue
 
                         raise RuntimeError(
-                            f"Error executing claude code agent: {result.stdout}\n{result.stderr}"
+                            f"Error executing claude code agent {result.returncode}: {result.stdout}\n{result.stderr}"
                         )
 
                     # reset timeout counter

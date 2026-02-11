@@ -268,7 +268,8 @@ def codex_cli(
 
                     # run agent
                     result = await sbox.exec(
-                        cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
+                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
+                        + agent_cmd,
                         cwd=cwd,
                         env=agent_env,
                         user=user,
@@ -281,7 +282,7 @@ def codex_cli(
                     # raise for error
                     if not result.success:
                         raise RuntimeError(
-                            f"Error executing codex cli agent: {result.stdout}\n{result.stderr}"
+                            f"Error executing codex cli agent {result.returncode}: {result.stdout}\n{result.stderr}"
                         )
 
                     # exit if we are at max_attempts

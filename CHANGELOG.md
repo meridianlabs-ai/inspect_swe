@@ -1,3 +1,8 @@
+## 0.2.34 (10 February 2026)
+
+- Agent execution: Redirect stdin using `exec 0</dev/null;`
+- Agent execution: Print returncode for failed processes.
+
 ## 0.2.33 (10 February 2026)
 
 - Claude Code: Look for request timeout errors in stdout as well as stderr.
