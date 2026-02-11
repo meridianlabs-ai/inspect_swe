@@ -13,7 +13,7 @@ def mcp_memory(
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
     # setup agent
-    system_prompt = "You MUST use the memory tools to keep track of your work as you invesigate the system configuration. Please note all findings using the memory tools."
+    system_prompt = "You MUST use the memory tools to keep track of your work. Please note all findings using the memory tools."
     mcp_servers = [
         MCPServerConfigStdio(
             name="memory",
@@ -31,7 +31,7 @@ def mcp_memory(
     return Task(
         dataset=[
             Sample(
-                input="Without using the internet, investigate the network configuration and report: 1) What network interfaces are present on the system, 2) What is the IP address of the loopback interface, and 3) What port does SSH typically listen on according to its configuration file?"
+                input=f"List the contents of the current directory, then use the memory tools to record what you found. Then, on the next turn, read from memory your findings and report them. {system_prompt}"
             )
         ],
         solver=solver,
