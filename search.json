@@ -112,14 +112,21 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Claude Code: Look for request timeout errors in stdout as well as stderr.\nClaude Code: Restore default “auto” version behavior (download latest stable version)."
+    "text": "Agent execution: Redirect stdin using exec 0&lt;/dev/null;\nAgent execution: Print returncode for failed processes."
   },
   {
     "objectID": "CHANGELOG.html#february-2026",
     "href": "CHANGELOG.html#february-2026",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Claude Code: Look for request timeout errors in stdout as well as stderr.\nClaude Code: Restore default “auto” version behavior (download latest stable version)."
+    "text": "Agent execution: Redirect stdin using exec 0&lt;/dev/null;\nAgent execution: Print returncode for failed processes."
+  },
+  {
+    "objectID": "CHANGELOG.html#february-2026-1",
+    "href": "CHANGELOG.html#february-2026-1",
+    "title": "Inspect SWE",
+    "section": "0.2.33 (10 February 2026)",
+    "text": "0.2.33 (10 February 2026)\n\nClaude Code: Look for request timeout errors in stdout as well as stderr.\nClaude Code: Restore default “auto” version behavior (download latest stable version)."
   },
   {
     "objectID": "CHANGELOG.html#january-2026",
