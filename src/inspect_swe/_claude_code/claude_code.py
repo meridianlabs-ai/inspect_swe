@@ -1,8 +1,9 @@
+import json
 import shlex
 import uuid
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Literal, Sequence
+from typing import Any, Awaitable, Callable, Literal, Sequence
 
 import anyio
 from inspect_ai.agent import (
@@ -16,7 +17,7 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import score
-from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
+from inspect_ai.tool import MCPServerConfig, Skill, Tool, install_skills, read_skills, tool
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 from pydantic_core import to_json
@@ -29,6 +30,9 @@ from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.messages import build_user_prompt
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
+
+# Name of the internal MCP server used for hook dispatch.
+_HOOKS_SERVER_NAME = "_hooks"
 
 
 @agent
@@ -58,6 +62,7 @@ def claude_code(
     user: str | None = None,
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
+    hooks: dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]] | None = None,
 ) -> Agent:
     """Claude Code agent.
 
@@ -100,6 +105,9 @@ def claude_code(
             - "stable": Download and use the current stable version of claude code.
             - "latest": Download and use the very latest version of claude code.
             - "x.x.x": Download and use a specific version of claude code.
+        hooks: Dict mapping Claude Code hook event names (e.g. "Stop",
+            "PreToolUse") to async callables. Each callable receives the
+            hook input dict and returns a decision dict.
     """
     # resolve centaur
     if centaur is True:
@@ -118,6 +126,21 @@ def claude_code(
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
+    # build effective bridged_tools and disallowed_tools lists
+    effective_bridged_tools = list(bridged_tools or [])
+    effective_disallowed_tools = list(disallowed_tools or [])
+
+    if hooks is not None:
+        # Register the hook dispatch tool with the bridge so hook scripts
+        # can call it via the sandbox service.  The hooks server is
+        # excluded from --mcp-config below so Claude Code never sees it.
+        effective_bridged_tools.append(
+            BridgedToolsSpec(
+                name=_HOOKS_SERVER_NAME,
+                tools=[_hook_dispatch(hooks)],
+            )
+        )
+
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "claude_code_model_port"
@@ -130,7 +153,7 @@ def claude_code(
             filter=filter,
             retry_refusals=retry_refusals,
             port=port,
-            bridged_tools=bridged_tools,
+            bridged_tools=effective_bridged_tools or None,
         ) as bridge:
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
@@ -166,12 +189,20 @@ def claude_code(
             if system_messages:
                 cmd.extend(["--append-system-prompt", "\n\n".join(system_messages)])
 
-            # mcp servers (combine static configs with bridged tools)
+            # mcp servers (combine static configs with bridged tools).
+            # The hooks server is registered with the bridge (so hook
+            # scripts can call it via the sandbox service) but must NOT
+            # appear in --mcp-config
+            cc_mcp_servers = [
+                s for s in
+                (list(mcp_servers or []) + bridge.mcp_server_configs)
+                if s.name != _HOOKS_SERVER_NAME
+            ]
+
             cmd_allowed_tools: list[str] = []
-            all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
-            if all_mcp_servers:
+            if cc_mcp_servers:
                 mcp_server_args, mcp_allowed_tools = resolve_mcp_servers(
-                    all_mcp_servers
+                    cc_mcp_servers
                 )
                 cmd.extend(mcp_server_args)
                 cmd_allowed_tools.extend(mcp_allowed_tools)
@@ -180,9 +211,9 @@ def claude_code(
             if len(cmd_allowed_tools) > 0:
                 cmd.append("--allowed-tools")
                 cmd.append(",".join(cmd_allowed_tools))
-            if disallowed_tools is not None and len(disallowed_tools) > 0:
+            if len(effective_disallowed_tools) > 0:
                 cmd.append("--disallowed-tools")
-                cmd.append(",".join(disallowed_tools))
+                cmd.append(",".join(effective_disallowed_tools))
 
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
@@ -211,6 +242,10 @@ def claude_code(
                 "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
                 "IS_SANDBOX": "1",
             } | (env or {})
+
+            # install hook scripts into the sandbox
+            if hooks is not None:
+                await _install_hooks(sbox, user, hooks)
 
             # centaur mode uses human_cli with custom instructions and bash rc
             if centaur:
@@ -310,6 +345,102 @@ def claude_code(
     # return agent with specified name and descritpion
     return agent_with(execute, name=name, description=description)
 
+
+# ---------------------------------------------------------------------------
+# Hook dispatch via MCP bridge
+# ---------------------------------------------------------------------------
+
+@tool
+def _hook_dispatch(
+    hooks: dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]],
+) -> Tool:
+    """Dispatch a Claude Code hook event to the registered handler."""
+
+    async def run(hook_event: str, hook_input: str) -> str:
+        """Dispatch a hook event.
+
+        Args:
+            hook_event: The hook event name (e.g. "Stop", "PreToolUse").
+            hook_input: JSON-encoded hook input from Claude Code.
+
+        Returns:
+            JSON-encoded decision dict.
+        """
+        handler = hooks.get(hook_event)
+        if handler is None:
+            raise ValueError(
+                f"No handler registered for hook event {hook_event!r}. "
+                f"Registered events: {list(hooks.keys())}"
+            )
+        input_dict = json.loads(hook_input)
+        result = await handler(input_dict)
+        return json.dumps(result)
+
+    return run
+
+
+async def _install_hooks(
+    sbox: Any,
+    user: str | None,
+    hooks: dict[str, Any],
+) -> None:
+    """Write hook scripts and Claude Code settings into the sandbox."""
+    # Write a hook script for each event
+    hook_settings: dict[str, list] = {}
+    for event_name in hooks:
+        script_path = f"/tmp/_hook_{event_name}.py"
+        script_content = _generate_hook_script(event_name)
+        await sbox.write_file(script_path, script_content)
+        await sbox.exec(cmd=["chmod", "+x", script_path], user="root")
+        hook_settings[event_name] = [{
+            "hooks": [{
+                "type": "command",
+                "command": f"python3 {script_path}",
+            }]
+        }]
+
+    # Write Claude Code settings
+    settings = {"hooks": hook_settings}
+    home_result = await sbox.exec(
+        cmd=["bash", "-c", 'echo "$HOME"'], user=user,
+    )
+    home_dir = home_result.stdout.strip() or "/root"
+    claude_dir = f"{home_dir}/.claude"
+    await sbox.exec(cmd=["mkdir", "-p", claude_dir], user=user)
+    await sbox.write_file(
+        f"{claude_dir}/settings.json", json.dumps(settings, indent=2),
+    )
+
+
+def _generate_hook_script(event_name: str) -> str:
+    """Generate a Python hook script that calls the bridge service."""
+    return dedent(f"""\
+        #!/usr/bin/env python3
+        import glob, json, os, sys
+        hook_input = json.load(sys.stdin)
+        dirs = glob.glob("/var/tmp/sandbox-services/bridge_model_service/*/")
+        assert dirs, "No bridge_model_service instance found"
+        instance_dir = dirs[0]
+        instance_name = instance_dir.rstrip("/").split("/")[-1]
+        os.environ["BRIDGE_MODEL_SERVICE_INSTANCE"] = instance_name
+        sys.path.insert(0, instance_dir)
+        from bridge_model_service import call_bridge_model_service
+        result = call_bridge_model_service(
+            "call_tool",
+            server="{_HOOKS_SERVER_NAME}",
+            tool="_hook_dispatch",
+            arguments={{"hook_event": "{event_name}", "hook_input": json.dumps(hook_input)}},
+        )
+        if result:
+            print(result if isinstance(result, str) else json.dumps(result))
+        else:
+            sys.exit(0)
+    """)
+
+
+# ---------------------------------------------------------------------------
+# Utilities (unchanged from upstream)
+# ---------------------------------------------------------------------------
 
 def resolve_mcp_servers(
     mcp_servers: Sequence[MCPServerConfig],
