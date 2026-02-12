@@ -235,7 +235,8 @@ def gemini_cli(
 
                     # run agent
                     result = await sbox.exec(
-                        cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
+                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
+                        + agent_cmd,
                         cwd=cwd,
                         env=agent_env,
                         user=user,
@@ -252,7 +253,7 @@ def gemini_cli(
                             result.stdout, result.stderr
                         )
                         raise RuntimeError(
-                            f"Error executing gemini cli agent: {cli_error_msg}"
+                            f"Error executing gemini cli agent {result.returncode}: {cli_error_msg}"
                         )
 
                     # exit if we are at max_attempts
