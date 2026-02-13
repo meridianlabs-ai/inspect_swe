@@ -9,7 +9,12 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, get_model
+from inspect_ai.model import (
+    ChatMessageSystem,
+    CompactionStrategy,
+    GenerateFilter,
+    get_model,
+)
 from inspect_ai.scorer import score
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
@@ -42,6 +47,7 @@ def mini_swe_agent(
     model: str | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
+    compaction: CompactionStrategy | None = None,
     cost_limit: float | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
@@ -63,6 +69,8 @@ def mini_swe_agent(
 
     Use `cost_limit` to set a maximum cost for the agent run (in USD).
 
+    This agent does not handle compaction natively. Use `compaction` to specify a compaction strategy.
+
     Args:
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description (used in multi-agent systems)
@@ -71,6 +79,7 @@ def mini_swe_agent(
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
+        compaction: Compaction strategy for managing context window overflow.
         cost_limit: Maximum cost limit for the agent run.
         cwd: Working directory to run mini-swe-agent within.
         env: Environment variables to set for mini-swe-agent.
@@ -102,6 +111,7 @@ def mini_swe_agent(
             model=inspect_model,
             filter=filter,
             retry_refusals=retry_refusals,
+            compaction=compaction,
             port=port,
         ) as bridge:
             # ensure mini-swe-agent is installed

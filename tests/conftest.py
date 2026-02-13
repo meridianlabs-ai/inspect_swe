@@ -1,9 +1,8 @@
 import importlib
 import os
 import subprocess
-from dataclasses import dataclass
 from typing import Any, Callable, List, Literal, TypeVar, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from inspect_ai import eval
