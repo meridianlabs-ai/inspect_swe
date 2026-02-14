@@ -78,7 +78,7 @@ def codex_cli(
             tools available to the agent running in the sandbox.
         disallowed_tools: Optionally disallow tools (currently only web_search).
         centaur: Run in 'centaur' mode, which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended.
-        attempts: Configure agent to make multiple attempts.
+        attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)

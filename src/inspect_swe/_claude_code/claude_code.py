@@ -81,7 +81,7 @@ def claude_code(
             tools available to the agent running in the sandbox.
         disallowed_tools: List of tool names to disallow entirely.
         centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
-        attempts: Configure agent to make multiple attempts.
+        attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
         opus_model: The model to use for `opus`, or for `opusplan` when Plan Mode is active. Defaults to `model`.
         sonnet_model: The model to use for `sonnet`, or for `opusplan` when Plan Mode is not active. Defaults to `model`.
