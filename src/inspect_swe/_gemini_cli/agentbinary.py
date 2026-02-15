@@ -12,13 +12,31 @@ from inspect_ai.util import SandboxEnvironment, concurrency
 
 from .._util.appdirs import package_cache_dir
 from .._util.download import download_file, download_text_file
-from .._util.sandbox import SandboxPlatform, bash_command, sandbox_exec
+from .._util.sandbox import SandboxPlatform, bash_command, detect_sandbox_platform, sandbox_exec
 
 # Node.js version to download if not available in sandbox
 NODE_VERSION = "20.11.0"
 
 # Installation paths in sandbox
 SANDBOX_INSTALL_DIR = "/var/tmp/.5c95f967ca830048"
+
+
+async def ensure_gemini_cli_setup(
+    sandbox: SandboxEnvironment,
+    version: Literal["auto", "sandbox", "stable", "latest"] | str,
+    user: str | None,
+) -> tuple[str, str]:
+    """Install node and gemini-cli in the sandbox.
+
+    Returns (gemini_binary, node_binary) paths.
+    """
+    platform = await detect_sandbox_platform(sandbox)
+    node_binary = await ensure_node_available(sandbox, platform, user)
+    gemini_version = await resolve_gemini_version(version)
+    gemini_binary = await ensure_gemini_cli_installed(
+        sandbox, node_binary, gemini_version, platform, user
+    )
+    return gemini_binary, node_binary
 
 
 async def resolve_gemini_version(

@@ -24,14 +24,9 @@ from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
-from inspect_swe._util.sandbox import detect_sandbox_platform
 from inspect_swe._util.trace import trace
 
-from .agentbinary import (
-    ensure_gemini_cli_installed,
-    ensure_node_available,
-    resolve_gemini_version,
-)
+from .agentbinary import ensure_gemini_cli_setup
 
 
 @agent
@@ -128,19 +123,9 @@ def gemini_cli(
                 )
                 await install_skills(resolved_skills, sbox, user, skills_dir)
 
-            # detect platform for node download if needed
-            platform = await detect_sandbox_platform(sbox)
-
-            # ensure node is available (downloads node binary if needed)
-            node_binary = await ensure_node_available(sbox, platform, user)
-
-            # resolve gemini version
-            gemini_version = await resolve_gemini_version(version)
-
-            # ensure gemini-cli is installed via npm bundle
-            # This gives us the full package including policy files for YOLO mode
-            gemini_binary = await ensure_gemini_cli_installed(
-                sbox, node_binary, gemini_version, platform, user
+            # install node and gemini-cli in sandbox
+            gemini_binary, node_binary = await ensure_gemini_cli_setup(
+                sbox, version, user
             )
 
             # Write MCP server configs to settings.json
