@@ -1,4 +1,3 @@
-import asyncio
 import json
 import lzma
 import os
@@ -249,11 +248,7 @@ async def _install_bundle(
     (where we have network access), then transfers and extracts it in the sandbox.
     """
     # Create bundle on host (runs npm install with network access)
-    # Run in thread pool since it's blocking I/O
-    loop = asyncio.get_running_loop()
-    bundle_data = await loop.run_in_executor(
-        None, lambda: _create_bundle(version, platform)
-    )
+    bundle_data = _create_bundle(version, platform)
 
     await sandbox_exec(sandbox, f"mkdir -p {install_dir}", user="root")
 
