@@ -12,7 +12,12 @@ from inspect_ai.util import SandboxEnvironment, concurrency
 
 from .._util.appdirs import package_cache_dir
 from .._util.download import download_file, download_text_file
-from .._util.sandbox import SandboxPlatform, bash_command, detect_sandbox_platform, sandbox_exec
+from .._util.sandbox import (
+    SandboxPlatform,
+    bash_command,
+    detect_sandbox_platform,
+    sandbox_exec,
+)
 
 # Node.js version to download if not available in sandbox
 NODE_VERSION = "20.11.0"

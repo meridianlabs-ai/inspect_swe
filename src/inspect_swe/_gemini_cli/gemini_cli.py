@@ -128,24 +128,17 @@ def gemini_cli(
                 sbox, version, user
             )
 
-            # Write MCP server configs to settings.json
-            # Gemini CLI discovers MCP servers from settings.json, not CLI args
+            # mcp servers
             all_mcp_servers = list(mcp_servers or []) + list(bridge.mcp_server_configs)
 
-            # Detect home directory in sandbox (needed for settings.json location)
+            # detect sandbox home directory
             home_result = await sbox.exec(["sh", "-c", "echo $HOME"], user=user)
             sandbox_home = home_result.stdout.strip() or "/root"
 
+            # write MCP server configs to settings.json in actual home
+            # (not /tmp, so MCP servers can use npm cache from the real home)
             if all_mcp_servers:
-                mcp_servers_config = {
-                    server.name: _build_mcp_server_config(server)
-                    for server in all_mcp_servers
-                }
-                settings = {"mcpServers": mcp_servers_config}
-                settings_json = json.dumps(settings, indent=2)
-
-                # Create .gemini directory and write settings.json to actual home
-                # (not /tmp, so MCP servers can use npm cache from the real home)
+                settings_json = resolve_mcp_servers(all_mcp_servers)
                 gemini_settings_dir = f"{sandbox_home}/.gemini"
                 await sbox.exec(["mkdir", "-p", gemini_settings_dir], user=user)
                 await sbox.write_file(
@@ -273,18 +266,18 @@ def gemini_cli(
     return agent_with(execute, name=name, description=description)
 
 
-def _build_mcp_server_config(server: MCPServerConfig) -> dict[str, Any]:
-    """Build Gemini CLI MCP server config dict from MCPServerConfig."""
-    config = server.model_dump(exclude={"name", "tools", "type"}, exclude_none=True)
-
-    # For HTTP transport, Gemini CLI uses 'httpUrl' field
-    if isinstance(server, MCPServerConfigHTTP) and "url" in config:
-        config["httpUrl"] = config.pop("url")
-
-    if "cwd" in config and not isinstance(config["cwd"], str):
-        config["cwd"] = str(config["cwd"])
-
-    return config
+def resolve_mcp_servers(mcp_servers: Sequence[MCPServerConfig]) -> str:
+    """Build Gemini CLI settings.json content from MCP server configs."""
+    mcp_servers_config: dict[str, Any] = {}
+    for server in mcp_servers:
+        config = server.model_dump(exclude={"name", "tools", "type"}, exclude_none=True)
+        # For HTTP transport, Gemini CLI uses 'httpUrl' field
+        if isinstance(server, MCPServerConfigHTTP) and "url" in config:
+            config["httpUrl"] = config.pop("url")
+        if "cwd" in config and not isinstance(config["cwd"], str):
+            config["cwd"] = str(config["cwd"])
+        mcp_servers_config[server.name] = config
+    return json.dumps({"mcpServers": mcp_servers_config}, indent=2)
 
 
 def _clean_gemini_error(stdout: str, stderr: str) -> str:
