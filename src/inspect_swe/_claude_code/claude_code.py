@@ -1,50 +1,211 @@
+"""Claude Code agent via ACP (Agent Client Protocol).
+
+The ``claude_code()`` function returns an ``Agent`` backed by the
+``claude-code-acp`` adapter running in a sandbox, communicating over ACP
+via ``exec_remote`` with ``stdin_open=True``.
+
+Two modes:
+
+* **Non-interactive** (``interactive=False``, default): sends one prompt
+  built from ``state.messages``, waits for the response, and returns.
+  Drop-in replacement for the old ``sbox.exec()`` path.
+
+* **Interactive** (``interactive=True``): sets up the ACP lifecycle,
+  exposes ``.conn`` and ``.session_id`` on the agent object, and waits
+  for the caller to drive prompts via ``conn.prompt()`` / ``conn.cancel()``.
+"""
+
+import logging
 import shlex
-import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Literal, Sequence
+from typing import Any, Sequence
 
-import anyio
 from inspect_ai.agent import (
     Agent,
-    AgentAttempts,
     AgentState,
     BridgedToolsSpec,
     agent,
-    agent_with,
     sandbox_agent_bridge,
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
-from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
-from inspect_ai.util import sandbox as sandbox_env
-from inspect_ai.util import store
+from inspect_ai.util import SandboxEnvironment, sandbox as sandbox_env
+from inspect_ai.util._sandbox.exec_remote import (
+    ExecRemoteProcess,
+    ExecRemoteStreamingOptions,
+)
 from pydantic_core import to_json
 
+from inspect_swe._acp import ACPAgent
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.path import join_path
 
-from .._util._async import is_callable_coroutine
-from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.messages import build_user_prompt
-from .._util.trace import trace
-from .agentbinary import claude_code_binary_source
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# ClaudeCode agent class
+# ---------------------------------------------------------------------------
+
+
+class ClaudeCode(ACPAgent):
+    """Claude Code agent via the ``claude-code-acp`` ACP adapter.
+
+    Subclasses :class:`ACPAgent` to provide Claude-specific setup
+    (bridge, binary installation, env vars, MCP config, skills).
+    """
+
+    def __init__(
+        self,
+        *,
+        interactive: bool = False,
+        model: str | None = None,
+        filter: GenerateFilter | None = None,
+        bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+        disallowed_tools: list[str] | None = None,
+        system_prompt: str | None = None,
+        mcp_servers: Sequence[MCPServerConfig] | None = None,
+        skills: Sequence[str | Path | Skill] | None = None,
+        retry_refusals: int | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        user: str | None = None,
+        sandbox: str | None = None,
+        opus_model: str | None = None,
+        sonnet_model: str | None = None,
+        haiku_model: str | None = None,
+        subagent_model: str | None = None,
+    ) -> None:
+        super().__init__(interactive=interactive, cwd=cwd)
+        self._model = f"inspect/{model}" if model is not None else "inspect"
+        self._filter = filter
+        self._bridged_tools = list(bridged_tools or [])
+        self._disallowed_tools = list(disallowed_tools or [])
+        self._system_prompt = system_prompt
+        self._mcp_servers = list(mcp_servers or [])
+        self._resolved_skills = read_skills(skills) if skills else None
+        self._retry_refusals = retry_refusals
+        self._env = env or {}
+        self._user = user
+        self._sandbox = sandbox
+        self._opus_model = inspect_model(opus_model)
+        self._sonnet_model = inspect_model(sonnet_model)
+        self._haiku_model = inspect_model(haiku_model)
+        self._subagent_model = inspect_model(subagent_model)
+
+    @asynccontextmanager
+    async def _start_agent(
+        self, state: AgentState
+    ) -> AsyncIterator[tuple[ExecRemoteProcess, object]]:
+        sbox = sandbox_env(self._sandbox)
+
+        async with sandbox_agent_bridge(
+            state,
+            model=self._model,
+            filter=self._filter,
+            retry_refusals=self._retry_refusals,
+            bridged_tools=self._bridged_tools or None,
+        ) as bridge:
+            # Ensure claude-code-acp is available in the sandbox.
+            await _ensure_claude_code_acp_installed(sbox, self._user)
+
+            # System prompt
+            system_messages = [
+                m.text
+                for m in state.messages
+                if isinstance(m, ChatMessageSystem)
+            ]
+            if self._system_prompt is not None:
+                system_messages.append(self._system_prompt)
+
+            # Agent environment variables
+            agent_env = {
+                "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
+                "ANTHROPIC_AUTH_TOKEN": "sk-ant-api03-DOq5tyLPrk9M4hPE",
+                "ANTHROPIC_MODEL": self._model,
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": self._opus_model or self._model,
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": self._sonnet_model or self._model,
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": self._haiku_model or self._model,
+                "CLAUDE_CODE_SUBAGENT_MODEL": self._subagent_model or self._model,
+                "ANTHROPIC_SMALL_FAST_MODEL": self._haiku_model or self._model,
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+                "IS_SANDBOX": "1",
+            } | self._env
+
+            # System prompt via env (the ACP adapter will forward to CC)
+            if system_messages:
+                agent_env["CLAUDE_CODE_APPEND_SYSTEM_PROMPT"] = "\n\n".join(
+                    system_messages
+                )
+
+            # MCP servers (combine static configs with bridged tools)
+            all_mcp_servers = self._mcp_servers + bridge.mcp_server_configs
+            if all_mcp_servers:
+                mcp_config_json = _build_mcp_config_json(all_mcp_servers)
+                agent_env["CLAUDE_CODE_MCP_CONFIG"] = mcp_config_json
+
+            # Disallowed tools
+            if self._disallowed_tools:
+                agent_env["CLAUDE_CODE_DISALLOWED_TOOLS"] = ",".join(
+                    self._disallowed_tools
+                )
+
+            # Install skills
+            if self._resolved_skills:
+                skills_dir = (
+                    join_path(self.cwd, ".claude/skills")
+                    if self.cwd
+                    else ".claude/skills"
+                )
+                await install_skills(
+                    self._resolved_skills, sbox, self._user, skills_dir
+                )
+
+            # Start ACP adapter process
+            logger.info("Starting claude-code-acp adapter...")
+            proc = await sbox.exec_remote(
+                cmd=["claude-code-acp"],
+                options=ExecRemoteStreamingOptions(
+                    stdin_open=True,
+                    cwd=self.cwd,
+                    env=agent_env,
+                    user=self._user,
+                ),
+            )
+
+            yield proc, bridge
+
+    def _build_prompt(self, state: AgentState) -> str:
+        """Build prompt from state messages using Claude Code's format."""
+        prompt, _ = build_user_prompt(state.messages)
+        return prompt
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 @agent
 def claude_code(
     name: str = "Claude Code",
-    description: str = dedent("""
+    description: str = dedent("""\
        Autonomous coding agent capable of writing, testing, debugging,
        and iterating on code across multiple languages.
     """),
+    *,
+    interactive: bool = False,
     system_prompt: str | None = None,
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     disallowed_tools: list[str] | None = None,
-    centaur: bool | CentaurOptions = False,
-    attempts: int | AgentAttempts = 1,
     model: str | None = None,
     opus_model: str | None = None,
     sonnet_model: str | None = None,
@@ -52,27 +213,22 @@ def claude_code(
     subagent_model: str | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
-    retry_timeouts: int | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
     sandbox: str | None = None,
-    version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
 ) -> Agent:
     """Claude Code agent.
 
-    Agent that uses [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) running in a sandbox.
-
-    The agent can either use a version of Claude Code installed in the sandbox, or can download a version and install it in the sandbox (see docs on `version` option below for details).
-
-    Use `disallowed_tools` to control access to tools. See [Tools available to Claude](https://docs.anthropic.com/en/docs/claude-code/settings#tools-available-to-claude) for the list of built-in tools which can be disallowed.
-
-    Use the `attempts` option to enable additional submissions if the initial
-    submission(s) are incorrect (by default, no additional attempts are permitted).
+    Agent that uses `Claude Code <https://docs.anthropic.com/en/docs/claude-code/overview>`_
+    running in a sandbox via the ACP (Agent Client Protocol) adapter.
 
     Args:
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
+        interactive: If True, the agent exposes ``.conn`` and ``.session_id``
+            for the caller to drive prompts directly.  If False (default),
+            sends one prompt from ``state.messages`` and returns.
         system_prompt: Additional system prompt to append to default system prompt.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
@@ -80,242 +236,96 @@ def claude_code(
             Each BridgedToolsSpec creates an MCP server that makes the specified
             tools available to the agent running in the sandbox.
         disallowed_tools: List of tool names to disallow entirely.
-        centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
-        attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
         opus_model: The model to use for `opus`, or for `opusplan` when Plan Mode is active. Defaults to `model`.
         sonnet_model: The model to use for `sonnet`, or for `opusplan` when Plan Mode is not active. Defaults to `model`.
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
         subagent_model: The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`.
         filter: Filter for intercepting bridged model requests.
-        retry_refusals: Should refusals be retried? (pass number of times to retry)
-        retry_timeouts: Should timeouts be retried? (pass number of times to retry)
-        cwd: Working directory to run claude code within.
-        env: Environment variables to set for claude code.
-        user: User to execute claude code with.
-        sandbox: Optional sandbox environment name.
-        version: Version of claude code to use. One of:
-            - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
-            - "sandbox": Use the version of claude code in the sandbox (raises `RuntimeError` if claude is not available in the sandbox)
-            - "stable": Download and use the current stable version of claude code.
-            - "latest": Download and use the very latest version of claude code.
-            - "x.x.x": Download and use a specific version of claude code.
+        retry_refusals: Number of times to retry refusals.
+        cwd: Working directory.
+        env: Environment variables.
+        user: User to execute as.
+        sandbox: Sandbox environment name.
     """
-    # resolve centaur
-    if centaur is True:
-        centaur = CentaurOptions()
+    return ClaudeCode(
+        interactive=interactive,
+        model=model,
+        filter=filter,
+        bridged_tools=bridged_tools,
+        disallowed_tools=disallowed_tools,
+        system_prompt=system_prompt,
+        mcp_servers=mcp_servers,
+        skills=skills,
+        retry_refusals=retry_refusals,
+        cwd=cwd,
+        env=env,
+        user=user,
+        sandbox=sandbox,
+        opus_model=opus_model,
+        sonnet_model=sonnet_model,
+        haiku_model=haiku_model,
+        subagent_model=subagent_model,
+    )
 
-    # resolve models
-    model = f"inspect/{model}" if model is not None else "inspect"
-    opus_model = inspect_model(opus_model)
-    sonnet_model = inspect_model(sonnet_model)
-    haiku_model = inspect_model(haiku_model)
-    subagent_model = inspect_model(subagent_model)
 
-    # resolve skills
-    resolved_skills = read_skills(skills) if skills is not None else None
+# ---------------------------------------------------------------------------
+# ACP adapter installation
+# ---------------------------------------------------------------------------
 
-    # resolve attempts
-    attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
+_ACP_ADAPTER_PACKAGE = "@zed-industries/claude-code-acp"
 
-    async def execute(state: AgentState) -> AgentState:
-        # determine port (use new port for each execution of agent on sample)
-        MODEL_PORT = "claude_code_model_port"
-        port = store().get(MODEL_PORT, 3000) + 1
-        store().set(MODEL_PORT, port)
 
-        async with sandbox_agent_bridge(
-            state,
-            model=model,
-            filter=filter,
-            retry_refusals=retry_refusals,
-            port=port,
-            bridged_tools=bridged_tools,
-        ) as bridge:
-            # ensure claude is installed and get binary location
-            claude_binary = await ensure_agent_binary_installed(
-                claude_code_binary_source(), version, user, sandbox_env(sandbox)
-            )
+async def _ensure_claude_code_acp_installed(
+    sbox: SandboxEnvironment,
+    user: str | None = None,
+) -> None:
+    """Ensure ``claude-code-acp`` is available in the sandbox.
 
-            # allocate session_id
-            session_id = str(uuid.uuid4())
+    Checks if the binary is already on ``$PATH``.  If not, installs
+    the ``@zed-industries/claude-code-acp`` npm package globally.
+    """
+    result = await sbox.exec(["bash", "-c", "which claude-code-acp"], user=user)
+    if result.success:
+        logger.info("claude-code-acp already installed: %s", result.stdout.strip())
+        return
 
-            # base options
-            cmd = [
-                "--dangerously-skip-permissions",
-                "--model",
-                model,
-            ]
+    logger.info("Installing %s in sandbox...", _ACP_ADAPTER_PACKAGE)
+    install_result = await sbox.exec(
+        ["bash", "-c", f"npm install -g {_ACP_ADAPTER_PACKAGE}"],
+        user="root",
+    )
+    if not install_result.success:
+        raise RuntimeError(
+            f"Failed to install {_ACP_ADAPTER_PACKAGE}: "
+            f"{install_result.stderr}"
+        )
+    logger.info("Installed %s successfully", _ACP_ADAPTER_PACKAGE)
 
-            # add interactive options if not running as centaur
-            if centaur is False:
-                cmd.extend(
-                    [
-                        "--print",
-                        "--debug",
-                        "--verbose",
-                    ]
-                )
 
-            # system prompt
-            system_messages = [
-                m.text for m in state.messages if isinstance(m, ChatMessageSystem)
-            ]
-            if system_prompt is not None:
-                system_messages.append(system_prompt)
-            if system_messages:
-                cmd.extend(["--append-system-prompt", "\n\n".join(system_messages)])
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
 
-            # mcp servers (combine static configs with bridged tools)
-            cmd_allowed_tools: list[str] = []
-            all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
-            if all_mcp_servers:
-                mcp_server_args, mcp_allowed_tools = resolve_mcp_servers(
-                    all_mcp_servers
-                )
-                cmd.extend(mcp_server_args)
-                cmd_allowed_tools.extend(mcp_allowed_tools)
 
-            # add allowed and disallowed tools
-            if len(cmd_allowed_tools) > 0:
-                cmd.append("--allowed-tools")
-                cmd.append(",".join(cmd_allowed_tools))
-            if disallowed_tools is not None and len(disallowed_tools) > 0:
-                cmd.append("--disallowed-tools")
-                cmd.append(",".join(disallowed_tools))
-
-            prompt, has_assistant_response = build_user_prompt(state.messages)
-
-            # resolve sandbox
-            sbox = sandbox_env(sandbox)
-
-            # install skills
-            if resolved_skills is not None:
-                CLAUDE_SKILLS = ".claude/skills"
-                skills_dir = (
-                    join_path(cwd, CLAUDE_SKILLS) if cwd is not None else CLAUDE_SKILLS
-                )
-                await install_skills(resolved_skills, sbox, user, skills_dir)
-
-            # define agent env
-            agent_env = {
-                "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
-                "ANTHROPIC_AUTH_TOKEN": "sk-ant-api03-DOq5tyLPrk9M4hPE",
-                "ANTHROPIC_MODEL": model,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": opus_model or model,
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet_model or model,
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku_model or model,
-                "CLAUDE_CODE_SUBAGENT_MODEL": subagent_model or model,
-                "ANTHROPIC_SMALL_FAST_MODEL": haiku_model or model,
-                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
-                "IS_SANDBOX": "1",
-            } | (env or {})
-
-            # centaur mode uses human_cli with custom instructions and bash rc
-            if centaur:
-                await run_claude_code_centaur(
-                    options=centaur,
-                    claude_cmd=[claude_binary] + cmd,
-                    agent_env=agent_env,
-                    state=state,
-                )
-            else:
-                # execute the agent (track debug output)
-                debug_output: list[str] = []
-                agent_prompt = prompt
-                attempt_count = 0
-                timeout_count = 0
-                while True:
-                    # resume previous conversation
-                    if has_assistant_response or attempt_count > 0 or timeout_count > 0:
-                        agent_cmd = (
-                            [claude_binary, "--continue"] + cmd + ["--", agent_prompt]
-                        )
-                    else:
-                        agent_cmd = (
-                            [claude_binary, "--session-id", session_id]
-                            + cmd
-                            + ["--", agent_prompt]
-                        )
-
-                    # run agent
-                    result = await sbox.exec(
-                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
-                        + agent_cmd,
-                        cwd=cwd,
-                        env=agent_env,
-                        user=user,
-                        concurrency=False,
-                    )
-
-                    # track debug output
-                    debug_output.append(result.stdout)
-                    debug_output.append(result.stderr)
-
-                    # raise for error
-                    if not result.success:
-                        # see if this is a timeout and we are retrying timeouts
-                        if (
-                            "request timed out"
-                            in (result.stdout.lower() + result.stderr.lower())
-                            and retry_timeouts is not None
-                            and timeout_count < retry_timeouts
-                        ):
-                            timeout_count += 1
-                            delay = min(2**timeout_count, 60)
-                            trace(
-                                f"Retrying timed out request (retry {timeout_count}, waiting {delay} seconds)."
-                            )
-                            await anyio.sleep(delay)
-                            continue
-
-                        raise RuntimeError(
-                            f"Error executing claude code agent {result.returncode}: {result.stdout}\n{result.stderr}"
-                        )
-
-                    # reset timeout counter
-                    timeout_count = 0
-
-                    # exit if we are at max_attempts
-                    attempt_count += 1
-                    if attempt_count >= attempts.attempts:
-                        break
-
-                    # score this attempt
-                    answer_scores = await score(state)
-
-                    # break if we score 'correct'
-                    if attempts.score_value(answer_scores[0].value) == 1.0:
-                        break
-
-                    # otherwise update prompt with incorrect message and continue
-                    else:
-                        if callable(attempts.incorrect_message):
-                            if not is_callable_coroutine(attempts.incorrect_message):
-                                raise ValueError(
-                                    "The incorrect_message function must be async."
-                                )
-                            agent_prompt = await attempts.incorrect_message(
-                                state, answer_scores
-                            )
-                        else:
-                            agent_prompt = attempts.incorrect_message
-
-                # trace debug info
-                debug_output.insert(0, "Claude Code Debug Output:")
-                trace("\n".join(debug_output))
-
-        return bridge.state
-
-    # return agent with specified name and descritpion
-    return agent_with(execute, name=name, description=description)
+def _build_mcp_config_json(
+    mcp_servers: Sequence[MCPServerConfig],
+) -> str:
+    """Build a JSON string for MCP server config."""
+    mcp_servers_json: dict[str, dict[str, Any]] = {}
+    for mcp_server in mcp_servers:
+        mcp_servers_json[mcp_server.name] = mcp_server.model_dump(
+            exclude={"name", "tools"}, exclude_none=True
+        )
+    return to_json(
+        {"mcpServers": mcp_servers_json}, exclude_none=True
+    ).decode()
 
 
 def resolve_mcp_servers(
     mcp_servers: Sequence[MCPServerConfig],
 ) -> tuple[list[str], list[str]]:
-    # build servers and allowed tools
+    """Build CLI args and allowed tool patterns for MCP servers."""
     mcp_servers_json: dict[str, dict[str, Any]] = {}
     allowed_tools: list[str] = []
     for mcp_server in mcp_servers:
@@ -326,19 +336,23 @@ def resolve_mcp_servers(
             allowed_tools.append(f"mcp__{mcp_server.name}_*")
         elif isinstance(mcp_server.tools, list):
             allowed_tools.extend(
-                [f"mcp__{mcp_server.name}__{tool}" for tool in mcp_server.tools]
+                [
+                    f"mcp__{mcp_server.name}__{tool}"
+                    for tool in mcp_server.tools
+                ]
             )
         else:
             raise ValueError(
                 f"Unexpected value for mcp server tools: {mcp_server.tools}"
             )
 
-    # map to cli args
     mcp_config_cmds: list[str] = []
     if len(mcp_servers_json) > 0:
         mcp_config_cmds.append("--mcp-config")
         mcp_config_cmds.append(
-            to_json({"mcpServers": mcp_servers_json}, exclude_none=True).decode()
+            to_json(
+                {"mcpServers": mcp_servers_json}, exclude_none=True
+            ).decode()
         )
 
     return mcp_config_cmds, allowed_tools
@@ -349,7 +363,6 @@ def inspect_model(model: str | None) -> str | None:
     if model is not None:
         if model != "inspect" and not model.startswith("inspect/"):
             return f"inspect/{model}"
-
     return model
 
 
@@ -359,11 +372,18 @@ async def run_claude_code_centaur(
     agent_env: dict[str, str],
     state: AgentState,
 ) -> None:
-    instructions = "Claude Code:\n\n - You may also use Claude Code via the 'claude' command.\n - Use 'claude --resume' if you need to resume a previous claude session."
+    """Run Claude Code in centaur (human-in-the-loop) mode."""
+    instructions = (
+        "Claude Code:\n\n"
+        " - You may also use Claude Code via the 'claude' command.\n"
+        " - Use 'claude --resume' if you need to resume a previous session."
+    )
 
-    # build .bashrc content
     agent_env_vars = [f'export {k}="{v}"' for k, v in agent_env.items()]
-    claude_config = """echo '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true}' > "$HOME"/.claude.json"""
+    claude_config = (
+        """echo '{"hasCompletedOnboarding":true,"""
+        """"bypassPermissionsModeAccepted":true}' > "$HOME"/.claude.json"""
+    )
     path_config = [
         'mkdir -p "$HOME/.local/bin"',
         'export PATH="$HOME/.local/bin:$PATH"',
@@ -375,5 +395,4 @@ async def run_claude_code_centaur(
         agent_env_vars + path_config + ["", claude_config, "", alias_cmd]
     )
 
-    # run the human cli
     await run_centaur(options, instructions, bashrc, state)

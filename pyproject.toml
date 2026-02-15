@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect_ai>=0.3.159",
+    "inspect-ai>=0.3.159",
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.11.4",
@@ -20,6 +20,7 @@ dependencies = [
     "sniffio",
     "anyio",
     "typing_extensions>=4.9.0",
+    "agent-client-protocol",
 ]
 
 [project.urls]
@@ -93,8 +94,8 @@ explicit_package_bases = true
 python_executable = ".venv/bin/python"
 
 [tool.uv.sources]
-aisitools = { git = "ssh://git@github.com/AI-Safety-Institute/aisi-inspect-tools" }
 inspect-k8s-sandbox = { git = "https://github.com/UKGovernmentBEIS/inspect_k8s_sandbox.git" }
+inspect-ai = { path = "../inspect_ai", editable = true }
 
 [dependency-groups]
-aisi = ["aisitools", "inspect-k8s-sandbox"]
+aisi = ["inspect-k8s-sandbox"]
