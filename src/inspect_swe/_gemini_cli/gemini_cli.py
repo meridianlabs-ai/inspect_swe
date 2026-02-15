@@ -38,8 +38,8 @@ from .agentbinary import (
 def gemini_cli(
     name: str = "Gemini CLI",
     description: str = dedent("""
-       AI agent powered by Google Gemini for software engineering tasks.
-       Capable of writing, testing, debugging, and iterating on code.
+       Autonomous coding agent capable of writing, testing, debugging,
+       and iterating on code across multiple languages.
     """),
     system_prompt: str | None = None,
     skills: Sequence[str | Path | Skill] | None = None,
