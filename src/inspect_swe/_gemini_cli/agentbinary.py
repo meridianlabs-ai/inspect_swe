@@ -2,6 +2,7 @@ import asyncio
 import json
 import lzma
 import os
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -171,6 +172,12 @@ def _create_bundle(version: str, platform: SandboxPlatform) -> bytes:
     if cache_path.exists():
         with open(cache_path, "rb") as f:
             return f.read()
+
+    if not shutil.which("npm"):
+        raise RuntimeError(
+            "npm is required on the host to bundle gemini-cli for the sandbox. "
+            "Please install Node.js (https://nodejs.org/) and ensure npm is on your PATH."
+        )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create package.json - just the main dependency
