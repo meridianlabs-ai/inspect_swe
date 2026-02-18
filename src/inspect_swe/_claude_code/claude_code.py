@@ -221,14 +221,13 @@ def claude_code(
                     state=state,
                 )
             else:
-                # Pre-seed Claude Code config files in the sandbox.
-                # Claude Code >=2.1 ignores ANTHROPIC_API_KEY and
-                # ANTHROPIC_AUTH_TOKEN env vars, falling into an OAuth
-                # flow that silently fails and exits with rc=0.
-                # Providing an apiKeyHelper in settings.json supplies the
-                # API key through a mechanism Claude Code does honour.
+                # Claude Code 2.1.37 reports "has Authorization header: false"
+                # despite ANTHROPIC_AUTH_TOKEN being set in the environment,
+                # then enters an OAuth flow that silently fails (rc=0, no
+                # output).  Providing an apiKeyHelper in settings.json
+                # supplies a key through a path that does work.
                 api_key = agent_env.get(
-                    "ANTHROPIC_AUTH_TOKEN", "sk-ant-api03-dummy"
+                    "ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge"
                 )
                 await _seed_claude_config(sbox, api_key, user, cwd)
 
