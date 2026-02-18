@@ -221,6 +221,17 @@ def claude_code(
                     state=state,
                 )
             else:
+                # Pre-seed Claude Code config files in the sandbox.
+                # Claude Code >=2.1 ignores ANTHROPIC_API_KEY and
+                # ANTHROPIC_AUTH_TOKEN env vars, falling into an OAuth
+                # flow that silently fails and exits with rc=0.
+                # Providing an apiKeyHelper in settings.json supplies the
+                # API key through a mechanism Claude Code does honour.
+                api_key = agent_env.get(
+                    "ANTHROPIC_AUTH_TOKEN", "sk-ant-api03-dummy"
+                )
+                await _seed_claude_config(sbox, api_key, user, cwd)
+
                 # execute the agent (track debug output)
                 debug_output: list[str] = []
                 agent_prompt = prompt
@@ -310,6 +321,38 @@ def claude_code(
 
     # return agent with specified name and descritpion
     return agent_with(execute, name=name, description=description)
+
+
+async def _seed_claude_config(
+    sbox: Any,
+    api_key: str,
+    user: str | None,
+    cwd: str | None,
+) -> None:
+    """Pre-seed Claude Code config files in the sandbox.
+
+    Writes ~/.claude/settings.json with an apiKeyHelper that echoes the
+    provided API key, and ~/.claude.json with onboarding flags.  This
+    ensures Claude Code authenticates via the bridge proxy rather than
+    attempting an OAuth flow.
+    """
+    await sbox.exec(
+        cmd=[
+            "bash",
+            "-c",
+            'mkdir -p "$HOME/.claude"'
+            " && echo '"
+            '{"apiKeyHelper": "echo ' + api_key + '",'
+            ' "hasCompletedOnboarding": true,'
+            ' "bypassPermissionsModeAccepted": true}'
+            "' > \"$HOME/.claude/settings.json\""
+            " && echo '"
+            '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true}'
+            "' > \"$HOME/.claude.json\"",
+        ],
+        user=user,
+        cwd=cwd,
+    )
 
 
 def resolve_mcp_servers(
