@@ -212,6 +212,16 @@ def claude_code(
                 "IS_SANDBOX": "1",
             } | (env or {})
 
+            # Claude Code 2.1.37 reports "has Authorization header: false"
+            # despite ANTHROPIC_AUTH_TOKEN being set in the environment,
+            # then enters an OAuth flow that silently fails (rc=0, no
+            # output).  Providing an apiKeyHelper in settings.json
+            # supplies a key through a path that does work.
+            api_key = agent_env.get(
+                "ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge"
+            )
+            await _seed_claude_config(sbox, api_key, user, cwd)
+
             # centaur mode uses human_cli with custom instructions and bash rc
             if centaur:
                 await run_claude_code_centaur(
@@ -221,16 +231,6 @@ def claude_code(
                     state=state,
                 )
             else:
-                # Claude Code 2.1.37 reports "has Authorization header: false"
-                # despite ANTHROPIC_AUTH_TOKEN being set in the environment,
-                # then enters an OAuth flow that silently fails (rc=0, no
-                # output).  Providing an apiKeyHelper in settings.json
-                # supplies a key through a path that does work.
-                api_key = agent_env.get(
-                    "ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge"
-                )
-                await _seed_claude_config(sbox, api_key, user, cwd)
-
                 # execute the agent (track debug output)
                 debug_output: list[str] = []
                 agent_prompt = prompt
