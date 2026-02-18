@@ -328,12 +328,11 @@ async def _seed_claude_config(
     user: str | None,
     cwd: str | None,
 ) -> None:
-    """Pre-seed Claude Code config files in the sandbox.
+    """Write ~/.claude/settings.json with an apiKeyHelper.
 
-    Writes ~/.claude/settings.json with an apiKeyHelper that echoes the
-    provided API key, and ~/.claude.json with onboarding flags.  This
-    ensures Claude Code authenticates via the bridge proxy rather than
-    attempting an OAuth flow.
+    Claude Code 2.1.37 does not use ANTHROPIC_AUTH_TOKEN from the
+    environment for API requests.  Providing an apiKeyHelper in
+    settings.json supplies the key through a path it does use.
     """
     await sbox.exec(
         cmd=[
@@ -341,13 +340,8 @@ async def _seed_claude_config(
             "-c",
             'mkdir -p "$HOME/.claude"'
             " && echo '"
-            '{"apiKeyHelper": "echo ' + api_key + '",'
-            ' "hasCompletedOnboarding": true,'
-            ' "bypassPermissionsModeAccepted": true}'
-            "' > \"$HOME/.claude/settings.json\""
-            " && echo '"
-            '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true}'
-            "' > \"$HOME/.claude.json\"",
+            '{"apiKeyHelper": "echo ' + api_key + '"}'
+            "' > \"$HOME/.claude/settings.json\"",
         ],
         user=user,
         cwd=cwd,
