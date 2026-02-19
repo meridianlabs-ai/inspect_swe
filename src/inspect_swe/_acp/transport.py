@@ -1,13 +1,13 @@
 """Transport bridge: ExecRemoteProcess <-> asyncio.StreamReader/StreamWriter.
 
-Follows the exact pattern from ``acp.stdio._WritePipeProtocol`` and
-``acp.stdio._StdoutTransport`` to create synthetic streams that satisfy
-the ``isinstance`` check in ``ClientSideConnection.__init__``.
+Mirrors the ``acp.stdio`` transport pattern so the synthetic streams
+pass ``ClientSideConnection.__init__``'s type checks.
 """
 
 import asyncio
 import logging
 from asyncio import transports as aio_transports
+from asyncio.streams import FlowControlMixin
 from typing import cast
 
 from inspect_ai.util._sandbox.exec_remote import (
@@ -20,33 +20,6 @@ from inspect_ai.util._sandbox.exec_remote import (
 logger = logging.getLogger(__name__)
 
 
-class _WritePipeProtocol(asyncio.BaseProtocol):
-    """Handles ``drain()`` flow control.
-
-    Same logic as ``acp.stdio._WritePipeProtocol``.
-    """
-
-    def __init__(self) -> None:
-        self._loop = asyncio.get_running_loop()
-        self._paused = False
-        self._drain_waiter: asyncio.Future[None] | None = None
-
-    def pause_writing(self) -> None:
-        self._paused = True
-        if self._drain_waiter is None:
-            self._drain_waiter = self._loop.create_future()
-
-    def resume_writing(self) -> None:
-        self._paused = False
-        if self._drain_waiter is not None and not self._drain_waiter.done():
-            self._drain_waiter.set_result(None)
-        self._drain_waiter = None
-
-    async def _drain_helper(self) -> None:
-        if self._paused and self._drain_waiter is not None:
-            await self._drain_waiter
-
-
 class _WriteStdinTransport(asyncio.BaseTransport):
     """Routes ``StreamWriter.write()`` to ``proc.write_stdin()`` via an async queue."""
 
@@ -57,45 +30,55 @@ class _WriteStdinTransport(asyncio.BaseTransport):
         self._closing = False
         self._task = asyncio.create_task(self._flush_loop())
 
-    def write(self, data: bytes) -> None:  # type: ignore[override]
+    def write(self, data: bytes) -> None:
         if not self._closing:
-            logger.debug("STDIN write (%d bytes): %s", len(data), data[:500])
             self._queue.put_nowait(data)
 
     async def _flush_loop(self) -> None:
-        while True:
-            data = await self._queue.get()
-            if data is None:
-                break
-            await self._proc.write_stdin(data)
+        try:
+            while True:
+                data = await self._queue.get()
+                if data is None:
+                    break
+                await self._proc.write_stdin(data)
+        except Exception:
+            logger.exception("ACP stdin flush loop failed")
+            self._closing = True
 
-    def is_closing(self) -> bool:  # type: ignore[override]
+    def is_closing(self) -> bool:
         return self._closing
 
-    def close(self) -> None:  # type: ignore[override]
+    def close(self) -> None:
         self._closing = True
         self._queue.put_nowait(None)
 
-    def get_extra_info(self, name: str, default: object = None) -> object:  # type: ignore[override]
+    def get_extra_info(self, name: str, default: object = None) -> object:
         return default
+
+
+class ErrorInfo:
+    """Exit code and stderr collected from an ``ExecRemoteProcess``."""
+
+    def __init__(self) -> None:
+        self.exit_code: int | None = None
+        self.stderr: str = ""
+
+    def summary(self) -> str:
+        """Human-readable summary of the process exit."""
+        parts = [f"exit_code={self.exit_code}"]
+        if self.stderr:
+            parts.append(f"stderr:\n{self.stderr}")
+        return "\n".join(parts)
 
 
 async def create_exec_remote_streams(
     proc: ExecRemoteProcess,
-) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, asyncio.Task[None]]:
-    """Create a ``StreamReader``/``StreamWriter`` pair bridged to *proc*.
-
-    Returns ``(reader, writer, feeder_task)``.
-
-    * **reader** receives data from the agent's stdout (via ``StdoutChunk`` events).
-    * **writer** sends data to the agent's stdin (via ``proc.write_stdin()``).
-    * **feeder_task** is a background task that reads ``StdoutChunk`` events
-      and feeds them into *reader*.  The caller should cancel it on cleanup.
-    """
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, asyncio.Task[None], ErrorInfo]:
+    """Create ``StreamReader``/``StreamWriter`` bridged to *proc*'s stdin/stdout."""
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader()
 
-    protocol = _WritePipeProtocol()
+    protocol = FlowControlMixin()
     transport = _WriteStdinTransport(proc)
     writer = asyncio.StreamWriter(
         cast(aio_transports.WriteTransport, transport),
@@ -104,18 +87,32 @@ async def create_exec_remote_streams(
         loop,
     )
 
+    info = ErrorInfo()
+
     async def _feed_stdout() -> None:
-        logger.debug("_feed_stdout: starting event loop on proc")
-        async for event in proc:
-            if isinstance(event, StdoutChunk):
-                logger.debug("STDOUT chunk (%d chars): %s", len(event.data), event.data[:500])
-                reader.feed_data(event.data.encode())
-            elif isinstance(event, StderrChunk):
-                logger.debug("ACP stderr: %s", event.data.rstrip())
-            elif isinstance(event, Completed):
-                logger.debug("Process completed (exit=%s)", getattr(event, 'returncode', '?'))
-                reader.feed_eof()
-        logger.debug("_feed_stdout: event loop ended")
+        stderr_parts: list[str] = []
+        try:
+            async for event in proc:
+                if isinstance(event, StdoutChunk):
+                    reader.feed_data(event.data.encode())
+                elif isinstance(event, StderrChunk):
+                    stderr_parts.append(event.data)
+                    logger.warning("ACP stderr: %s", event.data.rstrip())
+                elif isinstance(event, Completed):
+                    info.exit_code = event.exit_code
+                    if event.exit_code != 0:
+                        logger.warning(
+                            "ACP process exited with code %d",
+                            event.exit_code,
+                        )
+                        raise RuntimeError(
+                            f"ACP process exited with code {event.exit_code}"
+                        )
+                    else:
+                        logger.debug("ACP process completed successfully")
+        finally:
+            info.stderr = "".join(stderr_parts)
+            reader.feed_eof()
 
     feeder = asyncio.create_task(_feed_stdout())
-    return reader, writer, feeder
+    return reader, writer, feeder, info
