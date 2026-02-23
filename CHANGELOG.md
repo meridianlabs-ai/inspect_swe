@@ -1,6 +1,9 @@
 ## Unreleased
 
+- Sandbox: Use `exec_remote()` interface for impoved robustness of long running processes.
 - Gemini CLI: New `gemini_cli()` agent for Google Gemini.
+- Claude Code: Remove `retry_timeouts` options (not longer necessary due to use of `exec_remote()`).
+- Claude Code: Add `debug` option to enable `--debug` and `--verbose` CLI flags.
 
 ## 0.2.34 (10 February 2026)
 
