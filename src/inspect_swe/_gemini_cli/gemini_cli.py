@@ -19,6 +19,7 @@ from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
+from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
@@ -212,13 +213,16 @@ def gemini_cli(
                     agent_cmd.append(agent_prompt)
 
                     # run agent
-                    result = await sbox.exec(
+                    result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
-                        cwd=cwd,
-                        env=agent_env,
-                        user=user,
-                        concurrency=False,
+                        options=ExecRemoteAwaitableOptions(
+                            cwd=cwd,
+                            env=agent_env,
+                            user=user,
+                            concurrency=False,
+                        ),
+                        stream=False,
                     )
 
                     # track debug output

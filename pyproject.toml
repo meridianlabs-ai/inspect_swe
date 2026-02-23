@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect-ai>=0.3.159",
+    "inspect-ai>=0.3.180",
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.11.4",
@@ -42,6 +42,7 @@ dev = [
     "pytest-dotenv",
     "types-PyYAML",
     "IPython",
+    "inspect_k8s_sandbox"
 ]
 doc = ["quarto-cli==1.7.31"]
 
@@ -92,10 +93,3 @@ mypy_path = "src"
 namespace_packages = true
 explicit_package_bases = true
 python_executable = ".venv/bin/python"
-
-[tool.uv.sources]
-inspect-k8s-sandbox = { git = "https://github.com/UKGovernmentBEIS/inspect_k8s_sandbox.git" }
-inspect-ai = { path = "../inspect_ai", editable = true }
-
-[dependency-groups]
-aisi = ["inspect-k8s-sandbox"]

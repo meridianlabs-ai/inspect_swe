@@ -18,6 +18,7 @@ from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import SandboxEnvironment, store
 from inspect_ai.util import sandbox as sandbox_env
+from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
@@ -267,12 +268,13 @@ def codex_cli(
                         agent_cmd.extend(["resume", "--last"])
 
                     # run agent
-                    result = await sbox.exec(
+                    result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
-                        cwd=cwd,
-                        env=agent_env,
-                        user=user,
+                        options=ExecRemoteAwaitableOptions(
+                            cwd=cwd, env=agent_env, user=user, concurrency=False
+                        ),
+                        stream=False,
                     )
 
                     # record output for debug

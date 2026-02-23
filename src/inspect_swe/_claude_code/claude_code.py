@@ -4,7 +4,6 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
 
-import anyio
 from inspect_ai.agent import (
     Agent,
     AgentAttempts,
@@ -19,6 +18,7 @@ from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
+from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 from pydantic_core import to_json
 
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
@@ -53,10 +53,10 @@ def claude_code(
     subagent_model: str | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
-    retry_timeouts: int | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
+    debug: bool | None = None,
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
 ) -> Agent:
@@ -90,10 +90,10 @@ def claude_code(
         subagent_model: The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`.
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
-        retry_timeouts: Should timeouts be retried? (pass number of times to retry)
         cwd: Working directory to run claude code within.
         env: Environment variables to set for claude code.
         user: User to execute claude code with.
+        debug: Add `--debug` and `--verbose` cli flags.
         sandbox: Optional sandbox environment name.
         version: Version of claude code to use. One of:
             - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
@@ -150,13 +150,14 @@ def claude_code(
 
             # add interactive options if not running as centaur
             if centaur is False:
-                cmd.extend(
-                    [
-                        "--print",
-                        "--debug",
-                        "--verbose",
-                    ]
-                )
+                cmd.append("--print")
+                if debug:
+                    cmd.extend(
+                        [
+                            "--debug",
+                            "--verbose",
+                        ]
+                    )
 
             # system prompt
             system_messages = [
@@ -213,6 +214,14 @@ def claude_code(
                 "IS_SANDBOX": "1",
             } | (env or {})
 
+            # Claude Code 2.1.37 reports "has Authorization header: false"
+            # despite ANTHROPIC_AUTH_TOKEN being set in the environment,
+            # then enters an OAuth flow that silently fails (rc=0, no
+            # output).  Providing an apiKeyHelper in settings.json
+            # supplies a key through a path that does work.
+            api_key = agent_env.get("ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge")
+            await _seed_claude_config(sbox, api_key, user, cwd)
+
             # centaur mode uses human_cli with custom instructions and bash rc
             if centaur:
                 await run_claude_code_centaur(
@@ -241,13 +250,16 @@ def claude_code(
                         )
 
                     # run agent
-                    result = await sbox.exec(
+                    result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
-                        cwd=cwd,
-                        env=agent_env,
-                        user=user,
-                        concurrency=False,
+                        options=ExecRemoteAwaitableOptions(
+                            cwd=cwd,
+                            env=agent_env,
+                            user=user,
+                            concurrency=False,
+                        ),
+                        stream=False,
                     )
 
                     # track debug output
@@ -256,21 +268,6 @@ def claude_code(
 
                     # raise for error
                     if not result.success:
-                        # see if this is a timeout and we are retrying timeouts
-                        if (
-                            "request timed out"
-                            in (result.stdout.lower() + result.stderr.lower())
-                            and retry_timeouts is not None
-                            and timeout_count < retry_timeouts
-                        ):
-                            timeout_count += 1
-                            delay = min(2**timeout_count, 60)
-                            trace(
-                                f"Retrying timed out request (retry {timeout_count}, waiting {delay} seconds)."
-                            )
-                            await anyio.sleep(delay)
-                            continue
-
                         raise RuntimeError(
                             f"Error executing claude code agent {result.returncode}: {result.stdout}\n{result.stderr}"
                         )
@@ -311,6 +308,32 @@ def claude_code(
 
     # return agent with specified name and descritpion
     return agent_with(execute, name=name, description=description)
+
+
+async def _seed_claude_config(
+    sbox: Any,
+    api_key: str,
+    user: str | None,
+    cwd: str | None,
+) -> None:
+    """Write ~/.claude/settings.json with an apiKeyHelper.
+
+    Claude Code 2.1.37 does not use ANTHROPIC_AUTH_TOKEN from the
+    environment for API requests.  Providing an apiKeyHelper in
+    settings.json supplies the key through a path it does use.
+    """
+    await sbox.exec(
+        cmd=[
+            "bash",
+            "-c",
+            'mkdir -p "$HOME/.claude"'
+            " && echo '"
+            '{"apiKeyHelper": "echo ' + api_key + '"}'
+            '\' > "$HOME/.claude/settings.json"',
+        ],
+        user=user,
+        cwd=cwd,
+    )
 
 
 def resolve_mcp_servers(
