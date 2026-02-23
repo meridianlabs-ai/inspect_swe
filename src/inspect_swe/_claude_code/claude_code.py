@@ -213,6 +213,16 @@ def claude_code(
                 "IS_SANDBOX": "1",
             } | (env or {})
 
+            # Claude Code 2.1.37 reports "has Authorization header: false"
+            # despite ANTHROPIC_AUTH_TOKEN being set in the environment,
+            # then enters an OAuth flow that silently fails (rc=0, no
+            # output).  Providing an apiKeyHelper in settings.json
+            # supplies a key through a path that does work.
+            api_key = agent_env.get(
+                "ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge"
+            )
+            await _seed_claude_config(sbox, api_key, user, cwd)
+
             # centaur mode uses human_cli with custom instructions and bash rc
             if centaur:
                 await run_claude_code_centaur(
@@ -299,6 +309,32 @@ def claude_code(
 
     # return agent with specified name and descritpion
     return agent_with(execute, name=name, description=description)
+
+
+async def _seed_claude_config(
+    sbox: Any,
+    api_key: str,
+    user: str | None,
+    cwd: str | None,
+) -> None:
+    """Write ~/.claude/settings.json with an apiKeyHelper.
+
+    Claude Code 2.1.37 does not use ANTHROPIC_AUTH_TOKEN from the
+    environment for API requests.  Providing an apiKeyHelper in
+    settings.json supplies the key through a path it does use.
+    """
+    await sbox.exec(
+        cmd=[
+            "bash",
+            "-c",
+            'mkdir -p "$HOME/.claude"'
+            " && echo '"
+            '{"apiKeyHelper": "echo ' + api_key + '"}'
+            "' > \"$HOME/.claude/settings.json\"",
+        ],
+        user=user,
+        cwd=cwd,
+    )
 
 
 def resolve_mcp_servers(
