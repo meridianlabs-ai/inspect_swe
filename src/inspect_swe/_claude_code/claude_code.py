@@ -218,9 +218,7 @@ def claude_code(
             # then enters an OAuth flow that silently fails (rc=0, no
             # output).  Providing an apiKeyHelper in settings.json
             # supplies a key through a path that does work.
-            api_key = agent_env.get(
-                "ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge"
-            )
+            api_key = agent_env.get("ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge")
             await _seed_claude_config(sbox, api_key, user, cwd)
 
             # centaur mode uses human_cli with custom instructions and bash rc
@@ -330,7 +328,7 @@ async def _seed_claude_config(
             'mkdir -p "$HOME/.claude"'
             " && echo '"
             '{"apiKeyHelper": "echo ' + api_key + '"}'
-            "' > \"$HOME/.claude/settings.json\"",
+            '\' > "$HOME/.claude/settings.json"',
         ],
         user=user,
         cwd=cwd,

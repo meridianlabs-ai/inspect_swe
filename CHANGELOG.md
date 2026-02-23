@@ -4,6 +4,7 @@
 - Sandbox: Use `exec_remote()` interface for impoved robustness of long running processes.
 - Claude Code: Remove `retry_timeouts` options (not longer necessary due to use of `exec_remote()`).
 - Claude Code: Add `debug` option to enable `--debug` and `--verbose` CLI flags.
+- Claude Code: Pre-seed auth token config to fix silent auth failure in sandbox.
 
 ## 0.2.34 (10 February 2026)
 
