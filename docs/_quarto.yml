@@ -12,20 +12,22 @@ website:
         menu:
            - href: claude_code.qmd
            - href: codex_cli.qmd
+           - href: gemini_cli.qmd
     right:
       - text: Changelog
         href: CHANGELOG.md
       - icon: github
         href: https://github.com/meridianlabs-ai/inspect_swe
         aria-label: GitHub
-  sidebar: 
+  sidebar:
      - contents:
         - text: Getting Started
           href: index.qmd
         - section: Agents
-          contents: 
+          contents:
             - href: claude_code.qmd
             - href: codex_cli.qmd
+            - href: gemini_cli.qmd
 
 format:
   html:

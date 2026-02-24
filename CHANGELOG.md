@@ -1,6 +1,26 @@
-## Unreleased
+## 0.2.36 (23 February 2026)
 
+- Gemini CLI: New `gemini_cli()` agent for Google Gemini.
+- Sandbox: Use `exec_remote()` interface for impoved robustness of long running processes.
+- Claude Code: Remove `retry_timeouts` options (not longer necessary due to use of `exec_remote()`).
+- Claude Code: Add `debug` option to enable `--debug` and `--verbose` CLI flags.
+- Claude Code: Pre-seed auth token config to fix silent auth failure in sandbox.
+
+## 0.2.34 (10 February 2026)
+
+- Agent execution: Redirect stdin using `exec 0</dev/null;`
+- Agent execution: Print returncode for failed processes.
+
+## 0.2.33 (10 February 2026)
+
+- Claude Code: Look for request timeout errors in stdout as well as stderr.
+- Claude Code: Restore default "auto" version behavior (download latest stable version).
+
+## 0.2.32 (31 January 2026)
+
+- Claude Code: Set "auto" version to 2.1.3 (which avoids a not yet fixed compaction bug with gateways).
 - Claude Code: Add `retry_timeouts` option for retrying "Request timed out" errors a configurable number of times.
+- Claude Code: Add CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS environment variable.
 
 ## 0.2.31 (03 January 2026)
 

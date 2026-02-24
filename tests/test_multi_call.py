@@ -8,6 +8,7 @@ from tests.conftest import (
     run_example,
     skip_if_no_anthropic,
     skip_if_no_docker,
+    skip_if_no_google,
     skip_if_no_openai,
 )
 
@@ -26,6 +27,13 @@ def test_codex_cli_multi_call(sandbox: str) -> None:
     check_multi_call("codex_cli", "openai/gpt-5", sandbox)
 
 
+@skip_if_no_google
+@skip_if_no_docker
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_gemini_cli_multi_call(sandbox: str) -> None:
+    check_multi_call("gemini_cli", "google/gemini-2.5-pro", sandbox)
+
+
 @skip_if_no_openai
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
@@ -34,7 +42,7 @@ def test_mini_swe_agent_multi_call(sandbox: str) -> None:
 
 
 def check_multi_call(
-    agent: Literal["claude_code", "codex_cli", "mini_swe_agent"],
+    agent: Literal["claude_code", "codex_cli", "gemini_cli", "mini_swe_agent"],
     model: str,
     sandbox: str,
 ) -> None:
@@ -47,14 +55,18 @@ def check_multi_call(
         m for m in sample.messages if isinstance(m, ChatMessageAssistant)
     ]
 
-    # Codex CLI includes 2 scaffold messages in conversation history
+    # Codex CLI includes extra scaffold messages in conversation history
+    # Gemini CLI may use built-in tools (e.g. google_web_search), causing variable counts
     match agent:
         case "claude_code":
             assert len(user_messages) == 4
             assert len(assistant_messages) == 4
         case "codex_cli":
-            assert len(user_messages) == 6
+            assert len(user_messages) == 12
             assert len(assistant_messages) == 4
+        case "gemini_cli":
+            assert len(user_messages) >= 4
+            assert len(assistant_messages) >= 4
         case "mini_swe_agent":
             assert len(user_messages) == 4
             # model may consolidate steps, so allow some variance

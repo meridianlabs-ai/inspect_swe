@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect_ai>=0.3.159",
+    "inspect_ai>=0.3.180",
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.11.4",
@@ -42,6 +42,7 @@ dev = [
     "types-PyYAML",
     "IPython",
     "inspect-evals",
+    "inspect_k8s_sandbox"
 ]
 doc = ["quarto-cli==1.7.31"]
 
@@ -92,10 +93,3 @@ mypy_path = "src"
 namespace_packages = true
 explicit_package_bases = true
 python_executable = ".venv/bin/python"
-
-[tool.uv.sources]
-aisitools = { git = "ssh://git@github.com/AI-Safety-Institute/aisi-inspect-tools" }
-inspect-k8s-sandbox = { git = "https://github.com/UKGovernmentBEIS/inspect_k8s_sandbox.git" }
-
-[dependency-groups]
-aisi = ["aisitools", "inspect-k8s-sandbox"]

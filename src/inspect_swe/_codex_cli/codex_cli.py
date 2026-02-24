@@ -18,6 +18,7 @@ from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import SandboxEnvironment, store
 from inspect_ai.util import sandbox as sandbox_env
+from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
@@ -78,7 +79,7 @@ def codex_cli(
             tools available to the agent running in the sandbox.
         disallowed_tools: Optionally disallow tools (currently only web_search).
         centaur: Run in 'centaur' mode, which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended.
-        attempts: Configure agent to make multiple attempts.
+        attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
@@ -267,11 +268,13 @@ def codex_cli(
                         agent_cmd.extend(["resume", "--last"])
 
                     # run agent
-                    result = await sbox.exec(
-                        cmd=["bash", "-c", 'exec 0<&- "$@"', "bash"] + agent_cmd,
-                        cwd=cwd,
-                        env=agent_env,
-                        user=user,
+                    result = await sbox.exec_remote(
+                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
+                        + agent_cmd,
+                        options=ExecRemoteAwaitableOptions(
+                            cwd=cwd, env=agent_env, user=user, concurrency=False
+                        ),
+                        stream=False,
                     )
 
                     # record output for debug
@@ -281,7 +284,7 @@ def codex_cli(
                     # raise for error
                     if not result.success:
                         raise RuntimeError(
-                            f"Error executing codex cli agent: {result.stdout}\n{result.stderr}"
+                            f"Error executing codex cli agent {result.returncode}: {result.stdout}\n{result.stderr}"
                         )
 
                     # exit if we are at max_attempts
