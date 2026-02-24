@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.37 (24 February 2026)
 
 - Claude Code: Capture `stream-json` output to create agent spans within transcript.
 
