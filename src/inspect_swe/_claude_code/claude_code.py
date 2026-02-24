@@ -1,5 +1,7 @@
+import json
 import shlex
 import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
@@ -13,14 +15,21 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
+from inspect_ai.event import ModelEvent
+from inspect_ai.log import transcript
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
-from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
+from inspect_ai.util._sandbox import (
+    ExecRemoteEvent,
+    ExecRemoteProcess,
+    ExecRemoteStreamingOptions,
+)
 from pydantic_core import to_json
 
+from inspect_swe._claude_code._events import claude_code_events
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.path import join_path
 
@@ -29,6 +38,39 @@ from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.messages import build_user_prompt
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
+
+
+async def _jsonl_stream(
+    proc: ExecRemoteProcess,
+    debug_output: list[str],
+) -> AsyncIterator[dict[str, Any]]:
+    """Line-buffer stdout chunks from exec_remote, yield parsed JSONL dicts."""
+    line_buffer = ""
+    exit_code = 0
+    async for event in proc:
+        match event:
+            case ExecRemoteEvent.Stdout(data=data):
+                line_buffer += data
+                while "\n" in line_buffer:
+                    line, line_buffer = line_buffer.split("\n", 1)
+                    line = line.strip()
+                    if line:
+                        try:
+                            yield json.loads(line)
+                        except json.JSONDecodeError:
+                            debug_output.append(f"JSONL parse error: {line}")
+            case ExecRemoteEvent.Stderr(data=data):
+                debug_output.append(data)
+            case ExecRemoteEvent.Completed(exit_code=code):
+                exit_code = code
+    # Handle trailing partial line
+    if line_buffer.strip():
+        try:
+            yield json.loads(line_buffer.strip())
+        except json.JSONDecodeError:
+            debug_output.append(f"JSONL parse error (trailing): {line_buffer}")
+    if exit_code != 0:
+        raise RuntimeError(f"Error executing claude code agent {exit_code}")
 
 
 @agent
@@ -149,7 +191,7 @@ def claude_code(
 
             # add interactive options if not running as centaur
             if centaur is False:
-                cmd.append("--print")
+                cmd.extend(["--print", "--output-format", "stream-json"])
                 if debug:
                     cmd.extend(
                         [
@@ -249,27 +291,28 @@ def claude_code(
                         )
 
                     # run agent
-                    result = await sbox.exec_remote(
+                    proc = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
-                        options=ExecRemoteAwaitableOptions(
+                        options=ExecRemoteStreamingOptions(
                             cwd=cwd,
                             env=agent_env,
                             user=user,
                             concurrency=False,
                         ),
-                        stream=False,
                     )
-
-                    # track debug output
-                    debug_output.append(result.stdout)
-                    debug_output.append(result.stderr)
-
-                    # raise for error
-                    if not result.success:
-                        raise RuntimeError(
-                            f"Error executing claude code agent {result.returncode}: {result.stdout}\n{result.stderr}"
-                        )
+                    try:
+                        async for event in claude_code_events(
+                            _jsonl_stream(proc, debug_output)
+                        ):
+                            # Skip ModelEvents — the bridge already emits them
+                            # to the transcript. Parts 4-5 will add merge logic
+                            # to replace JSONL ModelEvents with richer bridge
+                            # ModelEvents while preserving span context.
+                            if not isinstance(event, ModelEvent):
+                                transcript()._event(event)
+                    finally:
+                        await proc.kill()
 
                     # reset timeout counter
                     timeout_count = 0
