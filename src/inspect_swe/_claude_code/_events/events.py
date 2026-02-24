@@ -940,6 +940,7 @@ async def _create_tool_span_events(
             tool_timestamp,
             completed=result_timestamp,
         )
+        tool_event.span_id = tool_span_id
         events.append(tool_event)
 
         events.append(to_span_end_event(tool_span_id, result_timestamp))
@@ -969,6 +970,9 @@ async def _load_agent_events(
     Returns:
         List of Scout events from the agent session
     """
+    if max_depth <= 0:
+        return []
+
     raw_events: list[dict[str, Any]] | None = None
 
     # Use stream-provided events (inline subagent events from stdout).
