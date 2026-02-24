@@ -44,6 +44,7 @@ from inspect_swe._util.path import join_path
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.messages import build_user_prompt
+from .._util.model import inspect_model
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 
@@ -382,15 +383,6 @@ def resolve_mcp_servers(
         )
 
     return mcp_config_cmds, allowed_tools
-
-
-def inspect_model(model: str | None) -> str | None:
-    """Ensure that model name is prefaced with 'inspect/'."""
-    if model is not None:
-        if model != "inspect" and not model.startswith("inspect/"):
-            return f"inspect/{model}"
-
-    return model
 
 
 async def run_claude_code_centaur(
