@@ -2,6 +2,7 @@ import json
 import shlex
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
@@ -31,6 +32,7 @@ from pydantic_core import to_json
 
 from inspect_swe._claude_code._events import claude_code_events
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.events import capture_model_events
 from inspect_swe._util.path import join_path
 
 from .._util._async import is_callable_coroutine
@@ -166,14 +168,20 @@ def claude_code(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
-        async with sandbox_agent_bridge(
-            state,
-            model=model,
-            filter=filter,
-            retry_refusals=retry_refusals,
-            port=port,
-            bridged_tools=bridged_tools,
-        ) as bridge:
+        bridge_event_ctx = (
+            nullcontext(lambda _: None) if centaur else capture_model_events()
+        )
+        async with (
+            sandbox_agent_bridge(
+                state,
+                model=model,
+                filter=filter,
+                retry_refusals=retry_refusals,
+                port=port,
+                bridged_tools=bridged_tools,
+            ) as bridge,
+            bridge_event_ctx as apply_bridge_event,
+        ):
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
                 claude_code_binary_source(), version, user, sandbox_env(sandbox)
@@ -305,11 +313,9 @@ def claude_code(
                         async for event in claude_code_events(
                             _jsonl_stream(proc, debug_output)
                         ):
-                            # Skip ModelEvents — the bridge already emits them
-                            # to the transcript. Parts 4-5 will add merge logic
-                            # to replace JSONL ModelEvents with richer bridge
-                            # ModelEvents while preserving span context.
-                            if not isinstance(event, ModelEvent):
+                            if isinstance(event, ModelEvent):
+                                apply_bridge_event(event)
+                            else:
                                 transcript()._event(event)
                     finally:
                         await proc.kill()
