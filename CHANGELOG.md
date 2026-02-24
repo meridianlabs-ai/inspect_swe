@@ -1,3 +1,7 @@
+## Unreleased
+
+- Claude Code: Capture `stream-json` output to create agent spans within transcript.
+
 ## 0.2.36 (23 February 2026)
 
 - Gemini CLI: New `gemini_cli()` agent for Google Gemini.
