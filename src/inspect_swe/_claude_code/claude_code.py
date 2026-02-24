@@ -21,10 +21,16 @@ from inspect_ai.log import transcript
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
-from inspect_ai.util import sandbox as sandbox_env
-from inspect_ai.util import store
+from inspect_ai.util import (
+    ExecCompleted,
+    ExecStderr,
+    ExecStdout,
+    store,
+)
+from inspect_ai.util import (
+    sandbox as sandbox_env,
+)
 from inspect_ai.util._sandbox import (
-    ExecRemoteEvent,
     ExecRemoteProcess,
     ExecRemoteStreamingOptions,
 )
@@ -50,21 +56,20 @@ async def _jsonl_stream(
     line_buffer = ""
     exit_code = 0
     async for event in proc:
-        match event:
-            case ExecRemoteEvent.Stdout(data=data):
-                line_buffer += data
-                while "\n" in line_buffer:
-                    line, line_buffer = line_buffer.split("\n", 1)
-                    line = line.strip()
-                    if line:
-                        try:
-                            yield json.loads(line)
-                        except json.JSONDecodeError:
-                            debug_output.append(f"JSONL parse error: {line}")
-            case ExecRemoteEvent.Stderr(data=data):
-                debug_output.append(data)
-            case ExecRemoteEvent.Completed(exit_code=code):
-                exit_code = code
+        if isinstance(event, ExecStdout):
+            line_buffer += event.data
+            while "\n" in line_buffer:
+                line, line_buffer = line_buffer.split("\n", 1)
+                line = line.strip()
+                if line:
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        debug_output.append(f"JSONL parse error: {line}")
+        elif isinstance(event, ExecStderr):
+            debug_output.append(event.data)
+        elif isinstance(event, ExecCompleted):
+            exit_code = event.exit_code
     # Handle trailing partial line
     if line_buffer.strip():
         try:
