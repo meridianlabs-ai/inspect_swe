@@ -93,3 +93,10 @@ mypy_path = "src"
 namespace_packages = true
 explicit_package_bases = true
 python_executable = ".venv/bin/python"
+
+
+[tool.uv.sources]
+inspect-k8s-sandbox = { git = "https://github.com/UKGovernmentBEIS/inspect_k8s_sandbox.git" }
+
+[dependency-groups]
+aisi = ["inspect-k8s-sandbox"]

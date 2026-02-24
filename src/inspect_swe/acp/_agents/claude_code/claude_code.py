@@ -8,19 +8,15 @@ from pathlib import Path
 from inspect_ai.agent import AgentState, agent, sandbox_agent_bridge
 from inspect_ai.model import Model, get_model
 from inspect_ai.tool import Skill, install_skills, read_skills
-from inspect_ai.util import SandboxEnvironment
+from inspect_ai.util import ExecRemoteProcess, ExecRemoteStreamingOptions
 from inspect_ai.util import sandbox as sandbox_env
-from inspect_ai.util._sandbox.exec_remote import (
-    ExecRemoteProcess,
-    ExecRemoteStreamingOptions,
-)
 from typing_extensions import Unpack
 
-from inspect_swe._acp import ACPAgent
-from inspect_swe._acp.agent import ACPAgentParams
 from inspect_swe._util.path import join_path
+from inspect_swe.acp import ACPAgent
+from inspect_swe.acp.agent import ACPAgentParams
 
-from .._util.messages import build_user_prompt
+from .agentbinary import ensure_claude_code_acp_setup
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +76,11 @@ class ClaudeCode(ACPAgent):
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
         ) as bridge:
-            # Ensure claude-code-acp is available in the sandbox.
-            await _ensure_claude_code_acp_installed(sbox, self.user)
+            # Install node and claude-code-acp in the sandbox.
+            acp_binary, node_binary = await ensure_claude_code_acp_setup(
+                sbox, self.user
+            )
+            node_dir = str(Path(node_binary).parent)
 
             # Use canonical model names — the bridge resolves them via
             # model_aliases to Model instances directly.
@@ -117,6 +116,7 @@ class ClaudeCode(ACPAgent):
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                 "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
                 "IS_SANDBOX": "1",
+                "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
             } | self.env
 
             # System prompt via env (the ACP adapter will forward to CC)
@@ -138,7 +138,7 @@ class ClaudeCode(ACPAgent):
             # Start ACP adapter process
             logger.info("Starting claude-code-acp adapter...")
             proc = await sbox.exec_remote(
-                cmd=["claude-code-acp"],
+                cmd=[acp_binary],
                 options=ExecRemoteStreamingOptions(
                     stdin_open=True,
                     cwd=self.cwd,
@@ -149,11 +149,6 @@ class ClaudeCode(ACPAgent):
 
             yield proc, bridge
 
-    def _build_prompt(self, state: AgentState) -> str:
-        """Build prompt from state messages using Claude Code's format."""
-        prompt, _ = build_user_prompt(state.messages)
-        return prompt
-
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -161,7 +156,7 @@ class ClaudeCode(ACPAgent):
 
 
 @agent(name="Claude Code")
-def claude_code_acp(
+def interactive_claude_code(
     *,
     # Claude-specific
     disallowed_tools: list[str] | None = None,
@@ -176,7 +171,7 @@ def claude_code_acp(
     """Claude Code agent via ACP.
 
     Uses the ``claude-code-acp`` adapter in a sandbox.  Supports
-    interactive multi-turn sessions and mid-turn interrupts.
+    multi-turn sessions and mid-turn interrupts.
 
     Args:
         disallowed_tools: Tool names to disallow.
@@ -196,38 +191,3 @@ def claude_code_acp(
         subagent_model=subagent_model,
         **kwargs,
     )
-
-
-# ---------------------------------------------------------------------------
-# ACP adapter installation
-# ---------------------------------------------------------------------------
-
-_ACP_ADAPTER_PACKAGE = "@zed-industries/claude-code-acp"
-
-
-async def _ensure_claude_code_acp_installed(
-    sbox: SandboxEnvironment,
-    user: str | None = None,
-) -> None:
-    """Ensure ``claude-code-acp`` is available in the sandbox.
-
-    Checks if the binary is already on ``$PATH``.  If not, installs
-    the ``@zed-industries/claude-code-acp`` npm package globally.
-    """
-    result = await sbox.exec(["bash", "-c", "which claude-code-acp"], user=user)
-    if result.success:
-        logger.info("claude-code-acp already installed: %s", result.stdout.strip())
-        return
-
-    # TODO: get node stuff form gemini
-
-    logger.info("Installing %s in sandbox...", _ACP_ADAPTER_PACKAGE)
-    install_result = await sbox.exec(
-        ["bash", "-c", f"npm install -g {_ACP_ADAPTER_PACKAGE}"],
-        user="root",
-    )
-    if not install_result.success:
-        raise RuntimeError(
-            f"Failed to install {_ACP_ADAPTER_PACKAGE}: {install_result.stderr}"
-        )
-    logger.info("Installed %s successfully", _ACP_ADAPTER_PACKAGE)

@@ -35,7 +35,7 @@ from acp.schema import (
     WaitForTerminalExitResponse,
     WriteTextFileResponse,
 )
-from inspect_ai.util._sandbox.exec_remote import ExecRemoteProcess
+from inspect_ai.util import ExecRemoteProcess
 
 from .transport import ErrorInfo, create_exec_remote_streams
 
