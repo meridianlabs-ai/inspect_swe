@@ -1,4 +1,8 @@
-## 0.2.35 (23 February 2026)
+## 0.2.37 (24 February 2026)
+
+- Claude Code: Capture `stream-json` output to create agent spans within transcript.
+
+## 0.2.36 (23 February 2026)
 
 - Gemini CLI: New `gemini_cli()` agent for Google Gemini.
 - Sandbox: Use `exec_remote()` interface for impoved robustness of long running processes.

@@ -984,7 +984,7 @@ wheels = [
 
 [[package]]
 name = "inspect-ai"
-version = "0.3.181"
+version = "0.3.183"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aioboto3" },
@@ -1028,9 +1028,9 @@ dependencies = [
     { name = "zipp" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/74/76/4e5f2f52f0bcb414f1a216e1e88bb2c6be470d5470622b2b08bf54a776f1/inspect_ai-0.3.181.tar.gz", hash = "sha256:2e3f474431d9402fd2bff49aa1996c326cad75411a4a9b2e40a53d3a73f49999", size = 43797950, upload-time = "2026-02-23T21:14:21.047Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/64/9b/b4399338f2a8496b836636a8e3b83bdf1eeaad189140a6be084997994625/inspect_ai-0.3.183.tar.gz", hash = "sha256:44b4e400871d217d33f48840e573c884e0136b30f17fa1cfed84c54ef593fdfa", size = 43812649, upload-time = "2026-02-24T17:54:22.026Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/6d/a44f1853218eee37e23fe0af107fe4bba96aa06cca203f959748a722ab5d/inspect_ai-0.3.181-py3-none-any.whl", hash = "sha256:e23f42e4df447375a2a62ab080b4431b656731e49c9b519701fffc1e5d9babc0", size = 34914283, upload-time = "2026-02-23T21:14:15.037Z" },
+    { url = "https://files.pythonhosted.org/packages/23/2e/59e8708ecfcb3e195c6defe8b8f7e3f0aa0171d18bbffad06cfe29b753fb/inspect_ai-0.3.183-py3-none-any.whl", hash = "sha256:55abf980842c6f2fe466f2380a358bd7a8e33f9aa2783f00fe6782b04706e830", size = 34931006, upload-time = "2026-02-24T17:54:16.54Z" },
 ]
 
 [[package]]
@@ -1087,8 +1087,8 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'dev'" },
     { name = "anyio" },
     { name = "httpx" },
-    { name = "inspect-ai", specifier = ">=0.3.180" },
-    { name = "inspect-k8s-sandbox", marker = "extra == 'dev'", git = "https://github.com/UKGovernmentBEIS/inspect_k8s_sandbox.git" },
+    { name = "inspect-ai", specifier = ">=0.3.183" },
+    { name = "inspect-k8s-sandbox", marker = "extra == 'dev'" },
     { name = "ipython", marker = "extra == 'dev'" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "nest-asyncio" },

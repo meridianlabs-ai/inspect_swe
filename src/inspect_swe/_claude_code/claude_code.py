@@ -1,5 +1,8 @@
+import json
 import shlex
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
@@ -13,15 +16,29 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
+from inspect_ai.event import ModelEvent
+from inspect_ai.log import transcript
 from inspect_ai.model import ChatMessageSystem, GenerateFilter
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
-from inspect_ai.util import sandbox as sandbox_env
-from inspect_ai.util import store
-from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
+from inspect_ai.util import (
+    ExecCompleted,
+    ExecStderr,
+    ExecStdout,
+    store,
+)
+from inspect_ai.util import (
+    sandbox as sandbox_env,
+)
+from inspect_ai.util._sandbox import (
+    ExecRemoteProcess,
+    ExecRemoteStreamingOptions,
+)
 from pydantic_core import to_json
 
+from inspect_swe._claude_code._events import claude_code_events
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.events import capture_model_events
 from inspect_swe._util.path import join_path
 
 from .._util._async import is_callable_coroutine
@@ -93,7 +110,7 @@ def claude_code(
         cwd: Working directory to run claude code within.
         env: Environment variables to set for claude code.
         user: User to execute claude code with.
-        debug: Add `--debug` and `--verbose` cli flags.
+        debug: Add `--debug` cli flag. Verbose logging is always enabled.
         sandbox: Optional sandbox environment name.
         version: Version of claude code to use. One of:
             - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
@@ -125,14 +142,20 @@ def claude_code(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
-        async with sandbox_agent_bridge(
-            state,
-            model=model,
-            filter=filter,
-            retry_refusals=retry_refusals,
-            port=port,
-            bridged_tools=bridged_tools,
-        ) as bridge:
+        bridge_event_ctx = (
+            nullcontext(lambda _: None) if centaur else capture_model_events()
+        )
+        async with (
+            sandbox_agent_bridge(
+                state,
+                model=model,
+                filter=filter,
+                retry_refusals=retry_refusals,
+                port=port,
+                bridged_tools=bridged_tools,
+            ) as bridge,
+            bridge_event_ctx as apply_bridge_event,
+        ):
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
                 claude_code_binary_source(), version, user, sandbox_env(sandbox)
@@ -150,14 +173,9 @@ def claude_code(
 
             # add interactive options if not running as centaur
             if centaur is False:
-                cmd.append("--print")
+                cmd.extend(["--print", "--output-format", "stream-json", "--verbose"])
                 if debug:
-                    cmd.extend(
-                        [
-                            "--debug",
-                            "--verbose",
-                        ]
-                    )
+                    cmd.append("--debug")
 
             # system prompt
             system_messages = [
@@ -250,27 +268,26 @@ def claude_code(
                         )
 
                     # run agent
-                    result = await sbox.exec_remote(
+                    proc = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
-                        options=ExecRemoteAwaitableOptions(
+                        options=ExecRemoteStreamingOptions(
                             cwd=cwd,
                             env=agent_env,
                             user=user,
                             concurrency=False,
                         ),
-                        stream=False,
                     )
-
-                    # track debug output
-                    debug_output.append(result.stdout)
-                    debug_output.append(result.stderr)
-
-                    # raise for error
-                    if not result.success:
-                        raise RuntimeError(
-                            f"Error executing claude code agent {result.returncode}: {result.stdout}\n{result.stderr}"
-                        )
+                    try:
+                        async for event in claude_code_events(
+                            _jsonl_stream(proc, debug_output)
+                        ):
+                            if isinstance(event, ModelEvent):
+                                apply_bridge_event(event)
+                            else:
+                                transcript()._event(event)
+                    finally:
+                        await proc.kill()
 
                     # reset timeout counter
                     timeout_count = 0
@@ -394,3 +411,38 @@ async def run_claude_code_centaur(
 
     # run the human cli
     await run_centaur(options, instructions, bashrc, state)
+
+
+async def _jsonl_stream(
+    proc: ExecRemoteProcess,
+    debug_output: list[str],
+) -> AsyncIterator[dict[str, Any]]:
+    """Line-buffer stdout chunks from exec_remote, yield parsed JSONL dicts."""
+    line_buffer = ""
+    exit_code = 0
+    async for event in proc:
+        if isinstance(event, ExecStdout):
+            line_buffer += event.data
+            while "\n" in line_buffer:
+                line, line_buffer = line_buffer.split("\n", 1)
+                line = line.strip()
+                if line:
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        debug_output.append(f"JSONL parse error: {line}")
+        elif isinstance(event, ExecStderr):
+            debug_output.append(event.data)
+        elif isinstance(event, ExecCompleted):
+            exit_code = event.exit_code
+    # Handle trailing partial line
+    if line_buffer.strip():
+        try:
+            yield json.loads(line_buffer.strip())
+        except json.JSONDecodeError:
+            debug_output.append(f"JSONL parse error (trailing): {line_buffer}")
+    if exit_code != 0:
+        tail = debug_output[-100:] if len(debug_output) > 100 else debug_output
+        raise RuntimeError(
+            f"Error executing claude code agent {exit_code}: {' '.join(tail)}"
+        )
