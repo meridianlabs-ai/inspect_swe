@@ -27,15 +27,11 @@ async def capture_model_events() -> AsyncIterator[Callable[[ModelEvent], None]]:
     original_logger = transcript()._event_logger
 
     def _capture(event: Event) -> None:
-        if (
-            isinstance(event, ModelEvent)
-            and event.pending is None
-            and event.output
-            and event.output.choices
-        ):
-            msg_id = event.output.choices[0].message.id
-            if msg_id:
-                bridge_events[msg_id] = event
+        if isinstance(event, ModelEvent) and event.pending is None:
+            if event.output and event.output.choices:
+                msg_id = event.output.choices[0].message.id
+                if msg_id:
+                    bridge_events[msg_id] = event
         if original_logger:
             original_logger(event)
 

@@ -7,13 +7,12 @@ Converts Claude Code events to Scout event types:
 - System events -> InfoEvent
 """
 
-import re
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, Protocol, TypeVar, cast
 
 from inspect_ai.event import (
     CompactionEvent,
@@ -68,6 +67,24 @@ T = TypeVar("T")
 # Sentinel timestamp for events with unparseable timestamps.
 # Using epoch avoids extending timelines to the present day.
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+class AgentEventLoader(Protocol):
+    """Callback for loading nested agent events from a tool result.
+
+    Implementations may load events from files (inspect_scout) or from
+    pre-buffered streaming events (default behaviour).
+    """
+
+    async def __call__(
+        self,
+        project_dir: Path | None,
+        tool_result: dict[str, Any],
+        subagent_events: dict[str, list[dict[str, Any]]] | None,
+        max_depth: int,
+        session_file: Path | None,
+        agent_id: str | None,
+    ) -> list[Event]: ...
 
 
 def to_model_event(
@@ -232,22 +249,28 @@ def to_span_begin_event(
 ) -> SpanBeginEvent:
     """Create a SpanBeginEvent.
 
+    Follows Inspect's ``span()`` pattern: when no explicit ``parent_id`` is
+    provided, defaults to ``current_span_id()`` so that ``event_tree()``
+    nests the span under its enclosing span.
+
     Args:
         span_id: Unique span identifier
         name: Span name
         span_type: Optional span type (e.g., "agent")
         timestamp: When the span started
-        parent_id: Parent span ID if nested
+        parent_id: Parent span ID if nested. Defaults to current_span_id().
         metadata: Optional additional metadata
 
     Returns:
         SpanBeginEvent object
     """
+    from inspect_ai.util._span import current_span_id
+
     return SpanBeginEvent(
         id=span_id,
         name=name,
         type=span_type,
-        parent_id=parent_id,
+        parent_id=parent_id if parent_id is not None else current_span_id(),
         timestamp=timestamp,
         working_start=0.0,
         metadata=metadata,
@@ -364,10 +387,12 @@ class _EventProcessor:
         project_dir: Path | None,
         max_depth: int,
         session_file: Path | None = None,
+        agent_loader: AgentEventLoader | None = None,
     ) -> None:
         self.project_dir = project_dir
         self.max_depth = max_depth
         self.session_file = session_file
+        self.agent_loader = agent_loader
 
         self.accumulated_messages: list[Any] = []
         self.pending_tools: dict[str, _PendingTool] = {}
@@ -468,6 +493,7 @@ class _EventProcessor:
                             max_depth=self.max_depth,
                             session_file=self.session_file,
                             agent_id=event_agent_id,
+                            agent_loader=self.agent_loader,
                         )
                         result.extend(span_events)
 
@@ -511,13 +537,16 @@ class _EventProcessor:
                 project_dir=None,  # Don't load agents for incomplete tools
                 subagent_events=None,
                 max_depth=0,
+                agent_loader=self.agent_loader,
             )
             result.extend(span_events)
         return result
 
     def update_timestamp(self, event: BaseEvent) -> datetime:
-        """Parse and track the latest timestamp."""
+        """Parse and track the latest timestamp, ensuring monotonic ordering."""
         timestamp = _parse_timestamp(get_timestamp(event)) or self.last_timestamp
+        if timestamp <= self.last_timestamp:
+            timestamp = self.last_timestamp + timedelta(milliseconds=1)
         self.last_timestamp = timestamp
         return timestamp
 
@@ -538,6 +567,7 @@ async def claude_code_events(
     project_dir: Path | None = None,
     max_depth: int = 5,
     session_file: Path | None = None,
+    agent_loader: AgentEventLoader | None = None,
 ) -> AsyncIterator[Event]:
     """Convert raw Claude Code JSONL events to Inspect AI events.
 
@@ -558,6 +588,8 @@ async def claude_code_events(
         project_dir: Path to project directory for loading nested agent files.
         max_depth: Maximum depth for loading nested subagent events (0 = no loading)
         session_file: Path to the session JSONL file (for locating subagent files)
+        agent_loader: Optional callback for loading nested agent events.
+            If None, uses the default stream-based loader.
 
     Yields:
         Inspect AI Event objects (ModelEvent, ToolEvent, SpanBeginEvent, etc.)
@@ -570,7 +602,7 @@ async def claude_code_events(
     else:
         event_stream = _to_async_iter(raw_events)
 
-    proc = _EventProcessor(project_dir, max_depth, session_file)
+    proc = _EventProcessor(project_dir, max_depth, session_file, agent_loader)
 
     # Streaming-specific state for session routing
     session_to_tool: dict[str, str] = {}
@@ -668,6 +700,10 @@ async def claude_code_events(
         if pydantic_event is None:
             continue
 
+        # Assign wall-clock timestamp for streaming events that lack one
+        if pydantic_event.timestamp is None:
+            pydantic_event.timestamp = datetime.now(timezone.utc).isoformat()
+
         if isinstance(pydantic_event, AssistantEvent):
             msg_id = pydantic_event.message.id
             if msg_id is not None:
@@ -738,6 +774,7 @@ async def process_parsed_events(
     project_dir: Path | None = None,
     max_depth: int = 5,
     session_file: Path | None = None,
+    agent_loader: AgentEventLoader | None = None,
 ) -> AsyncIterator[Event]:
     """Convert parsed Claude Code events to Scout events.
 
@@ -751,11 +788,13 @@ async def process_parsed_events(
         project_dir: Path to project directory (for loading agent files)
         max_depth: Maximum depth for loading nested subagent events (0 = no loading)
         session_file: Path to the session JSONL file (for locating subagent files)
+        agent_loader: Optional callback for loading nested agent events.
+            If None, uses the default stream-based loader.
 
     Yields:
         Scout Event objects (ModelEvent, ToolEvent, SpanBeginEvent, etc.)
     """
-    proc = _EventProcessor(project_dir, max_depth, session_file)
+    proc = _EventProcessor(project_dir, max_depth, session_file, agent_loader)
 
     for event in events:
         timestamp = proc.update_timestamp(event)
@@ -789,6 +828,7 @@ async def _create_tool_span_events(
     max_depth: int = 5,
     session_file: Path | None = None,
     agent_id: str | None = None,
+    agent_loader: AgentEventLoader | None = None,
 ) -> list[Event]:
     """Create the complete span structure for a tool call.
 
@@ -820,6 +860,8 @@ async def _create_tool_span_events(
         max_depth: Maximum depth for loading nested subagent events (0 = no loading)
         session_file: Path to the session JSONL file (for locating subagent files)
         agent_id: Pre-extracted agent ID (e.g., from toolUseResult.agentId)
+        agent_loader: Optional callback for loading nested agent events.
+            If None, uses the default stream-based loader.
 
     Returns:
         List of events in correct order
@@ -857,7 +899,8 @@ async def _create_tool_span_events(
 
         # Load and process nested agent events
         if tool_result:
-            agent_events = await _load_agent_events(
+            loader = agent_loader or _load_agent_events
+            agent_events = await loader(
                 project_dir,
                 tool_result,
                 subagent_events,
@@ -904,44 +947,6 @@ async def _create_tool_span_events(
     return events
 
 
-def _extract_agent_id_from_result(tool_result: dict[str, Any]) -> str | None:
-    """Extract agent ID from a Task tool result using JSON parsing.
-
-    Args:
-        tool_result: The tool_result block containing agent response
-
-    Returns:
-        The agent ID if found, None otherwise
-    """
-    import json
-
-    content = tool_result.get("content", [])
-
-    if isinstance(content, list):
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                text = str(item.get("text", ""))
-                # Try to parse as JSON first (more robust)
-                try:
-                    parsed = json.loads(text)
-                    if isinstance(parsed, dict) and "agentId" in parsed:
-                        return str(parsed["agentId"])
-                except json.JSONDecodeError:
-                    logger.debug("Failed to parse tool result as JSON, trying regex")
-                # Fallback: regex for partial JSON or embedded JSON
-                match = re.search(r'"agentId"\s*:\s*"([^"]+)"', text)
-                if match:
-                    return match.group(1)
-                # Plain-text format from Claude Code output:
-                #   "agentId: aa9e523 (for resuming...)"
-                match = re.search(r"agentId:\s*([a-f0-9]+)", text)
-                if match:
-                    return match.group(1)
-
-    logger.debug("Could not extract agentId from tool result")
-    return None
-
-
 async def _load_agent_events(
     project_dir: Path | None,
     tool_result: dict[str, Any],
@@ -964,33 +969,18 @@ async def _load_agent_events(
     Returns:
         List of Scout events from the agent session
     """
-    from .client import find_agent_file, read_jsonl_events
-
-    # Try to extract agent ID from the tool result content, fall back to provided
-    agent_id = _extract_agent_id_from_result(tool_result) or agent_id
-
     raw_events: list[dict[str, Any]] | None = None
-    agent_file: Path | None = None
 
-    # Try stream-provided events first
-    # Note: subagent_events is keyed by sessionId, not agentId
+    # Use stream-provided events (inline subagent events from stdout).
+    # Note: subagent_events is keyed by sessionId, not agentId.
     # In streaming mode, we collect all buffered events for this tool since
-    # they all belong to this agent (one subagent session per Task tool)
+    # they all belong to this agent (one subagent session per Task tool).
     if subagent_events:
-        # Flatten all events from all sessions - they all belong to this agent
         all_events = []
         for session_events in subagent_events.values():
             all_events.extend(session_events)
         if all_events:
             raw_events = all_events
-
-    # Fall back to file loading if we have an agent_id and project_dir
-    if not raw_events and agent_id and project_dir:
-        agent_file = find_agent_file(project_dir, agent_id, session_file=session_file)
-        if not agent_file:
-            logger.debug(f"Agent file not found for ID: {agent_id}")
-            return []
-        raw_events = read_jsonl_events(agent_file)
 
     if not raw_events:
         return []
@@ -1010,15 +1000,10 @@ async def _load_agent_events(
 
     # Convert to Scout events, with bounded recursion for nested subagents
     next_depth = max_depth - 1
-    next_project_dir = project_dir if next_depth > 0 else None
-    # The loaded agent file becomes the session_file for further nesting
-    next_session_file = agent_file if next_depth > 0 else None
     result: list[Event] = []
     async for event in process_parsed_events(
         conversation_events,
-        project_dir=next_project_dir,
         max_depth=next_depth,
-        session_file=next_session_file,
     ):
         result.append(event)
     return result

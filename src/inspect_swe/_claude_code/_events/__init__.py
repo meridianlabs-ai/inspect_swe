@@ -1,3 +1,3 @@
-from .events import claude_code_events, process_parsed_events
+from .events import AgentEventLoader, claude_code_events, process_parsed_events
 
-__all__ = ["claude_code_events", "process_parsed_events"]
+__all__ = ["AgentEventLoader", "claude_code_events", "process_parsed_events"]

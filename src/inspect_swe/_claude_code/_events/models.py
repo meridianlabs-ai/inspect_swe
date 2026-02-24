@@ -169,7 +169,7 @@ class BaseEvent(BaseModel):
 
     uuid: str
     parentUuid: str | None = None
-    timestamp: str
+    timestamp: str | None = None
     sessionId: str | None = None
     type: str
     isSidechain: bool = False

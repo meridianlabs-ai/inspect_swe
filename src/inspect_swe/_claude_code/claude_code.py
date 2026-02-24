@@ -48,38 +48,6 @@ from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 
 
-async def _jsonl_stream(
-    proc: ExecRemoteProcess,
-    debug_output: list[str],
-) -> AsyncIterator[dict[str, Any]]:
-    """Line-buffer stdout chunks from exec_remote, yield parsed JSONL dicts."""
-    line_buffer = ""
-    exit_code = 0
-    async for event in proc:
-        if isinstance(event, ExecStdout):
-            line_buffer += event.data
-            while "\n" in line_buffer:
-                line, line_buffer = line_buffer.split("\n", 1)
-                line = line.strip()
-                if line:
-                    try:
-                        yield json.loads(line)
-                    except json.JSONDecodeError:
-                        debug_output.append(f"JSONL parse error: {line}")
-        elif isinstance(event, ExecStderr):
-            debug_output.append(event.data)
-        elif isinstance(event, ExecCompleted):
-            exit_code = event.exit_code
-    # Handle trailing partial line
-    if line_buffer.strip():
-        try:
-            yield json.loads(line_buffer.strip())
-        except json.JSONDecodeError:
-            debug_output.append(f"JSONL parse error (trailing): {line_buffer}")
-    if exit_code != 0:
-        raise RuntimeError(f"Error executing claude code agent {exit_code}")
-
-
 @agent
 def claude_code(
     name: str = "Claude Code",
@@ -141,7 +109,7 @@ def claude_code(
         cwd: Working directory to run claude code within.
         env: Environment variables to set for claude code.
         user: User to execute claude code with.
-        debug: Add `--debug` and `--verbose` cli flags.
+        debug: Add `--debug` cli flag. Verbose logging is always enabled.
         sandbox: Optional sandbox environment name.
         version: Version of claude code to use. One of:
             - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
@@ -204,14 +172,9 @@ def claude_code(
 
             # add interactive options if not running as centaur
             if centaur is False:
-                cmd.extend(["--print", "--output-format", "stream-json"])
+                cmd.extend(["--print", "--output-format", "stream-json", "--verbose"])
                 if debug:
-                    cmd.extend(
-                        [
-                            "--debug",
-                            "--verbose",
-                        ]
-                    )
+                    cmd.append("--debug")
 
             # system prompt
             system_messages = [
@@ -454,3 +417,38 @@ async def run_claude_code_centaur(
 
     # run the human cli
     await run_centaur(options, instructions, bashrc, state)
+
+
+async def _jsonl_stream(
+    proc: ExecRemoteProcess,
+    debug_output: list[str],
+) -> AsyncIterator[dict[str, Any]]:
+    """Line-buffer stdout chunks from exec_remote, yield parsed JSONL dicts."""
+    line_buffer = ""
+    exit_code = 0
+    async for event in proc:
+        if isinstance(event, ExecStdout):
+            line_buffer += event.data
+            while "\n" in line_buffer:
+                line, line_buffer = line_buffer.split("\n", 1)
+                line = line.strip()
+                if line:
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        debug_output.append(f"JSONL parse error: {line}")
+        elif isinstance(event, ExecStderr):
+            debug_output.append(event.data)
+        elif isinstance(event, ExecCompleted):
+            exit_code = event.exit_code
+    # Handle trailing partial line
+    if line_buffer.strip():
+        try:
+            yield json.loads(line_buffer.strip())
+        except json.JSONDecodeError:
+            debug_output.append(f"JSONL parse error (trailing): {line_buffer}")
+    if exit_code != 0:
+        tail = debug_output[-100:] if len(debug_output) > 100 else debug_output
+        raise RuntimeError(
+            f"Error executing claude code agent {exit_code}: {' '.join(tail)}"
+        )
