@@ -1035,12 +1035,16 @@ wheels = [
 
 [[package]]
 name = "inspect-k8s-sandbox"
-version = "0.1.0"
-source = { git = "https://github.com/UKGovernmentBEIS/inspect_k8s_sandbox.git#5d0e5b5ccad8380738d2dcd6569372cf4a5bb8c3" }
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "inspect-ai" },
     { name = "jsonschema" },
     { name = "kubernetes" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/96/f926f2d78781332322be3fb5557e7772b060bfdf722fd4b2f71cf60be259/inspect_k8s_sandbox-0.3.0.tar.gz", hash = "sha256:be80ab69d0328ccd3dc6b131c11244e54c4b07e27d248cd9a1eb09acabaf77b8", size = 1286509, upload-time = "2025-12-09T09:57:47.712Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/da/eaeaeec1e57ebb2fa2ca9d85d4bcefc6c933911f487c9667cf1b9cb5c7f8/inspect_k8s_sandbox-0.3.0-py3-none-any.whl", hash = "sha256:c16d4e56fe9a23ad462513ded9791dd79f5ec8e0f656066065551c21007d8235", size = 55493, upload-time = "2025-12-09T09:57:45.9Z" },
 ]
 
 [[package]]
@@ -1076,11 +1080,6 @@ doc = [
     { name = "quarto-cli" },
 ]
 
-[package.dev-dependencies]
-aisi = [
-    { name = "inspect-k8s-sandbox" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "agent-client-protocol" },
@@ -1105,9 +1104,6 @@ requires-dist = [
     { name = "typing-extensions", specifier = ">=4.9.0" },
 ]
 provides-extras = ["dev", "doc"]
-
-[package.metadata.requires-dev]
-aisi = [{ name = "inspect-k8s-sandbox", git = "https://github.com/UKGovernmentBEIS/inspect_k8s_sandbox.git" }]
 
 [[package]]
 name = "ipykernel"

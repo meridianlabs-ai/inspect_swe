@@ -142,6 +142,9 @@ class DefaultClient(Client):
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         pass
 
+    def on_connect(self, conn: Any) -> None:
+        return None
+
 
 @contextlib.asynccontextmanager
 async def acp_connection(

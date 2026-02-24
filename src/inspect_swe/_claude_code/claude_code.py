@@ -385,8 +385,6 @@ def resolve_mcp_servers(
     return mcp_config_cmds, allowed_tools
 
 
-
-
 async def run_claude_code_centaur(
     options: CentaurOptions,
     claude_cmd: list[str],

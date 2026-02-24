@@ -109,8 +109,9 @@ class ACPAgent(Agent):
         self.sandbox = kwargs.get("sandbox")
 
         self.model_map: dict[str, str | Model] = self._build_model_map()
-        if kwargs.get("model_map"):
-            self.model_map.update(kwargs["model_map"])
+        model_map_override = kwargs.get("model_map")
+        if model_map_override:
+            self.model_map.update(model_map_override)
 
         self.ready = anyio.Event()  # signals conn/session_id are usable
 
@@ -138,7 +139,7 @@ class ACPAgent(Agent):
         The base class handles the ACP lifecycle (connection, initialize,
         new_session, close) around whatever this method yields.
         """
-        yield
+        yield  # type: ignore[misc]
 
     def _resolve_system_prompt(self, state: AgentState) -> str | None:
         """Merge system messages from *state* with ``self.system_prompt``."""
@@ -186,7 +187,7 @@ class ACPAgent(Agent):
 
                         session = await conn.new_session(
                             cwd=self.cwd,
-                            mcp_servers=acp_mcp_servers or None,
+                            mcp_servers=acp_mcp_servers or None,  # type: ignore[arg-type]
                         )
 
                         self.conn = conn
@@ -237,7 +238,11 @@ async def _wait_for_mcp_endpoints(
 
     while elapsed < timeout:
         result = await sbox.exec(
-            ["bash", "-c", f"curl -sf -o /dev/null --max-time 2 -X POST {url} 2>/dev/null && echo OK || echo FAIL"],
+            [
+                "bash",
+                "-c",
+                f"curl -sf -o /dev/null --max-time 2 -X POST {url} 2>/dev/null && echo OK || echo FAIL",
+            ],
         )
         if "OK" in result.stdout:
             logger.info("Bridge MCP endpoint ready at %s (%.1fs)", url, elapsed)

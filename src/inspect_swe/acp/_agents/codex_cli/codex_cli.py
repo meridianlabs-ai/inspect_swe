@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
-from inspect_ai.agent import AgentState, agent, sandbox_agent_bridge
+from inspect_ai.agent import AgentState, SandboxAgentBridge, agent, sandbox_agent_bridge
 from inspect_ai.model import get_model
 from inspect_ai.tool import Skill, install_skills, read_skills
 from inspect_ai.util import (
@@ -54,7 +54,7 @@ class CodexCli(ACPAgent):
     @asynccontextmanager
     async def _start_agent(
         self, state: AgentState
-    ) -> AsyncIterator[tuple[ExecRemoteProcess, object]]:
+    ) -> AsyncIterator[tuple[ExecRemoteProcess, SandboxAgentBridge]]:
         sbox = sandbox_env(self.sandbox)
         default_model = get_model(self.model).canonical_name()
 
@@ -74,9 +74,7 @@ class CodexCli(ACPAgent):
             port=port,
         ) as bridge:
             # Install node and codex-acp in the sandbox.
-            acp_binary, node_binary = await ensure_codex_acp_setup(
-                sbox, self.user
-            )
+            acp_binary, node_binary = await ensure_codex_acp_setup(sbox, self.user)
             node_dir = str(Path(node_binary).parent)
 
             # Resolve CODEX_HOME (mirrors the non-ACP codex_cli agent).
@@ -103,9 +101,7 @@ class CodexCli(ACPAgent):
             # Install skills.
             if self._resolved_skills:
                 skills_dir = join_path(codex_home, "skills")
-                await install_skills(
-                    self._resolved_skills, sbox, self.user, skills_dir
-                )
+                await install_skills(self._resolved_skills, sbox, self.user, skills_dir)
 
             # Write config.toml with model provider pointing at the bridge.
             # Use the canonical model name so the bridge can resolve it
@@ -167,9 +163,7 @@ class CodexCli(ACPAgent):
         """Determine where to write config.toml."""
         if self._home_dir is not None:
             return join_path(codex_home, "config.toml")
-        directory = (
-            ".codex" if self.cwd is None else join_path(self.cwd, ".codex")
-        )
+        directory = ".codex" if self.cwd is None else join_path(self.cwd, ".codex")
         await sandbox_exec(sbox, cmd=f"mkdir -p {directory}", user=self.user)
         return join_path(directory, "config.toml")
 

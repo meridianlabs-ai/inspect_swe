@@ -119,9 +119,7 @@ def resolve_npm_package_version(package: str) -> str:
         timeout=30,
     )
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to resolve version of {package}: {result.stderr}"
-        )
+        raise RuntimeError(f"Failed to resolve version of {package}: {result.stderr}")
     return result.stdout.strip()
 
 
