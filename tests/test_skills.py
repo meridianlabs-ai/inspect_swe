@@ -20,7 +20,15 @@ def test_codex_cli_skills() -> None:
     check_skills("codex_cli", "openai/gpt-5.1-codex")
 
 
-def check_skills(agent: Literal["claude_code", "codex_cli"], model: str) -> None:
+@skip_if_no_openai
+@skip_if_no_docker
+def test_mini_swe_skills() -> None:
+    check_skills("mini_swe_agent", "openai/gpt-5-mini")
+
+
+def check_skills(
+    agent: Literal["claude_code", "codex_cli", "mini_swe_agent"], model: str
+) -> None:
     log = run_example("skills", agent, model)[0]
     assert log.status == "success"
     assert log.samples

@@ -26,8 +26,17 @@ def test_codex_cli_multi_call(sandbox: str) -> None:
     check_multi_call("codex_cli", "openai/gpt-5", sandbox)
 
 
+@skip_if_no_openai
+@skip_if_no_docker
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_mini_swe_agent_multi_call(sandbox: str) -> None:
+    check_multi_call("mini_swe_agent", "openai/gpt-5-mini", sandbox)
+
+
 def check_multi_call(
-    agent: Literal["claude_code", "codex_cli"], model: str, sandbox: str
+    agent: Literal["claude_code", "codex_cli", "mini_swe_agent"],
+    model: str,
+    sandbox: str,
 ) -> None:
     log = run_example("multi_call", agent, model, sandbox=sandbox)[0]
     assert log.samples
@@ -42,7 +51,11 @@ def check_multi_call(
     match agent:
         case "claude_code":
             assert len(user_messages) == 4
+            assert len(assistant_messages) == 4
         case "codex_cli":
             assert len(user_messages) == 6
-
-    assert len(assistant_messages) == 4
+            assert len(assistant_messages) == 4
+        case "mini_swe_agent":
+            assert len(user_messages) == 4
+            # model may consolidate steps, so allow some variance
+            assert len(assistant_messages) >= 3

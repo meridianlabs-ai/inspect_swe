@@ -25,7 +25,7 @@ class AgentWheelSource:
     agent: Literal["mini-swe-agent"]  # Human-readable
     package: Literal["mini-swe-agent"]  # PyPI package
     binary: Literal["mini"]  # CLI entrypoint
-    default_version: Literal["1.17.4"]  # Default stable version
+    default_version: Literal["2.2.3"]  # Default stable version
 
 
 # uv binary distribution configuration
@@ -55,7 +55,7 @@ async def ensure_agent_wheel_installed(
             - "stable": Download and install the default version
             - "sandbox": Use only what's in sandbox, error if not found
             - "latest": Download and install latest version from PyPI
-            - Specific version string (e.g., "1.17.4")
+            - Specific version string (e.g., "2.2.3")
         user: User to run commands as in sandbox
         sandbox: Sandbox environment (uses default if not provided)
 

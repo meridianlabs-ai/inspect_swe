@@ -1,3 +1,5 @@
+import posixpath
+import shlex
 from textwrap import dedent
 from typing import Literal
 
@@ -21,17 +23,22 @@ from inspect_ai.util import store
 
 from .._util._async import is_callable_coroutine
 from .._util.agentwheel import AgentWheelSource, ensure_agent_wheel_installed
+from .._util.centaur import CentaurOptions, run_centaur
 from .._util.messages import build_user_prompt
 from .._util.trace import trace
+from .setup import (
+    RESUMABLE_AGENT_PATH,
+    get_trajectory_path,
+    install_resumable_agent,
+    validate_version,
+)
 
-# mini-swe-agent wheel source configuration
-# Pin to v1.x by default - v2.0 has breaking changes (migration guide pending)
-# See: https://mini-swe-agent.com/latest/advanced/v2_migration/
+# mini-swe-agent wheel source configuration (v2.x)
 MINI_SWE_AGENT_SOURCE = AgentWheelSource(
     agent="mini-swe-agent",
     package="mini-swe-agent",
     binary="mini",  # CLI entrypoint
-    default_version="1.17.4",
+    default_version="2.2.3",
 )
 
 
@@ -43,7 +50,8 @@ def mini_swe_agent(
        100 lines of Python, radically simple, scores >74% on SWE-bench verified.
     """),
     system_prompt: str | None = None,
-    attempts: int | AgentAttempts = 1,  # TODO: currently supports single attempt
+    centaur: bool | CentaurOptions = False,
+    attempts: int | AgentAttempts = 1,
     model: str | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
@@ -74,7 +82,9 @@ def mini_swe_agent(
     Args:
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description (used in multi-agent systems)
-        system_prompt: Additional system prompt to append to default.
+        system_prompt: Additional system prompt to include (appended to any system messages from the task).
+        centaur: Run in 'centaur' mode, which makes mini-swe-agent available
+            to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts.
         model: Model name to use (defaults to main model for task).
         filter: Filter for intercepting bridged model requests.
@@ -91,6 +101,13 @@ def mini_swe_agent(
             - "latest": Download and install latest version from PyPI.
             - "x.x.x": Install and use a specific version.
     """
+    # validate version before anything else
+    validate_version(version)
+
+    # resolve centaur
+    if centaur is True:
+        centaur = CentaurOptions()
+
     # resolve models
     inspect_model = f"inspect/{model}" if model is not None else "inspect"
 
@@ -103,9 +120,6 @@ def mini_swe_agent(
         port = store().get(MODEL_PORT, 4000) + 1
         store().set(MODEL_PORT, port)
 
-        # resolve sandbox once for reuse
-        sbox = sandbox_env(sandbox)
-
         async with sandbox_agent_bridge(
             state,
             model=inspect_model,
@@ -114,6 +128,9 @@ def mini_swe_agent(
             compaction=compaction,
             port=port,
         ) as bridge:
+            # resolve sandbox
+            sbox = sandbox_env(sandbox)
+
             # ensure mini-swe-agent is installed
             mini_binary = await ensure_agent_wheel_installed(
                 source=MINI_SWE_AGENT_SOURCE,
@@ -122,104 +139,144 @@ def mini_swe_agent(
                 sandbox=sbox,
             )
 
-            # base command options
-            cmd = [
-                mini_binary,
-                "--yolo",  # run without confirmations (like --print for claude)
-                "--exit-immediately",  # exit when agent finishes instead of prompting
-            ]
+            # define agent env (shared between centaur and normal mode)
+            model_name = model if model is not None else get_model().name
+            agent_env = {
+                "MSWEA_CONFIGURED": "true",
+                "MSWEA_MODEL_NAME": model_name,
+                "OPENAI_API_BASE": f"http://localhost:{bridge.port}/v1",
+                "OPENAI_API_KEY": "sk-none",
+                "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
+                "ANTHROPIC_API_KEY": "sk-none",
+            } | (env or {})
 
-            # add cost limit if specified
-            if cost_limit is not None:
-                cmd.extend(["--cost-limit", str(cost_limit)])
-
-            # build user prompt
-            prompt, _ = build_user_prompt(state.messages)
-
-            # add system prompt context if provided
-            full_prompt = prompt
-            system_messages = [
-                m.text for m in state.messages if isinstance(m, ChatMessageSystem)
-            ]
-            if system_prompt is not None:
-                system_messages.append(system_prompt)
-            if system_messages:
-                # Prepend system context to the task
-                system_context = "\n\n".join(system_messages)
-                full_prompt = (
-                    f"System instructions:\n{system_context}\n\nTask:\n{prompt}"
+            # centaur mode uses human_cli with custom instructions and bashrc
+            if centaur:
+                await _run_mini_swe_centaur(
+                    options=centaur,
+                    mini_cmd=[mini_binary, "--yolo"],
+                    agent_env=agent_env,
+                    state=state,
                 )
+            else:
+                # install resumable agent to sandbox
+                await install_resumable_agent(sbox)
+                trajectory_path = get_trajectory_path()
 
-            # execute the agent
-            debug_output: list[str] = []
-            agent_prompt = full_prompt
-            attempt_count = 0
-
-            while True:  # Kept for consistency with other agents but currently only single attempt supported
-                # TODO: build command with task. This only works for single-turn tasks currently. Need to update to support multi-turn (perhaps via file output option)
-                agent_cmd = cmd + ["--task", agent_prompt]
-
-                # run agent
-                result = await sbox.exec(
-                    cmd=["bash", "-c", 'exec 0</dev/null "$@"', "bash"] + agent_cmd,
-                    cwd=cwd,
-                    env={
-                        "MSWEA_CONFIGURED": "true",  # Skip interactive setup wizard
-                        "MSWEA_MODEL_NAME": model
-                        if model is not None
-                        else get_model().name,
-                        "OPENAI_API_BASE": f"http://localhost:{bridge.port}/v1",
-                        # actual key is handled by inspect, mini-swe needs it to approve setup
-                        "OPENAI_API_KEY": "sk-none",
-                        "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
-                        "ANTHROPIC_API_KEY": "sk-none",
-                    }
-                    | (env or {}),
-                    user=user,
-                    concurrency=False,
-                )
-
-                # track debug output
-                debug_output.append(f"[stdout]\n{result.stdout}")
-                debug_output.append(f"[stderr]\n{result.stderr}")
-
-                # raise for error
-                if not result.success:
-                    raise RuntimeError(
-                        f"Error executing mini-swe-agent (cwd={cwd or 'default'}):\n"
-                        f"stdout: {result.stdout}\n"
-                        f"stderr: {result.stderr}"
+                # build prompt (incorporating system messages)
+                prompt, has_assistant_response = build_user_prompt(state.messages)
+                system_messages = [
+                    m.text for m in state.messages if isinstance(m, ChatMessageSystem)
+                ]
+                if system_prompt is not None:
+                    system_messages.append(system_prompt)
+                if system_messages:
+                    system_context = "\n\n".join(system_messages)
+                    prompt = (
+                        f"System instructions:\n{system_context}\n\nTask:\n{prompt}"
                     )
 
-                # exit if we are at max_attempts
-                attempt_count += 1
-                if attempt_count >= attempts.attempts:
-                    break
+                # base command with v2 agent-class and output flags
+                cmd = [
+                    mini_binary,
+                    "--yolo",
+                    "--exit-immediately",
+                    "--agent-class",
+                    "resumable_agent.ResumableAgent",
+                    "--output",
+                    trajectory_path,
+                ]
 
-                # score this attempt
-                answer_scores = await score(state)
+                # add cost limit if specified
+                if cost_limit is not None:
+                    cmd.extend(["--cost-limit", str(cost_limit)])
 
-                # break if we score 'correct'
-                if attempts.score_value(answer_scores[0].value) == 1.0:
-                    break
+                # env for mini CLI (adds PYTHONPATH for resumable agent import)
+                mini_env = agent_env | {
+                    "PYTHONPATH": posixpath.dirname(RESUMABLE_AGENT_PATH)
+                }
 
-                # otherwise update prompt with incorrect message and continue
-                else:
-                    if callable(attempts.incorrect_message):
-                        if not is_callable_coroutine(attempts.incorrect_message):
-                            raise ValueError(
-                                "The incorrect_message function must be async."
-                            )
-                        agent_prompt = await attempts.incorrect_message(
-                            state, answer_scores
+                # execute the agent
+                debug_output: list[str] = []
+                agent_prompt = prompt
+                attempt_count = 0
+
+                while True:
+                    is_resume = has_assistant_response or attempt_count > 0
+                    run_env = mini_env | {
+                        "MSWEA_RESUME": "true" if is_resume else "false"
+                    }
+                    agent_cmd = cmd + ["--task", agent_prompt]
+
+                    result = await sbox.exec(
+                        cmd=["bash", "-c", 'exec 0</dev/null "$@"', "bash"] + agent_cmd,
+                        cwd=cwd,
+                        env=run_env,
+                        user=user,
+                        concurrency=False,
+                    )
+
+                    # track debug output
+                    debug_output.append(f"[stdout]\n{result.stdout}")
+                    debug_output.append(f"[stderr]\n{result.stderr}")
+
+                    # raise for error
+                    if not result.success:
+                        raise RuntimeError(
+                            f"Error executing mini-swe-agent (cwd={cwd or 'default'}):\n"
+                            f"stdout: {result.stdout}\n"
+                            f"stderr: {result.stderr}"
                         )
-                    else:
-                        agent_prompt = attempts.incorrect_message
 
-            # trace debug info
-            debug_output.insert(0, "mini-swe-agent Debug Output:")
-            trace("\n".join(debug_output))
+                    # exit if we are at max_attempts
+                    attempt_count += 1
+                    if attempt_count >= attempts.attempts:
+                        break
+
+                    # score this attempt
+                    answer_scores = await score(state)
+
+                    # break if we score 'correct'
+                    if attempts.score_value(answer_scores[0].value) == 1.0:
+                        break
+
+                    # otherwise update prompt with incorrect message and continue
+                    else:
+                        if callable(attempts.incorrect_message):
+                            if not is_callable_coroutine(attempts.incorrect_message):
+                                raise ValueError(
+                                    "The incorrect_message function must be async."
+                                )
+                            agent_prompt = await attempts.incorrect_message(
+                                state, answer_scores
+                            )
+                        else:
+                            agent_prompt = attempts.incorrect_message
+
+                # trace debug info
+                debug_output.insert(0, "mini-swe-agent Debug Output:")
+                trace("\n".join(debug_output))
 
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+async def _run_mini_swe_centaur(
+    options: CentaurOptions,
+    mini_cmd: list[str],
+    agent_env: dict[str, str],
+    state: AgentState,
+) -> None:
+    instructions = (
+        "mini-swe-agent:\n\n - You may use mini-swe-agent via the 'mini' command."
+    )
+
+    # build .bashrc content
+    agent_env_vars = [f"export {k}={shlex.quote(v)}" for k, v in agent_env.items()]
+    alias_cmd = shlex.join(mini_cmd)
+    alias_cmd = "alias mini='" + alias_cmd.replace("'", "'\\''") + "'"
+    bashrc = "\n".join(agent_env_vars + ["", alias_cmd])
+
+    # run the human cli
+    await run_centaur(options, instructions, bashrc, state)
