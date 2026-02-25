@@ -13,7 +13,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter
+from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
@@ -44,6 +44,7 @@ def gemini_cli(
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    model_aliases: dict[str, str | Model] | None = None,
     gemini_model: str = "gemini-2.5-pro",
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
@@ -71,6 +72,9 @@ def gemini_cli(
         centaur: Run in 'centaur' mode, which makes Gemini CLI available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts
         model: Model name to use for inspect bridge (defaults to main model for task)
+        model_aliases: Optional mapping of model names to Model instances or model name strings.
+            Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
+            When a model name in the mapping is referenced, the corresponding Model/string is used.
         gemini_model: Gemini model name to pass to CLI. This bypasses the auto-router.
             Use "gemini-2.5-pro" (default) or "gemini-2.5-flash". The actual model
             calls still go through the inspect bridge, but this disables the router.
@@ -108,6 +112,7 @@ def gemini_cli(
         async with sandbox_agent_bridge(
             state,
             model=model,
+            model_aliases=model_aliases,
             filter=filter,
             retry_refusals=retry_refusals,
             port=port,

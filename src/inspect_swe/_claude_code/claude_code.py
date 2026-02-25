@@ -18,7 +18,7 @@ from inspect_ai.agent import (
 )
 from inspect_ai.event import ModelEvent
 from inspect_ai.log import transcript
-from inspect_ai.model import ChatMessageSystem, GenerateFilter
+from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import (
@@ -64,6 +64,7 @@ def claude_code(
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    model_aliases: dict[str, str | Model] | None = None,
     opus_model: str | None = None,
     sonnet_model: str | None = None,
     haiku_model: str | None = None,
@@ -101,6 +102,9 @@ def claude_code(
         centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
+        model_aliases: Optional mapping of model names to Model instances or model name strings.
+            Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
+            When a model name in the mapping is referenced, the corresponding Model/string is used.
         opus_model: The model to use for `opus`, or for `opusplan` when Plan Mode is active. Defaults to `model`.
         sonnet_model: The model to use for `sonnet`, or for `opusplan` when Plan Mode is not active. Defaults to `model`.
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
@@ -149,6 +153,7 @@ def claude_code(
             sandbox_agent_bridge(
                 state,
                 model=model,
+                model_aliases=model_aliases,
                 filter=filter,
                 retry_refusals=retry_refusals,
                 port=port,
