@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,15 @@ from .._util.appdirs import package_cache_dir
 from .._util.download import download_text_file
 from .._util.sandbox import SandboxPlatform
 from .._util.tarball import extract_tarball
+
+# In-process cache for GitHub API responses to avoid rate limiting.
+# GitHub's unauthenticated API limit is 60 req/hour. Without caching,
+# each sample resolves the version separately, quickly exhausting the limit.
+# The cache lives for the process lifetime, so each eval run gets a
+# consistent version and the next run picks up any new releases.
+_github_api_lock = asyncio.Lock()
+_cached_latest_version: str | None = None
+_cached_release_assets: dict[str, dict[str, Any]] = {}
 
 
 def codex_cli_binary_source() -> AgentBinarySource:
@@ -86,37 +96,58 @@ def _platform_to_codex_arch(platform: SandboxPlatform) -> str:
 
 
 async def _fetch_latest_stable_version() -> str:
-    """Fetch the latest stable version from GitHub releases."""
-    releases_url = "https://api.github.com/repos/openai/codex/releases"
-    releases_json = await download_text_file(releases_url)
-    releases = json.loads(releases_json)
+    """Fetch the latest stable version from GitHub releases.
 
-    # Filter out pre-releases and alpha versions
-    stable_releases = [
-        r
-        for r in releases
-        if not r.get("prerelease", False) and "-alpha" not in r.get("tag_name", "")
-    ]
+    Results are cached in-process so only the first call hits the GitHub API.
+    Subsequent calls return the cached version, avoiding rate limit exhaustion
+    when running many concurrent samples.
+    """
+    global _cached_latest_version
 
-    if not stable_releases:
-        raise RuntimeError("No stable releases found for codex")
+    async with _github_api_lock:
+        if _cached_latest_version is not None:
+            return _cached_latest_version
 
-    # Get the most recent stable release
-    latest = stable_releases[0]
-    tag_name = latest["tag_name"]
+        releases_url = "https://api.github.com/repos/openai/codex/releases"
+        releases_json = await download_text_file(releases_url)
+        releases = json.loads(releases_json)
 
-    # Extract version from tag (e.g., "rust-v0.29.0" -> "0.29.0")
-    if tag_name.startswith("rust-v"):
-        result: str = tag_name[6:]  # Remove "rust-v" prefix
-        return result
-    else:
-        raise RuntimeError(f"Unexpected tag format: {tag_name}")
+        # Filter out pre-releases and alpha versions
+        stable_releases = [
+            r
+            for r in releases
+            if not r.get("prerelease", False) and "-alpha" not in r.get("tag_name", "")
+        ]
+
+        if not stable_releases:
+            raise RuntimeError("No stable releases found for codex")
+
+        # Get the most recent stable release
+        latest = stable_releases[0]
+        tag_name = latest["tag_name"]
+
+        # Extract version from tag (e.g., "rust-v0.29.0" -> "0.29.0")
+        if tag_name.startswith("rust-v"):
+            result: str = tag_name[6:]  # Remove "rust-v" prefix
+            _cached_latest_version = result
+            return result
+        else:
+            raise RuntimeError(f"Unexpected tag format: {tag_name}")
 
 
 async def _fetch_release_assets(version: str) -> dict[str, Any]:
-    """Fetch release assets for a specific version."""
-    tag = f"rust-v{version}"
-    release_url = f"https://api.github.com/repos/openai/codex/releases/tags/{tag}"
-    release_json = await download_text_file(release_url)
-    result: dict[str, Any] = json.loads(release_json)
-    return result
+    """Fetch release assets for a specific version.
+
+    Results are cached in-process so repeated lookups for the same version
+    (across samples) don't make additional GitHub API calls.
+    """
+    async with _github_api_lock:
+        if version in _cached_release_assets:
+            return _cached_release_assets[version]
+
+        tag = f"rust-v{version}"
+        release_url = f"https://api.github.com/repos/openai/codex/releases/tags/{tag}"
+        release_json = await download_text_file(release_url)
+        result: dict[str, Any] = json.loads(release_json)
+        _cached_release_assets[version] = result
+        return result
