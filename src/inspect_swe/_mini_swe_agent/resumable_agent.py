@@ -38,7 +38,7 @@ def _trajectory_to_messages(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _fix_dangling_tool_calls(messages: list[dict[str, Any]]) -> None:
-    """Remove trailing assistant message if it has unanswered tool_calls."""
+    """Remove tool calls from assistant message if they are unanswered tool_calls."""
     if not messages:
         return
 
@@ -53,7 +53,11 @@ def _fix_dangling_tool_calls(messages: list[dict[str, Any]]) -> None:
         if msg.get("role") == "tool" and "tool_call_id" in msg
     }
     if call_ids - answered_ids:
-        messages.pop()
+        # Strip tool_calls but keep text content for message alternation
+        del last["tool_calls"]
+        # If there's no meaningful content left, replace with minimal text
+        if not last.get("content"):
+            last["content"] = "Task completed."
 
 
 def _load_trajectory_data(path: str) -> dict[str, Any]:
