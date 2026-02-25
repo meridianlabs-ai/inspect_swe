@@ -38,13 +38,7 @@ def _trajectory_to_messages(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _fix_dangling_tool_calls(messages: list[dict[str, Any]]) -> None:
-    """Remove trailing assistant message if it has unanswered tool_calls.
-
-    After removing exit messages, the last message may be an assistant tool call
-    (e.g. the submit/exit command) whose tool response was never recorded because
-    the exit interrupted the flow. APIs require every tool_call to have a matching
-    tool response, so we remove the trailing assistant message entirely.
-    """
+    """Remove trailing assistant message if it has unanswered tool_calls."""
     if not messages:
         return
 
@@ -62,7 +56,7 @@ def _fix_dangling_tool_calls(messages: list[dict[str, Any]]) -> None:
         messages.pop()
 
 
-def _load_trajectory(path: str) -> dict[str, Any]:
+def _load_trajectory_data(path: str) -> dict[str, Any]:
     """Read and validate a trajectory JSON file.
 
     Returns the parsed trajectory dict on success, raises RuntimeError
@@ -92,13 +86,13 @@ def _load_trajectory(path: str) -> dict[str, Any]:
 
 
 class ResumableAgent(DefaultAgent):
-    def run(self, task="", **kwargs):
+    def run(self, task: str = "", **kwargs: Any) -> dict[str, Any]:
         # First attempt executes normally
         if os.environ.get("MSWEA_RESUME", "false") != "true":
             return super().run(task=task, **kwargs)
 
         # 2 or more attempts load state from prior trajectory
-        data = _load_trajectory(str(self.config.output_path))
+        data = _load_trajectory_data(str(self.config.output_path))
         self.messages = _trajectory_to_messages(data)
 
         # Restore cost/call (v2 query() checks self.model.cost, not self.cost)
@@ -106,8 +100,8 @@ class ResumableAgent(DefaultAgent):
         stats = info.get("model_stats", {})
         self.cost = stats.get("instance_cost", 0.0)
         self.n_calls = stats.get("api_calls", 0)
-        self.model.cost = self.cost
-        self.model.n_calls = self.n_calls
+        self.model.cost = self.cost  # type: ignore[attr-defined]
+        self.model.n_calls = self.n_calls  # type: ignore[attr-defined]
 
         # Strip exit messages so the agent can continue
         while self.messages and self.messages[-1].get("role") == "exit":

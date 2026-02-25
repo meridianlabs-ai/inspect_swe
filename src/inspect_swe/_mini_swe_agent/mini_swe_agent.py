@@ -20,6 +20,7 @@ from inspect_ai.model import (
 from inspect_ai.scorer import score
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
+from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from .._util._async import is_callable_coroutine
 from .._util.agentwheel import AgentWheelSource, ensure_agent_wheel_installed
@@ -120,9 +121,20 @@ def mini_swe_agent(
         port = store().get(MODEL_PORT, 4000) + 1
         store().set(MODEL_PORT, port)
 
+        # resolve full model name (e.g. "openai/gpt-5-mini") for provider
+        # detection and bridge model creation
+        model_name = model if model is not None else str(get_model())
+        provider = model_name.split("/")[0] if "/" in model_name else "openai"
+        if provider == "openai":
+            # Note: force responses_api=False to avoid conversion issue with tool use.
+            bridge_model = get_model(model_name, responses_api=False, memoize=False)
+        else:
+            bridge_model = get_model(model_name, memoize=False)
+
         async with sandbox_agent_bridge(
             state,
             model=inspect_model,
+            model_aliases={inspect_model: bridge_model},
             filter=filter,
             retry_refusals=retry_refusals,
             compaction=compaction,
@@ -139,11 +151,13 @@ def mini_swe_agent(
                 sandbox=sbox,
             )
 
-            # define agent env (shared between centaur and normal mode)
-            model_name = model if model is not None else get_model().name
+            # MSWEA_MODEL_NAME uses "{provider}/inspect" so litellm routes
+            # to the correct provider while
+            # "inspect" avoids litellm's model-specific routing logic.
             agent_env = {
                 "MSWEA_CONFIGURED": "true",
-                "MSWEA_MODEL_NAME": model_name,
+                "MSWEA_MODEL_NAME": f"{provider}/inspect",
+                "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
                 "OPENAI_API_BASE": f"http://localhost:{bridge.port}/v1",
                 "OPENAI_API_KEY": "sk-none",
                 "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
@@ -154,7 +168,7 @@ def mini_swe_agent(
             if centaur:
                 await _run_mini_swe_centaur(
                     options=centaur,
-                    mini_cmd=[mini_binary, "--yolo"],
+                    mini_cmd=[mini_binary],
                     agent_env=agent_env,
                     state=state,
                 )
@@ -208,12 +222,16 @@ def mini_swe_agent(
                     }
                     agent_cmd = cmd + ["--task", agent_prompt]
 
-                    result = await sbox.exec(
-                        cmd=["bash", "-c", 'exec 0</dev/null "$@"', "bash"] + agent_cmd,
-                        cwd=cwd,
-                        env=run_env,
-                        user=user,
-                        concurrency=False,
+                    result = await sbox.exec_remote(
+                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
+                        + agent_cmd,
+                        options=ExecRemoteAwaitableOptions(
+                            cwd=cwd,
+                            env=run_env,
+                            user=user,
+                            concurrency=False,
+                        ),
+                        stream=False,
                     )
 
                     # track debug output

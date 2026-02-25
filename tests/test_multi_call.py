@@ -37,8 +37,15 @@ def test_gemini_cli_multi_call(sandbox: str) -> None:
 @skip_if_no_openai
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
-def test_mini_swe_agent_multi_call(sandbox: str) -> None:
+def test_mini_swe_agent_multi_call_openai(sandbox: str) -> None:
     check_multi_call("mini_swe_agent", "openai/gpt-5-mini", sandbox)
+
+
+@skip_if_no_anthropic
+@skip_if_no_docker
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_mini_swe_agent_multi_call_anthropic(sandbox: str) -> None:
+    check_multi_call("mini_swe_agent", "anthropic/claude-haiku-4-5", sandbox)
 
 
 def check_multi_call(
@@ -70,4 +77,4 @@ def check_multi_call(
         case "mini_swe_agent":
             assert len(user_messages) == 4
             # model may consolidate steps, so allow some variance
-            assert len(assistant_messages) >= 3
+            assert len(assistant_messages) >= 4

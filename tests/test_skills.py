@@ -1,4 +1,5 @@
 from typing import Literal
+
 from tests.conftest import (
     run_example,
     skip_if_no_anthropic,
