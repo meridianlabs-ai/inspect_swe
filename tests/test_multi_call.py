@@ -75,6 +75,6 @@ def check_multi_call(
             assert len(user_messages) >= 4
             assert len(assistant_messages) >= 4
         case "mini_swe_agent":
-            assert len(user_messages) == 4
-            # model may consolidate steps, so allow some variance
+            # model may have more messages due to bash tool use(user/assistant share tool call and tool response)
+            assert len(user_messages) >= 4
             assert len(assistant_messages) >= 4
