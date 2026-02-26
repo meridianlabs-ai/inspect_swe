@@ -13,7 +13,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter
+from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import SandboxEnvironment, store
@@ -50,6 +50,7 @@ def codex_cli(
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    model_aliases: dict[str, str | Model] | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     home_dir: str | None = None,
@@ -81,6 +82,9 @@ def codex_cli(
         centaur: Run in 'centaur' mode, which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use (defaults to main model for task).
+        model_aliases: Optional mapping of model names to Model instances or model name strings.
+            Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
+            When a model name in the mapping is referenced, the corresponding Model/string is used.
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         home_dir: Home directory to use for codex cli. If set, AGENTS.md, skills, and the MCP configuration will be written here.
@@ -121,6 +125,7 @@ def codex_cli(
         async with sandbox_agent_bridge(
             state,
             model=model,
+            model_aliases=model_aliases,
             filter=filter,
             retry_refusals=retry_refusals,
             port=port,
