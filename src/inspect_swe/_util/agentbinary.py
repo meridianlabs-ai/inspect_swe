@@ -1,8 +1,8 @@
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Literal, NamedTuple
 
-import anyio
 from inspect_ai.util import SandboxEnvironment, concurrency
 from inspect_ai.util import sandbox as sandbox_env
 
@@ -42,10 +42,14 @@ class AgentBinarySource:
 # In-process cache for version resolution results. When many samples run
 # concurrently they all call resolve_version with the same arguments.
 # Without caching, each call hits upstream APIs (e.g. GitHub, GCS),
-# risking rate-limit exhaustion. The lock serialises the first lookup;
-# subsequent calls for the same (binary, version, platform) return the
-# cached result immediately.
-_resolve_version_lock = anyio.Lock()
+# risking rate-limit exhaustion. We use a threading.Lock (not anyio.Lock)
+# because it only guards synchronous dict reads/writes — never held across
+# an await — and avoids issues with module-level anyio.Lock binding to a
+# stale event loop across multiple anyio.run() calls. No expiry: entries
+# live for the process lifetime. Two callers may race on the same key and
+# both call resolve_version(), but this is benign (same result) and unlikely
+# given the per-binary concurrency(1) lock in ensure_agent_binary_installed.
+_resolve_version_lock = threading.Lock()
 _resolved_versions: dict[tuple[str, str, SandboxPlatform], AgentBinaryVersion] = {}
 
 
@@ -122,11 +126,13 @@ async def download_agent_binary_async(
     # determine version and checksum (cached so concurrent samples don't
     # repeat upstream API calls that may be rate-limited)
     cache_key = (source.binary, version, platform)
-    async with _resolve_version_lock:
-        if cache_key in _resolved_versions:
-            resolved = _resolved_versions[cache_key]
-        else:
-            resolved = await source.resolve_version(version, platform)
+    with _resolve_version_lock:
+        cached = _resolved_versions.get(cache_key)
+    if cached is not None:
+        resolved = cached
+    else:
+        resolved = await source.resolve_version(version, platform)
+        with _resolve_version_lock:
             _resolved_versions[cache_key] = resolved
     version, expected_checksum, download_url = resolved
 
