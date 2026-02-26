@@ -4,12 +4,14 @@ Tests the exit-stripping + _fix_dangling_tool_calls resume logic
 for both Anthropic and OpenAI trajectory patterns.
 """
 
+from typing import Any
+
 from inspect_swe._mini_swe_agent.resumable_agent import _fix_dangling_tool_calls
 
 VALID_FORMAT = "mini-swe-agent-1.1"
 
 
-def strip_exit_and_fix(messages: list[dict]) -> list[dict]:
+def strip_exit_and_fix(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Replicate the resume logic: strip exit messages, then fix dangling tool calls."""
     msgs = [dict(m) for m in messages]
     while msgs and msgs[-1].get("role") == "exit":
@@ -19,11 +21,11 @@ def strip_exit_and_fix(messages: list[dict]) -> list[dict]:
 
 
 def test_anthropic_dangling_tool_call_preserves_alternation() -> None:
-    """When InterruptAgentFlow catches exit during tool execution, the tool
-    result ends up in the exit message. After stripping exit, the assistant
-    has dangling tool_calls. The fix strips tool_calls but keeps text,
-    so appending a new user prompt doesn't create consecutive user messages."""
-    messages = [
+    """When InterruptAgentFlow catches exit during tool execution, the tool result ends up in the exit message.
+
+    After stripping exit, the assistant has dangling tool_calls. The fix strips tool_calls but keeps text, so appending a new user prompt doesn't create consecutive user messages.
+    """
+    messages: list[dict[str, Any]] = [
         {"role": "system", "content": "You are helpful."},
         {"role": "user", "content": "What color is the sky?"},
         {
@@ -55,7 +57,7 @@ def test_anthropic_dangling_tool_call_preserves_alternation() -> None:
 
 def test_openai_dangling_tool_call_preserves_alternation() -> None:
     """Same scenario with OpenAI-style tool call IDs."""
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "system", "content": "You are helpful."},
         {"role": "user", "content": "What is 1+1?"},
         {
@@ -82,7 +84,7 @@ def test_openai_dangling_tool_call_preserves_alternation() -> None:
 
 def test_dangling_tool_call_no_content_gets_placeholder() -> None:
     """When the assistant had no text content, a placeholder is added."""
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "user", "content": "do something"},
         {"role": "assistant", "tool_calls": [{"id": "tc_1"}]},
         {"role": "exit", "content": "done"},
@@ -95,7 +97,7 @@ def test_dangling_tool_call_no_content_gets_placeholder() -> None:
 
 def test_answered_tool_calls_not_stripped() -> None:
     """Tool calls with matching results stay the same."""
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "assistant", "content": "checking", "tool_calls": [{"id": "tc_1"}]},
         {"role": "tool", "content": "result", "tool_call_id": "tc_1"},
         {"role": "assistant", "content": "done"},

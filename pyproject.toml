@@ -43,7 +43,8 @@ dev = [
     "types-PyYAML",
     "IPython",
     "inspect-evals",
-    "inspect_k8s_sandbox"
+    "inspect_k8s_sandbox",
+    "mini-swe-agent"
 ]
 doc = ["quarto-cli==1.7.31"]
 
