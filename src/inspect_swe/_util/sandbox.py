@@ -6,6 +6,8 @@ SandboxPlatform: TypeAlias = Literal[
     "linux-x64", "linux-arm64", "linux-x64-musl", "linux-arm64-musl"
 ]
 
+SANDBOX_INSTALL_DIR = "/var/tmp/.5c95f967ca830048"
+
 
 async def detect_sandbox_platform(sandbox: SandboxEnvironment) -> SandboxPlatform:
     # Get OS
