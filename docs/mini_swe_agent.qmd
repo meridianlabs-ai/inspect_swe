@@ -1,0 +1,79 @@
+---
+title: Mini SWE Agent
+agent: mini_swe_agent
+agent_provider: "SWE-agent"
+agent_name: "mini-swe-agent"
+agent_url: "https://github.com/SWE-agent/mini-swe-agent"
+---
+
+::: {.callout-note}
+The Mini SWE Agent described below is available only in the development version of Inspect SWE. Install the development version from GitHub with:
+
+```python
+pip install git+https://github.com/meridianlabs-ai/inspect_swe
+```
+:::
+
+{{< include _snippets/agent_intro.md >}}
+
+## Options
+
+The following options are supported for customizing the behavior of the agent:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Additional system prompt to append to default system prompt. |
+| `centaur` | Run in [Centaur Mode](#centaur-mode), which makes mini-swe-agent available to an Inspect `human_cli()` agent rather than running it unattended. |
+| `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
+| `model` | Model name to use for agent (defaults to main model for task). |
+| `filter` | Filter for intercepting bridged model requests. |
+| `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
+| `compaction` | Compaction strategy for managing context window overflow. |
+| `cwd` | Working directory for {{< meta agent_name >}} session. |
+| `env` | Environment variables to set for {{< meta agent_name >}}. |
+| `user` | User to execute {{< meta agent_name >}} as in the sandbox. |
+| `sandbox` | Sandbox environment name. |
+| `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |
+
+: {tbl-colwidths=\[25,75\]}
+
+For example, here we specify a custom system prompt:
+
+```python
+{{< meta agent >}}(
+    system_prompt="You are an ace system researcher.",
+)
+```
+
+## Installation
+
+By default, the agent will install the current stable version of {{< meta agent_name >}} in the sandbox via Python wheels. You can override this behaviour using the `version` option:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `"stable"` | Install and use the default pinned stable version. |
+| `"sandbox"` | Use the version of {{< meta agent_name >}} in the sandbox (raises `RuntimeError` if not available in the sandbox) |
+| `"latest"` | Install and use the latest version from PyPI. |
+| `"x.x.x"` | Install and use a specific version number. |
+
+: {tbl-colwidths=\[25,75\]}
+
+Unlike the other agents which use standalone binaries, {{< meta agent_name >}} is installed via Python wheels using `uv`. If you don't ever want to rely on automatic installation of {{< meta agent_name >}} (e.g. if you run your evaluations offline), you can use one of two approaches:
+
+1.  Pre-install the version of {{< meta agent_name >}} you want to use in the sandbox, then use `version="sandbox"`:
+
+    ``` python
+    {{< meta agent >}}(version="sandbox")
+    ```
+
+2.  Pre-install {{< meta agent_name >}} in your sandbox Dockerfile:
+
+    ```dockerfile
+    RUN pip install mini-swe-agent==2.2.3
+    ```
+
+    Then reference it with `version="sandbox"` in your task.
+
+{{< include _snippets/agent_centaur.md >}}
+
+{{< include _snippets/agent_troubleshooting.md >}}

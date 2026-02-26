@@ -21,8 +21,7 @@ from tests.conftest import skip_if_no_docker
 
 TRAJ_PATH = "/var/tmp/test_trajectory.json"
 
-# Valid v2 trajectory with prior cost so the agent hits cost_limit immediately
-# after loading (no model calls needed).
+# Valid v2 trajectory with prior cost data for resume testing.
 VALID_TRAJECTORY = json.dumps(
     {
         "trajectory_format": "mini-swe-agent-1.1",
@@ -45,9 +44,7 @@ VALID_TRAJECTORY = json.dumps(
 
 
 @solver
-def resume_with_trajectory(
-    content: str | None, cost_limit: float | None = None
-) -> Solver:
+def resume_with_trajectory(content: str | None) -> Solver:
     """Inject a trajectory file and run the agent in resume mode.
 
     Sets the trajectory store key before calling run(), then passes
@@ -67,7 +64,7 @@ def resume_with_trajectory(
         if content is not None:
             await sbox.write_file(TRAJ_PATH, content)
 
-        agent = mini_swe_agent(system_prompt="test", cost_limit=cost_limit)
+        agent = mini_swe_agent(system_prompt="test")
 
         # Messages with a prior assistant response trigger the resume path
         messages: list[ChatMessage] = [
@@ -130,13 +127,13 @@ def test_resumable_agent_bad_trajectory(
 def test_resumable_agent_valid_trajectory() -> None:
     """Agent should load a valid trajectory and resume without trajectory errors.
 
-    Uses a trajectory with high prior cost (10.0) and a low cost_limit (0.001)
-    so the agent hits LimitsExceeded immediately after loading — no model calls
-    needed, and the agent exits cleanly.
+    The agent will fail when trying to call the mock model after loading,
+    but the key assertion is that trajectory loading itself succeeded
+    (no "Cannot resume", "not supported", or "invalid JSON" errors).
     """
     task = Task(
         dataset=[Sample(input="test", target="pass")],
-        solver=resume_with_trajectory(VALID_TRAJECTORY, cost_limit=0.001),
+        solver=resume_with_trajectory(VALID_TRAJECTORY),
         sandbox="docker",
     )
     logs = eval(task, model="mockllm/model", limit=1)
@@ -144,11 +141,10 @@ def test_resumable_agent_valid_trajectory() -> None:
     assert len(logs) == 1
     log = logs[0]
 
-    # The agent should complete (not error). It exits via LimitsExceeded
-    # which is a normal exit, not a RuntimeError.
+    # The agent may error due to mockllm/model, but trajectory-related
+    # errors mean the loading path is broken.
     if log.status == "error":
         error_str = str(log.error)
-        # Trajectory-related errors mean the loading path is broken
         assert "Cannot resume" not in error_str, (
             f"Trajectory load failed: {error_str[:500]}"
         )

@@ -57,7 +57,6 @@ def mini_swe_agent(
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     compaction: CompactionStrategy | None = None,
-    cost_limit: float | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -76,8 +75,6 @@ def mini_swe_agent(
     Use `attempts` to enable additional submissions if initial submission(s)
     are incorrect (by default, no additional attempts are permitted).
 
-    Use `cost_limit` to set a maximum cost for the agent run (in USD).
-
     This agent does not handle compaction natively. Use `compaction` to specify a compaction strategy.
 
     Args:
@@ -91,7 +88,6 @@ def mini_swe_agent(
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         compaction: Compaction strategy for managing context window overflow.
-        cost_limit: Maximum cost limit for the agent run.
         cwd: Working directory to run mini-swe-agent within.
         env: Environment variables to set for mini-swe-agent.
         user: User to execute mini-swe-agent with.
@@ -200,10 +196,6 @@ def mini_swe_agent(
                     "--output",
                     trajectory_path,
                 ]
-
-                # add cost limit if specified
-                if cost_limit is not None:
-                    cmd.extend(["--cost-limit", str(cost_limit)])
 
                 # env for mini CLI (adds PYTHONPATH for resumable agent import)
                 mini_env = agent_env | {
