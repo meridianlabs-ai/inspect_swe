@@ -15,6 +15,7 @@ from inspect_ai.model import (
     ChatMessageSystem,
     CompactionStrategy,
     GenerateFilter,
+    Model,
     get_model,
 )
 from inspect_ai.scorer import score
@@ -54,6 +55,7 @@ def mini_swe_agent(
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    model_aliases: dict[str, str | Model] | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     compaction: CompactionStrategy | None = None,
@@ -85,6 +87,10 @@ def mini_swe_agent(
             to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts.
         model: Model name to use (defaults to main model for task).
+        model_aliases: Optional mapping of model names to Model instances or model name
+            strings. Allows using custom Model implementations (e.g., wrapped Agents)
+            instead of standard models. When a model name in the mapping is referenced,
+            the corresponding Model/string is used.
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         compaction: Compaction strategy for managing context window overflow.
@@ -126,11 +132,12 @@ def mini_swe_agent(
             bridge_model = get_model(model_name, responses_api=False, memoize=False)
         else:
             bridge_model = get_model(model_name, memoize=False)
+        inspect_aliases: dict[str, str | Model] = {inspect_model: bridge_model}
 
         async with sandbox_agent_bridge(
             state,
             model=inspect_model,
-            model_aliases={inspect_model: bridge_model},
+            model_aliases=inspect_aliases | (model_aliases or {}),
             filter=filter,
             retry_refusals=retry_refusals,
             compaction=compaction,

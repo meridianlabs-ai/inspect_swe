@@ -2,6 +2,7 @@
 
 - Mini SWE Agent: New `mini_swe_agent()` agent implementation.
 - Agent Binaries: Make only a single request for the latest agent binary versions (vs. a request per sample).
+- Model aliases: Enable passing `model_aliases` to all agents (passed through to `sandbox_agent_bridge()`).
 
 ## 0.2.37 (24 February 2026)
 
