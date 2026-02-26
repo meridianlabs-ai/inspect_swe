@@ -42,7 +42,9 @@ dev = [
     "pytest-dotenv",
     "types-PyYAML",
     "IPython",
-    "inspect_k8s_sandbox"
+    "inspect-evals",
+    "inspect_k8s_sandbox",
+    "mini-swe-agent"
 ]
 doc = ["quarto-cli==1.7.31"]
 
