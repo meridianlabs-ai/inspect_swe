@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Literal, NamedTuple
 
+import anyio
 from inspect_ai.util import SandboxEnvironment, concurrency
 from inspect_ai.util import sandbox as sandbox_env
 
@@ -36,6 +37,16 @@ class AgentBinarySource:
     list_cached_binaries: Callable[[], list[Path]]
     post_download: Callable[[bytes], bytes] | None
     post_install: str | None
+
+
+# In-process cache for version resolution results. When many samples run
+# concurrently they all call resolve_version with the same arguments.
+# Without caching, each call hits upstream APIs (e.g. GitHub, GCS),
+# risking rate-limit exhaustion. The lock serialises the first lookup;
+# subsequent calls for the same (binary, version, platform) return the
+# cached result immediately.
+_resolve_version_lock = anyio.Lock()
+_resolved_versions: dict[tuple[str, str, SandboxPlatform], AgentBinaryVersion] = {}
 
 
 async def ensure_agent_binary_installed(
@@ -105,13 +116,19 @@ async def download_agent_binary_async(
     platform: SandboxPlatform,
     logger: Callable[[str], None] | None = None,
 ) -> tuple[bytes, str]:
-    # resovle logger
+    # resolve logger
     logger = logger or print
 
-    # determine version and checksum
-    version, expected_checksum, download_url = await source.resolve_version(
-        version, platform
-    )
+    # determine version and checksum (cached so concurrent samples don't
+    # repeat upstream API calls that may be rate-limited)
+    cache_key = (source.binary, version, platform)
+    async with _resolve_version_lock:
+        if cache_key in _resolved_versions:
+            resolved = _resolved_versions[cache_key]
+        else:
+            resolved = await source.resolve_version(version, platform)
+            _resolved_versions[cache_key] = resolved
+    version, expected_checksum, download_url = resolved
 
     # check the cache (if post_download is used, don't verify checksum since cached is processed)
     cache_checksum = None if source.post_download else expected_checksum
