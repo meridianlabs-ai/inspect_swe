@@ -69,7 +69,7 @@ def check_multi_call(
             assert len(user_messages) == 4
             assert len(assistant_messages) == 4
         case "codex_cli":
-            assert len(user_messages) == 12
+            assert len(user_messages) == 6
             assert len(assistant_messages) == 4
         case "gemini_cli":
             assert len(user_messages) >= 4
