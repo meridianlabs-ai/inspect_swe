@@ -13,8 +13,8 @@ import json
 import os
 from typing import Any
 
-from minisweagent.agents.default import DefaultAgent  # type: ignore
-from minisweagent.exceptions import InterruptAgentFlow  # type: ignore
+from minisweagent.agents.default import DefaultAgent
+from minisweagent.exceptions import InterruptAgentFlow
 
 # Trajectory format version used by mini-swe-agent v2.x
 # https://mini-swe-agent.com/latest/usage/output_files/#trajectory-files-trajjson
@@ -89,11 +89,11 @@ def _load_trajectory_data(path: str) -> dict[str, Any]:
     return data
 
 
-class ResumableAgent(DefaultAgent):  # type: ignore[misc]
+class ResumableAgent(DefaultAgent):
     def run(self, task: str = "", **kwargs: Any) -> dict[str, Any]:
         # First attempt executes normally
         if os.environ.get("MSWEA_RESUME", "false") != "true":
-            return super().run(task=task, **kwargs)  # type: ignore[no-any-return]
+            return super().run(task=task, **kwargs)
 
         # 2 or more attempts load state from prior trajectory
         data = _load_trajectory_data(str(self.config.output_path))
@@ -104,8 +104,8 @@ class ResumableAgent(DefaultAgent):  # type: ignore[misc]
         stats = info.get("model_stats", {})
         self.cost = stats.get("instance_cost", 0.0)
         self.n_calls = stats.get("api_calls", 0)
-        self.model.cost = self.cost
-        self.model.n_calls = self.n_calls
+        self.model.cost = self.cost  # type: ignore[attr-defined]
+        self.model.n_calls = self.n_calls  # type: ignore[attr-defined]
 
         # Strip exit messages so the agent can continue
         while self.messages and self.messages[-1].get("role") == "exit":
