@@ -1,8 +1,8 @@
-import asyncio
 import json
 from pathlib import Path
 from typing import Any
 
+import anyio
 from typing_extensions import Literal
 
 from .._util.agentbinary import AgentBinarySource, AgentBinaryVersion
@@ -16,7 +16,7 @@ from .._util.tarball import extract_tarball
 # each sample resolves the version separately, quickly exhausting the limit.
 # The cache lives for the process lifetime, so each eval run gets a
 # consistent version and the next run picks up any new releases.
-_github_api_lock = asyncio.Lock()
+_github_api_lock = anyio.Lock()
 _cached_latest_version: str | None = None
 _cached_release_assets: dict[str, dict[str, Any]] = {}
 
