@@ -6,14 +6,6 @@ agent_name: "mini-swe-agent"
 agent_url: "https://github.com/SWE-agent/mini-swe-agent"
 ---
 
-::: {.callout-note}
-The Mini SWE Agent described below is available only in the development version of Inspect SWE. Install the development version from GitHub with:
-
-```python
-pip install git+https://github.com/meridianlabs-ai/inspect_swe
-```
-:::
-
 {{< include _snippets/agent_intro.md >}}
 
 ## Options
