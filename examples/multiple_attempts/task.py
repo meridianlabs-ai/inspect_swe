@@ -9,7 +9,9 @@ from inspect_swe import claude_code, codex_cli, gemini_cli, mini_swe_agent
 
 @task
 def multiple_attempts(
-    agent: Literal["claude_code", "codex_cli", "gemini_cli", "mini_swe_agent"] = "claude_code",
+    agent: Literal[
+        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent"
+    ] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
     # setup agent
