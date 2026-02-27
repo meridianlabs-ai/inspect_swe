@@ -1,19 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/mini_swe_agent.html</loc>
+    <lastmod>2026-02-27T13:31:50.263Z</lastmod>
+  </url>
+  <url>
     <loc>https://meridianlabs-ai.github.io/inspect_swe/codex_cli.html</loc>
     <lastmod>2026-01-03T13:58:52.113Z</lastmod>
   </url>
   <url>
     <loc>https://meridianlabs-ai.github.io/inspect_swe/CHANGELOG.html</loc>
-    <lastmod>2026-02-14T16:51:23.437Z</lastmod>
+    <lastmod>2026-02-27T13:26:24.037Z</lastmod>
   </url>
   <url>
     <loc>https://meridianlabs-ai.github.io/inspect_swe/claude_code.html</loc>
-    <lastmod>2026-02-10T16:38:32.335Z</lastmod>
+    <lastmod>2026-02-20T07:29:20.244Z</lastmod>
   </url>
   <url>
     <loc>https://meridianlabs-ai.github.io/inspect_swe/index.html</loc>
-    <lastmod>2026-02-14T16:51:23.438Z</lastmod>
+    <lastmod>2026-02-26T15:04:30.798Z</lastmod>
+  </url>
+  <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/gemini_cli.html</loc>
+    <lastmod>2026-02-20T07:29:20.244Z</lastmod>
   </url>
 </urlset>

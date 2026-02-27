@@ -109,6 +109,14 @@ ul.task-list li input[type="checkbox"] {
     <a class="dropdown-item" href="./codex_cli.html">
  <span class="dropdown-text">Codex CLI</span></a>
   </li>  
+        <li>
+    <a class="dropdown-item" href="./gemini_cli.html">
+ <span class="dropdown-text">Gemini CLI</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./mini_swe_agent.html">
+ <span class="dropdown-text">Mini SWE Agent</span></a>
+  </li>  
     </ul>
   </li>
 </ul>
@@ -176,6 +184,18 @@ ul.task-list li input[type="checkbox"] {
  <span class="menu-text">Codex CLI</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./gemini_cli.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Gemini CLI</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./mini_swe_agent.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Mini SWE Agent</span></a>
+  </div>
+</li>
       </ul>
   </li>
     </ul>
@@ -188,8 +208,11 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#february-2026" id="toc-february-2026" class="nav-link active" data-scroll-target="#february-2026">0.2.34 (10 February 2026)</a></li>
-  <li><a href="#february-2026-1" id="toc-february-2026-1" class="nav-link" data-scroll-target="#february-2026-1">0.2.33 (10 February 2026)</a></li>
+  <li><a href="#february-2026" id="toc-february-2026" class="nav-link active" data-scroll-target="#february-2026">0.2.38 (27 February 2026)</a></li>
+  <li><a href="#february-2026-1" id="toc-february-2026-1" class="nav-link" data-scroll-target="#february-2026-1">0.2.37 (24 February 2026)</a></li>
+  <li><a href="#february-2026-2" id="toc-february-2026-2" class="nav-link" data-scroll-target="#february-2026-2">0.2.36 (23 February 2026)</a></li>
+  <li><a href="#february-2026-3" id="toc-february-2026-3" class="nav-link" data-scroll-target="#february-2026-3">0.2.34 (10 February 2026)</a></li>
+  <li><a href="#february-2026-4" id="toc-february-2026-4" class="nav-link" data-scroll-target="#february-2026-4">0.2.33 (10 February 2026)</a></li>
   <li><a href="#january-2026" id="toc-january-2026" class="nav-link" data-scroll-target="#january-2026">0.2.32 (31 January 2026)</a></li>
   <li><a href="#january-2026-1" id="toc-january-2026-1" class="nav-link" data-scroll-target="#january-2026-1">0.2.31 (03 January 2026)</a></li>
   <li><a href="#december-2025" id="toc-december-2025" class="nav-link" data-scroll-target="#december-2025">0.2.30 (24 December 2025)</a></li>
@@ -225,14 +248,38 @@ ul.task-list li input[type="checkbox"] {
 
 
 <section id="february-2026" class="level2">
-<h2 class="anchored" data-anchor-id="february-2026">0.2.34 (10 February 2026)</h2>
+<h2 class="anchored" data-anchor-id="february-2026">0.2.38 (27 February 2026)</h2>
+<ul>
+<li>Mini SWE Agent: New <code>mini_swe_agent()</code> agent implementation.</li>
+<li>Agent Binaries: Make only a single request for the latest agent binary versions (vs.&nbsp;a request per sample).</li>
+<li>Model aliases: Enable passing <code>model_aliases</code> to all agents (passed through to <code>sandbox_agent_bridge()</code>).</li>
+</ul>
+</section>
+<section id="february-2026-1" class="level2">
+<h2 class="anchored" data-anchor-id="february-2026-1">0.2.37 (24 February 2026)</h2>
+<ul>
+<li>Claude Code: Capture <code>stream-json</code> output to create agent spans within transcript.</li>
+</ul>
+</section>
+<section id="february-2026-2" class="level2">
+<h2 class="anchored" data-anchor-id="february-2026-2">0.2.36 (23 February 2026)</h2>
+<ul>
+<li>Gemini CLI: New <code>gemini_cli()</code> agent for Google Gemini.</li>
+<li>Sandbox: Use <code>exec_remote()</code> interface for impoved robustness of long running processes.</li>
+<li>Claude Code: Remove <code>retry_timeouts</code> options (not longer necessary due to use of <code>exec_remote()</code>).</li>
+<li>Claude Code: Add <code>debug</code> option to enable <code>--debug</code> and <code>--verbose</code> CLI flags.</li>
+<li>Claude Code: Pre-seed auth token config to fix silent auth failure in sandbox.</li>
+</ul>
+</section>
+<section id="february-2026-3" class="level2">
+<h2 class="anchored" data-anchor-id="february-2026-3">0.2.34 (10 February 2026)</h2>
 <ul>
 <li>Agent execution: Redirect stdin using <code>exec 0&lt;/dev/null;</code></li>
 <li>Agent execution: Print returncode for failed processes.</li>
 </ul>
 </section>
-<section id="february-2026-1" class="level2">
-<h2 class="anchored" data-anchor-id="february-2026-1">0.2.33 (10 February 2026)</h2>
+<section id="february-2026-4" class="level2">
+<h2 class="anchored" data-anchor-id="february-2026-4">0.2.33 (10 February 2026)</h2>
 <ul>
 <li>Claude Code: Look for request timeout errors in stdout as well as stderr.</li>
 <li>Claude Code: Restore default “auto” version behavior (download latest stable version).</li>

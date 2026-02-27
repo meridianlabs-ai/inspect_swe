@@ -1,5 +1,89 @@
 [
   {
+    "objectID": "mini_swe_agent.html",
+    "href": "mini_swe_agent.html",
+    "title": "Mini SWE Agent",
+    "section": "",
+    "text": "The mini_swe_agent() agent uses the unattended mode of SWE-agent mini-swe-agent to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNotemini-swe-agent Installation\n\n\n\nBy default, the agent will download the current stable version of mini-swe-agent and copy it to the sandbox. You can also exercise more explicit control over which version of mini-swe-agent is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#overview",
+    "href": "mini_swe_agent.html#overview",
+    "title": "Mini SWE Agent",
+    "section": "",
+    "text": "The mini_swe_agent() agent uses the unattended mode of SWE-agent mini-swe-agent to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNotemini-swe-agent Installation\n\n\n\nBy default, the agent will download the current stable version of mini-swe-agent and copy it to the sandbox. You can also exercise more explicit control over which version of mini-swe-agent is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#basic-usage",
+    "href": "mini_swe_agent.html#basic-usage",
+    "title": "Mini SWE Agent",
+    "section": "Basic Usage",
+    "text": "Basic Usage\nUse the mini_swe_agent() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import mini_swe_agent\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=mini_swe_agent(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/mini_swe_agent\nIf you want to try this out locally, see the system_explorer example.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#options",
+    "href": "mini_swe_agent.html#options",
+    "title": "Mini SWE Agent",
+    "section": "Options",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\ncentaur\nRun in Centaur Mode, which makes mini-swe-agent available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncompaction\nCompaction strategy for managing context window overflow.\n\n\ncwd\nWorking directory for mini-swe-agent session.\n\n\nenv\nEnvironment variables to set for mini-swe-agent.\n\n\nuser\nUser to execute mini-swe-agent as in the sandbox.\n\n\nsandbox\nSandbox environment name.\n\n\nversion\nVersion of mini-swe-agent to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt:\nmini_swe_agent(\n    system_prompt=\"You are an ace system researcher.\",\n)",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#installation-1",
+    "href": "mini_swe_agent.html#installation-1",
+    "title": "Mini SWE Agent",
+    "section": "Installation",
+    "text": "Installation\nBy default, the agent will install the current stable version of mini-swe-agent in the sandbox via Python wheels. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"stable\"\nInstall and use the default pinned stable version.\n\n\n\"sandbox\"\nUse the version of mini-swe-agent in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nInstall and use the latest version from PyPI.\n\n\n\"x.x.x\"\nInstall and use a specific version number.\n\n\n\nUnlike the other agents which use standalone binaries, mini-swe-agent is installed via Python wheels using uv. If you don’t ever want to rely on automatic installation of mini-swe-agent (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of mini-swe-agent you want to use in the sandbox, then use version=\"sandbox\":\nmini_swe_agent(version=\"sandbox\")\nPre-install mini-swe-agent in your sandbox Dockerfile:\nRUN pip install mini-swe-agent==2.2.3\nThen reference it with version=\"sandbox\" in your task.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#centaur-mode",
+    "href": "mini_swe_agent.html#centaur-mode",
+    "title": "Mini SWE Agent",
+    "section": "Centaur Mode",
+    "text": "Centaur Mode\nThe mini_swe_agent() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes mini-swe-agent available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the mini_swe_agent() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import mini_swe_agent\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=mini_swe_agent(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/mini_swe_agent -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=mini_swe_agent(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#troubleshooting",
+    "href": "mini_swe_agent.html#troubleshooting",
+    "title": "Mini SWE Agent",
+    "section": "Troubleshooting",
+    "text": "Troubleshooting\nIf mini-swe-agent doesn’t appear to be working or working as expected, you can troubleshoot by dumping the mini-swe-agent debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"mini-swe-agent\"",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
     "objectID": "codex_cli.html",
     "href": "codex_cli.html",
     "title": "Codex CLI",
@@ -112,18 +196,39 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Agent execution: Redirect stdin using exec 0&lt;/dev/null;\nAgent execution: Print returncode for failed processes."
+    "text": "Mini SWE Agent: New mini_swe_agent() agent implementation.\nAgent Binaries: Make only a single request for the latest agent binary versions (vs. a request per sample).\nModel aliases: Enable passing model_aliases to all agents (passed through to sandbox_agent_bridge())."
   },
   {
     "objectID": "CHANGELOG.html#february-2026",
     "href": "CHANGELOG.html#february-2026",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Agent execution: Redirect stdin using exec 0&lt;/dev/null;\nAgent execution: Print returncode for failed processes."
+    "text": "Mini SWE Agent: New mini_swe_agent() agent implementation.\nAgent Binaries: Make only a single request for the latest agent binary versions (vs. a request per sample).\nModel aliases: Enable passing model_aliases to all agents (passed through to sandbox_agent_bridge())."
   },
   {
     "objectID": "CHANGELOG.html#february-2026-1",
     "href": "CHANGELOG.html#february-2026-1",
+    "title": "Inspect SWE",
+    "section": "0.2.37 (24 February 2026)",
+    "text": "0.2.37 (24 February 2026)\n\nClaude Code: Capture stream-json output to create agent spans within transcript."
+  },
+  {
+    "objectID": "CHANGELOG.html#february-2026-2",
+    "href": "CHANGELOG.html#february-2026-2",
+    "title": "Inspect SWE",
+    "section": "0.2.36 (23 February 2026)",
+    "text": "0.2.36 (23 February 2026)\n\nGemini CLI: New gemini_cli() agent for Google Gemini.\nSandbox: Use exec_remote() interface for impoved robustness of long running processes.\nClaude Code: Remove retry_timeouts options (not longer necessary due to use of exec_remote()).\nClaude Code: Add debug option to enable --debug and --verbose CLI flags.\nClaude Code: Pre-seed auth token config to fix silent auth failure in sandbox."
+  },
+  {
+    "objectID": "CHANGELOG.html#february-2026-3",
+    "href": "CHANGELOG.html#february-2026-3",
+    "title": "Inspect SWE",
+    "section": "0.2.34 (10 February 2026)",
+    "text": "0.2.34 (10 February 2026)\n\nAgent execution: Redirect stdin using exec 0&lt;/dev/null;\nAgent execution: Print returncode for failed processes."
+  },
+  {
+    "objectID": "CHANGELOG.html#february-2026-4",
+    "href": "CHANGELOG.html#february-2026-4",
     "title": "Inspect SWE",
     "section": "0.2.33 (10 February 2026)",
     "text": "0.2.33 (10 February 2026)\n\nClaude Code: Look for request timeout errors in stdout as well as stderr.\nClaude Code: Restore default “auto” version behavior (download latest stable version)."
@@ -416,7 +521,7 @@
     "href": "index.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "The inspect_swe package makes software engineering agents like Claude Code and Codex CLI available as standard Inspect agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge().\nAgents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents, and that features like token or time limits and log transcripts work as normal with the agents.",
+    "text": "The inspect_swe package makes software engineering agents like Claude Code, Codex CLI, Gemini CLI, and Mini SWE Agent available as standard Inspect agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge().\nAgents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents, and that features like token or time limits and log transcripts work as normal with the agents.",
     "crumbs": [
       "Home",
       "Getting Started"
@@ -427,7 +532,7 @@
     "href": "index.html#overview",
     "title": "Inspect SWE",
     "section": "",
-    "text": "The inspect_swe package makes software engineering agents like Claude Code and Codex CLI available as standard Inspect agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge().\nAgents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents, and that features like token or time limits and log transcripts work as normal with the agents.",
+    "text": "The inspect_swe package makes software engineering agents like Claude Code, Codex CLI, Gemini CLI, and Mini SWE Agent available as standard Inspect agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge().\nAgents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents, and that features like token or time limits and log transcripts work as normal with the agents.",
     "crumbs": [
       "Home",
       "Getting Started"
@@ -438,10 +543,118 @@
     "href": "index.html#getting-started",
     "title": "Inspect SWE",
     "section": "Getting Started",
-    "text": "Getting Started\nInstall Inspect SWE from PyPI with:\npip install inspect-swe\nThen, try out one or more of the available agents:\n\n\n\n\n\n\n\nAgent\nDescription\n\n\n\n\nclaude_code()\nAnthropic’s agentic coding tool Claude Code\n\n\ncodex_cli()\nOpenAI’s terminal-based coding agent Codex CLI",
+    "text": "Getting Started\nInstall Inspect SWE from PyPI with:\npip install inspect-swe\nThen, try out one or more of the available agents:\n\n\n\n\n\n\n\nAgent\nDescription\n\n\n\n\nclaude_code()\nAnthropic’s agentic coding tool Claude Code\n\n\ncodex_cli()\nOpenAI’s terminal-based coding agent Codex CLI\n\n\ngemini_cli()\nGoogle’s open-source AI agent Gemini CLI\n\n\nmini_swe_agent()\nSWE-agent’s minimal 100-line agent.",
     "crumbs": [
       "Home",
       "Getting Started"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html",
+    "href": "gemini_cli.html",
+    "title": "Gemini CLI",
+    "section": "",
+    "text": "The gemini_cli() agent uses the unattended mode of Google Gemini CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteGemini CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Gemini CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Gemini CLI is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html#overview",
+    "href": "gemini_cli.html#overview",
+    "title": "Gemini CLI",
+    "section": "",
+    "text": "The gemini_cli() agent uses the unattended mode of Google Gemini CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteGemini CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Gemini CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Gemini CLI is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html#basic-usage",
+    "href": "gemini_cli.html#basic-usage",
+    "title": "Gemini CLI",
+    "section": "Basic Usage",
+    "text": "Basic Usage\nUse the gemini_cli() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import gemini_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=gemini_cli(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/gemini_cli\nIf you want to try this out locally, see the system_explorer example.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html#options",
+    "href": "gemini_cli.html#options",
+    "title": "Gemini CLI",
+    "section": "Options",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ncentaur\nRun in Centaur Mode, which makes Gemini CLI available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\ngemini_model\nGemini model name to pass to CLI. This bypasses the auto-router. Use \"gemini-2.5-pro\" (default) or \"gemini-2.5-flash\".\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorking directory for Gemini CLI session.\n\n\nenv\nEnvironment variables to set for Gemini CLI.\n\n\nversion\nVersion of Gemini CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt:\ngemini_cli(\n    system_prompt=\"You are an ace system researcher.\"\n)",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html#mcp-servers",
+    "href": "gemini_cli.html#mcp-servers",
+    "title": "Gemini CLI",
+    "section": "MCP Servers",
+    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Gemini CLI. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MCP server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import gemini_cli\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=gemini_cli(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html#bridged-tools",
+    "href": "gemini_cli.html#bridged-tools",
+    "title": "Gemini CLI",
+    "section": "Bridged Tools",
+    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import gemini_cli\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=gemini_cli(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html#installation-1",
+    "href": "gemini_cli.html#installation-1",
+    "title": "Gemini CLI",
+    "section": "Installation",
+    "text": "Installation\nBy default, the agent will download the current stable version of Gemini CLI and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Gemini CLI in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of Gemini CLI in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x-preview.y\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Gemini CLI (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Gemini CLI you want to use in the sandbox, then use version=\"sandbox\":\ngemini_cli(version=\"sandbox\")\nDownload the version of Gemini CLI you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"gemini_cli\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\ngemini_cli(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html#centaur-mode",
+    "href": "gemini_cli.html#centaur-mode",
+    "title": "Gemini CLI",
+    "section": "Centaur Mode",
+    "text": "Centaur Mode\nThe gemini_cli() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes Gemini CLI available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the gemini_cli() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import gemini_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=gemini_cli(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/gemini_cli -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=gemini_cli(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html#troubleshooting",
+    "href": "gemini_cli.html#troubleshooting",
+    "title": "Gemini CLI",
+    "section": "Troubleshooting",
+    "text": "Troubleshooting\nIf Gemini CLI doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Gemini CLI debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"Gemini CLI\"",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
     ]
   }
 ]
