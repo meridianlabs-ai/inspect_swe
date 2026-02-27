@@ -16,6 +16,7 @@ from inspect_ai.model import (
     CompactionStrategy,
     GenerateFilter,
     Model,
+    ModelName,
     get_model,
 )
 from inspect_ai.scorer import score
@@ -123,15 +124,8 @@ def mini_swe_agent(
         port = store().get(MODEL_PORT, 4000) + 1
         store().set(MODEL_PORT, port)
 
-        # resolve full model name (e.g. "openai/gpt-5-mini") for provider
-        # detection and bridge model creation
-        model_name = model if model is not None else str(get_model())
-        provider = model_name.split("/")[0] if "/" in model_name else "openai"
-        if provider == "openai":
-            # Note: force responses_api=False to avoid conversion issue with tool use.
-            bridge_model = get_model(model_name, responses_api=False, memoize=False)
-        else:
-            bridge_model = get_model(model_name, memoize=False)
+        # ensure that openai doesn't use repsonses_api
+        bridge_model = _model_without_responses_api(model)
         inspect_aliases: dict[str, str | Model] = {inspect_model: bridge_model}
 
         async with sandbox_agent_bridge(
@@ -159,7 +153,7 @@ def mini_swe_agent(
             # "inspect" avoids litellm's model-specific routing logic.
             agent_env = {
                 "MSWEA_CONFIGURED": "true",
-                "MSWEA_MODEL_NAME": f"{provider}/inspect",
+                "MSWEA_MODEL_NAME": f"{ModelName(bridge_model).api}/inspect",
                 "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
                 "OPENAI_API_BASE": f"http://localhost:{bridge.port}/v1",
                 "OPENAI_API_KEY": "sk-none",
@@ -297,3 +291,18 @@ async def _run_mini_swe_centaur(
 
     # run the human cli
     await run_centaur(options, instructions, bashrc, state)
+
+
+def _model_without_responses_api(model: str | Model | None) -> Model:
+    model = get_model(model)
+    name = ModelName(model)
+    if name.api == "openai":
+        return get_model(
+            model=str(name),
+            config=model.config,
+            base_url=model.api.base_url,
+            memoize=False,
+            **(model.model_args | {"responses_api": False}),
+        )
+    else:
+        return model
