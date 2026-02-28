@@ -1,4 +1,4 @@
-## 0.2.38 (27 February 2026)
+## 0.2.38 (28 February 2026)
 
 - Mini SWE Agent: New `mini_swe_agent()` agent implementation.
 - Agent Binaries: Make only a single request for the latest agent binary versions (vs. a request per sample).
