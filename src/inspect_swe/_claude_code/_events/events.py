@@ -580,13 +580,11 @@ async def claude_code_events(
     possible rather than buffering all input first. This enables real-time
     streaming from stdout in headless mode.
 
-    Handles subagent event inlining: uses the ``isSidechain`` flag on each
-    raw event to distinguish main-session events from subagent events.
-    Subagent sessions are matched to parent Task tool calls via a FIFO queue:
-    new Task tool_use blocks are enqueued in order, and each new subagent
-    sessionId pops the next unmatched Task tool. If subagent events arrive
-    before their Task tool_use block is processed, they are buffered and
-    drained once the corresponding Task tool is registered.
+    Handles subagent event inlining: distinguishes main-session events from
+    subagent events using ``parent_tool_use_id`` (which links directly to the
+    parent Task tool call) or the ``isSidechain`` flag. Subagent events are
+    buffered on the pending Task tool and later processed by
+    ``_load_agent_events`` when the tool result arrives.
 
     Args:
         raw_events: Iterable or AsyncIterable of raw event dictionaries.
@@ -609,10 +607,19 @@ async def claude_code_events(
 
     proc = _EventProcessor(project_dir, max_depth, session_file, agent_loader)
 
-    # Streaming-specific state for session routing
-    session_to_tool: dict[str, str] = {}
-    unmatched_task_tools: list[str] = []  # FIFO queue
-    unmatched_subagent_events: dict[str, list[dict[str, Any]]] = {}
+    # Buffer for subagent events keyed by parent_tool_use_id.
+    # Events often arrive before the parent Task tool is registered
+    # (the assistant buffer hasn't been flushed yet), so we buffer by
+    # tool ID and drain to pending_tools after assistant processing.
+    early_subagent_events: dict[str, list[dict[str, Any]]] = {}
+
+    def _drain_early_subagent_events() -> None:
+        """Move early-buffered subagent events to their pending tools."""
+        for tool_id in list(early_subagent_events):
+            if tool_id in proc.pending_tools:
+                proc.pending_tools[tool_id].buffered_subagent_events.extend(
+                    early_subagent_events.pop(tool_id)
+                )
 
     # Consolidation buffer for consecutive assistant fragments
     pending_assistant: list[AssistantEvent] = []
@@ -645,50 +652,35 @@ async def claude_code_events(
         pending_assistant = []
         pending_assistant_id = None
 
-        # Process the consolidated event
+        # Process the consolidated event (registers new pending tools)
         timestamp = proc.update_timestamp(merged)
-        pending_before = set(proc.pending_tools.keys())
         for evt in await proc.process_assistant(merged, timestamp):
             yield evt
 
-        # Enqueue newly registered Task tools (FIFO order)
-        new_task_ids = [
-            tid
-            for tid in proc.pending_tools
-            if tid not in pending_before and proc.pending_tools[tid].is_task
-        ]
-        unmatched_task_tools.extend(new_task_ids)
-
-        # Drain early-arrival buffer for subagent sessions
-        for sid in list(unmatched_subagent_events):
-            if not unmatched_task_tools:
-                break
-            tool_id = unmatched_task_tools.pop(0)
-            session_to_tool[sid] = tool_id
-            proc.pending_tools[tool_id].buffered_subagent_events.extend(
-                unmatched_subagent_events.pop(sid)
-            )
+        # Drain early-buffered subagent events to newly registered tools
+        _drain_early_subagent_events()
 
     async for raw_event in event_stream:
-        # Route subagent events by isSidechain flag
-        if raw_event.get("isSidechain", False):
-            session_id = raw_event.get("sessionId", "")
+        # Route subagent events to the parent Task tool's buffer.
+        # Detection: parent_tool_use_id links to the parent tool call,
+        # or isSidechain flag marks it as a subagent event.
+        parent_tool_id = raw_event.get("parent_tool_use_id")
+        is_subagent = bool(parent_tool_id) or raw_event.get("isSidechain", False)
 
-            if session_id not in session_to_tool:
-                if unmatched_task_tools:
-                    session_to_tool[session_id] = unmatched_task_tools.pop(0)
-                else:
-                    # Task tool_use hasn't been seen yet — buffer for later
-                    unmatched_subagent_events.setdefault(session_id, []).append(
-                        raw_event
-                    )
-                    continue
-
-            pending_tool_id = session_to_tool[session_id]
-            if pending_tool_id in proc.pending_tools:
-                proc.pending_tools[pending_tool_id].buffered_subagent_events.append(
+        if is_subagent and parent_tool_id:
+            if parent_tool_id in proc.pending_tools:
+                proc.pending_tools[
+                    parent_tool_id
+                ].buffered_subagent_events.append(raw_event)
+            else:
+                # Tool not registered yet — buffer for later draining
+                early_subagent_events.setdefault(parent_tool_id, []).append(
                     raw_event
                 )
+            continue
+
+        if is_subagent:
+            # isSidechain without parent_tool_use_id — can't route, skip
             continue
 
         # Skip non-conversation events
@@ -727,25 +719,10 @@ async def claude_code_events(
                     yield evt
 
                 timestamp = proc.update_timestamp(pydantic_event)
-                pending_before = set(proc.pending_tools.keys())
                 for evt in await proc.process_assistant(pydantic_event, timestamp):
                     yield evt
 
-                new_task_ids = [
-                    tid
-                    for tid in proc.pending_tools
-                    if tid not in pending_before and proc.pending_tools[tid].is_task
-                ]
-                unmatched_task_tools.extend(new_task_ids)
-
-                for sid in list(unmatched_subagent_events):
-                    if not unmatched_task_tools:
-                        break
-                    tool_id = unmatched_task_tools.pop(0)
-                    session_to_tool[sid] = tool_id
-                    proc.pending_tools[tool_id].buffered_subagent_events.extend(
-                        unmatched_subagent_events.pop(sid)
-                    )
+                _drain_early_subagent_events()
 
         elif isinstance(pydantic_event, UserEvent):
             # Flush any pending assistant fragments before processing user event
@@ -904,6 +881,10 @@ async def _create_tool_span_events(
 
         # Load and process nested agent events
         if tool_result:
+            from inspect_ai.util._span import current_span_id
+
+            outer_span = current_span_id()
+
             loader = agent_loader or _load_agent_events
             agent_events = await loader(
                 project_dir,
@@ -913,13 +894,17 @@ async def _create_tool_span_events(
                 session_file=session_file,
                 agent_id=agent_id,
             )
-            # Re-parent top-level items so event_tree() nests them
-            # under the agent span
+            # Clear auto-assigned outer span IDs (from Pydantic model_post_init),
+            # then re-parent top-level items under the agent span.
             for evt in agent_events:
                 if isinstance(evt, SpanBeginEvent):
+                    if evt.parent_id == outer_span:
+                        evt.parent_id = None
                     if evt.parent_id is None:
                         evt.parent_id = agent_span_id
                 elif not isinstance(evt, SpanEndEvent):
+                    if evt.span_id == outer_span:
+                        evt.span_id = None
                     if evt.span_id is None:
                         evt.span_id = agent_span_id
             events.extend(agent_events)
