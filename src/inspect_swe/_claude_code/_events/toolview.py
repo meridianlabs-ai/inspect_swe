@@ -1,10 +1,7 @@
 from posixpath import splitext
-from textwrap import indent
 from typing import Any, Callable
 
 from inspect_ai.tool import ToolCallContent
-
-_MARKDOWN_EXTENSIONS = {".md", ".qmd"}
 
 _CODE_FENCE_LANGUAGES: dict[str, str] = {
     ".py": "python",
@@ -26,6 +23,8 @@ _CODE_FENCE_LANGUAGES: dict[str, str] = {
     ".go": "go",
     ".r": "r",
     ".R": "r",
+    ".md": "markdown",
+    ".qmd": "markdown",
 }
 
 
@@ -39,32 +38,33 @@ def tool_view(tool: str, arguments: dict[str, Any]) -> ToolCallContent | None:
 
 def write_tool_view(arguments: dict[str, Any]) -> ToolCallContent:
     file_path = str(arguments.get("file_path", "") or "")
-    file_content = str(arguments.get("content", "") or "")
+    end_body = "\n" if not str(arguments.get("content", "")).endswith("\n") else ""
     _, ext = splitext(file_path)
     ext_lower = ext.lower()
-    if ext_lower in _MARKDOWN_EXTENSIONS:
-        body = file_content
-    elif ext_lower in _CODE_FENCE_LANGUAGES:
+    if ext_lower in _CODE_FENCE_LANGUAGES:
         lang = _CODE_FENCE_LANGUAGES[ext_lower]
-        body = f"```{lang}\n{file_content}\n```"
     else:
-        body = indent(file_content, "    ")
-    content = f"`{file_path}`\n\n{body}\n"
+        lang = ""
+    body = "``````" + lang + "\n{{content}}" + end_body + "``````"
+    content = f"`file_path: {file_path}`\n\n{body}\n"
     return ToolCallContent(title="Write", format="markdown", content=content)
 
 
-def task_tool_view(arguments: dict[str, Any]) -> ToolCallContent | None:
-    if arguments.get("subagent_type", None) == "Explore" and "prompt" in arguments:
-        content = (
-            f"_{arguments.get('description', '')}_\n\n{arguments.get('prompt', '')}\n"
-        )
+def exit_plan_mode_tool_view(arguments: dict[str, Any]) -> ToolCallContent:
+    content = "``````markdown\n" + "{{plan}}" + "\n``````"
+    return ToolCallContent(title="ExitPlanMode", format="markdown", content=content)
 
-        return ToolCallContent(title="Explore", format="markdown", content=content)
-    else:
-        return None
+
+def task_tool_view(arguments: dict[str, Any]) -> ToolCallContent | None:
+    subagent_type = str(arguments.get("subagent_type", ""))
+    content = "### {{description}}\n\n" + "``````markdown\n" + "{{prompt}}" + "\n``````"
+    return ToolCallContent(
+        title=subagent_type or "Task", format="markdown", content=content
+    )
 
 
 tool_views: dict[str, Callable[[dict[str, Any]], ToolCallContent | None]] = {
     "Write": write_tool_view,
+    "ExitPlanMode": exit_plan_mode_tool_view,
     "Task": task_tool_view,
 }

@@ -30,6 +30,8 @@ from inspect_ai.model._model_output import ChatCompletionChoice, ModelUsage
 from inspect_ai.tool._tool import ToolResult
 from inspect_ai.tool._tool_call import ToolCallError
 
+from inspect_swe._claude_code._events.toolview import tool_view
+
 from .detection import (
     get_task_agent_info,
     get_timestamp,
@@ -202,15 +204,18 @@ def to_tool_event(
             error_msg = result if isinstance(result, str) else str(result)
             error = ToolCallError(type="unknown", message=error_msg)
 
+    arguments = arguments if isinstance(arguments, dict) else {}
+
     return ToolEvent(
         id=tool_id,
         type="function",
         function=function_name,
-        arguments=arguments if isinstance(arguments, dict) else {},
+        arguments=arguments,
         result=result,
         timestamp=timestamp,
         completed=completed,
         error=error,
+        view=tool_view(function_name, arguments),
     )
 
 
