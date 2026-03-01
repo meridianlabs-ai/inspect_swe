@@ -57,7 +57,7 @@ def exit_plan_mode_tool_view(arguments: dict[str, Any]) -> ToolCallContent:
 
 def task_tool_view(arguments: dict[str, Any]) -> ToolCallContent | None:
     subagent_type = str(arguments.get("subagent_type", ""))
-    content = "### {{description}}\n\n{{prompt}}"
+    content = "<details>\n<summary>{{description}}</summary>{{prompt}}</details>"
     return ToolCallContent(
         title=subagent_type or "Task", format="markdown", content=content
     )
