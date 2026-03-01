@@ -886,9 +886,10 @@ async def _create_tool_span_events(
             tool_timestamp,
             completed=result_timestamp,
         )
+        tool_event.agent_span_id = agent_span_id
         events.append(tool_event)
 
-        # SpanBeginEvent for agent (directly under parent, no tool wrapper)
+        # SpanBeginEvent for agent
         events.append(
             to_span_begin_event(
                 span_id=agent_span_id,

@@ -1,3 +1,7 @@
+## Unreleased
+
+- Improvements to the structure and content of claude code tool events.
+
 ## 0.2.38 (28 February 2026)
 
 - Mini SWE Agent: New `mini_swe_agent()` agent implementation.
