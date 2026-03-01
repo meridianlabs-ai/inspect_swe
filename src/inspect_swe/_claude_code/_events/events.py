@@ -879,6 +879,15 @@ async def _create_tool_span_events(
         agent_span_id = f"agent-{tool_id}"
         agent_name = agent_info.subagent_type
 
+        # ToolEvent before the agent span (so frontend look-ahead can match it)
+        tool_event = to_tool_event(
+            tool_use_block,
+            tool_result,
+            tool_timestamp,
+            completed=result_timestamp,
+        )
+        events.append(tool_event)
+
         # SpanBeginEvent for agent (directly under parent, no tool wrapper)
         events.append(
             to_span_begin_event(
@@ -891,16 +900,6 @@ async def _create_tool_span_events(
                 },
             )
         )
-
-        # ToolEvent inside the agent span (for metadata/audit)
-        tool_event = to_tool_event(
-            tool_use_block,
-            tool_result,
-            tool_timestamp,
-            completed=result_timestamp,
-        )
-        tool_event.span_id = agent_span_id
-        events.append(tool_event)
 
         # Load and process nested agent events
         if tool_result:
