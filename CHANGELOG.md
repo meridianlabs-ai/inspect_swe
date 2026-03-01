@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.39 (01 March 2026)
 
 - Improvements to the structure and content of claude code tool events.
 
