@@ -1,6 +1,6 @@
 ## Unreleased
 
-- Claude Code: Revert streaming events while we refine our approach..
+- Claude Code: Revert streaming events while we refine our approach.
 - Use normal heading/body for task tool views.
 
 ## 0.2.39 (01 March 2026)
