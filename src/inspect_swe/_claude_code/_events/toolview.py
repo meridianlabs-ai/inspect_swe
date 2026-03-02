@@ -55,6 +55,11 @@ def exit_plan_mode_tool_view(arguments: dict[str, Any]) -> ToolCallContent:
     return ToolCallContent(title="ExitPlanMode", format="markdown", content=content)
 
 
+def agent_tool_view(arguments: dict[str, Any]) -> ToolCallContent | None:
+    content = "### {{name}}: {{description}}\n\n{{prompt}}"
+    return ToolCallContent(title="Agent", format="markdown", content=content)
+
+
 def task_tool_view(arguments: dict[str, Any]) -> ToolCallContent | None:
     subagent_type = str(arguments.get("subagent_type", ""))
     content = "### {{description}}\n\n{{prompt}}"
@@ -67,4 +72,5 @@ tool_views: dict[str, Callable[[dict[str, Any]], ToolCallContent | None]] = {
     "Write": write_tool_view,
     "ExitPlanMode": exit_plan_mode_tool_view,
     "Task": task_tool_view,
+    "Agent": agent_tool_view,
 }

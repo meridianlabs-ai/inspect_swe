@@ -6,7 +6,7 @@ Using Pydantic validation ensures we fail loudly if the format changes.
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 # =============================================================================
 # Content Block Models
@@ -107,12 +107,15 @@ class AssistantMessage(BaseModel):
 
 
 class ToolUseResult(BaseModel):
-    """Result from a Task tool call (agent subprocess)."""
+    """Result from a Task/Agent tool call (agent subprocess)."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     status: str = "completed"
-    agentId: str | None = None
+    agentId: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("agentId", "agent_id"),
+    )
     prompt: str | None = None
     content: list[dict[str, Any]] | str = Field(default_factory=list)
     totalDurationMs: int | None = None
@@ -126,7 +129,7 @@ class ToolUseResult(BaseModel):
 
 
 class TaskAgentInfo(BaseModel):
-    """Typed info extracted from a Task tool call (agent spawn).
+    """Typed info extracted from a Task/Agent tool call (agent spawn).
 
     Replaces the untyped dict[str, Any] previously threaded through the
     event processing pipeline.
@@ -138,6 +141,7 @@ class TaskAgentInfo(BaseModel):
     description: str
     prompt: str
     tool_use_id: str
+    name: str | None = None
 
 
 # =============================================================================

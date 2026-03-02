@@ -86,6 +86,7 @@ class AgentEventLoader(Protocol):
         max_depth: int,
         session_file: Path | None,
         agent_id: str | None,
+        prompt: str | None = None,
     ) -> list[Event]: ...
 
 
@@ -877,7 +878,7 @@ async def _create_tool_span_events(
     # For Task tools with agent info, emit just the agent span (no tool wrapper)
     if is_task and agent_info:
         agent_span_id = f"agent-{tool_id}"
-        agent_name = agent_info.subagent_type
+        agent_name = agent_info.name or agent_info.subagent_type
 
         # SpanBeginEvent for agent (directly under parent, no tool wrapper)
         events.append(
@@ -913,6 +914,7 @@ async def _create_tool_span_events(
                 max_depth=max_depth,
                 session_file=session_file,
                 agent_id=agent_id,
+                prompt=agent_info.prompt if agent_info else None,
             )
             # Re-parent top-level items so event_tree() nests them
             # under the agent span
@@ -961,6 +963,7 @@ async def _load_agent_events(
     max_depth: int = 5,
     session_file: Path | None = None,
     agent_id: str | None = None,
+    prompt: str | None = None,
 ) -> list[Event]:
     """Load and process events from an agent session file or stream.
 
@@ -972,6 +975,7 @@ async def _load_agent_events(
         max_depth: Maximum remaining depth for loading nested subagents (0 = no loading)
         session_file: Path to the parent session JSONL file (for locating subagent files)
         agent_id: Pre-extracted agent ID (e.g., from toolUseResult.agentId)
+        prompt: The agent's prompt (used for file matching with team agents)
 
     Returns:
         List of Scout events from the agent session

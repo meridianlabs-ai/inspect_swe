@@ -305,25 +305,25 @@ def get_agent_id(event: BaseEvent) -> str | None:
 
 
 def is_task_tool_call(content_block: ContentToolUse) -> bool:
-    """Check if a content block is a Task tool call (subagent spawn).
+    """Check if a content block is a Task or Agent tool call (subagent spawn).
 
     Args:
         content_block: A ContentToolUse from an assistant message
 
     Returns:
-        True if this is a Task tool call
+        True if this is a Task or Agent tool call
     """
-    return content_block.name == "Task"
+    return content_block.name in ("Task", "Agent")
 
 
 def get_task_agent_info(content_block: ContentToolUse) -> TaskAgentInfo | None:
-    """Extract agent info from a Task tool call.
+    """Extract agent info from a Task or Agent tool call.
 
     Args:
-        content_block: A Task tool_use content block
+        content_block: A Task/Agent tool_use content block
 
     Returns:
-        TaskAgentInfo, or None if not a Task tool call
+        TaskAgentInfo, or None if not a Task/Agent tool call
     """
     if not is_task_tool_call(content_block):
         return None
@@ -335,4 +335,5 @@ def get_task_agent_info(content_block: ContentToolUse) -> TaskAgentInfo | None:
         description=str(input_data.get("description", "")),
         prompt=str(input_data.get("prompt", "")),
         tool_use_id=content_block.id,
+        name=input_data.get("name"),
     )
