@@ -2,7 +2,6 @@ import json
 import shlex
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import nullcontext
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
@@ -16,13 +15,12 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.event import ModelEvent
-from inspect_ai.log import transcript
 from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import (
     ExecCompleted,
+    ExecRemoteAwaitableOptions,
     ExecStderr,
     ExecStdout,
     store,
@@ -32,13 +30,10 @@ from inspect_ai.util import (
 )
 from inspect_ai.util._sandbox import (
     ExecRemoteProcess,
-    ExecRemoteStreamingOptions,
 )
 from pydantic_core import to_json
 
-from inspect_swe._claude_code._events import claude_code_events
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
-from inspect_swe._util.events import capture_model_events
 from inspect_swe._util.path import join_path
 
 from .._util._async import is_callable_coroutine
@@ -146,21 +141,15 @@ def claude_code(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
-        bridge_event_ctx = (
-            nullcontext(lambda _: None) if centaur else capture_model_events()
-        )
-        async with (
-            sandbox_agent_bridge(
-                state,
-                model=model,
-                model_aliases=model_aliases,
-                filter=filter,
-                retry_refusals=retry_refusals,
-                port=port,
-                bridged_tools=bridged_tools,
-            ) as bridge,
-            bridge_event_ctx as apply_bridge_event,
-        ):
+        async with sandbox_agent_bridge(
+            state,
+            model=model,
+            model_aliases=model_aliases,
+            filter=filter,
+            retry_refusals=retry_refusals,
+            port=port,
+            bridged_tools=bridged_tools,
+        ) as bridge:
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
                 claude_code_binary_source(), version, user, sandbox_env(sandbox)
@@ -178,9 +167,9 @@ def claude_code(
 
             # add interactive options if not running as centaur
             if centaur is False:
-                cmd.extend(["--print", "--output-format", "stream-json", "--verbose"])
+                cmd.append("--print")
                 if debug:
-                    cmd.append("--debug")
+                    cmd.extend(["--debug", "--verbose"])
 
             # system prompt
             system_messages = [
@@ -273,26 +262,26 @@ def claude_code(
                         )
 
                     # run agent
-                    proc = await sbox.exec_remote(
+                    result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
-                        options=ExecRemoteStreamingOptions(
+                        options=ExecRemoteAwaitableOptions(
                             cwd=cwd,
                             env=agent_env,
                             user=user,
                             concurrency=False,
                         ),
+                        stream=False,
                     )
-                    try:
-                        async for event in claude_code_events(
-                            _jsonl_stream(proc, debug_output)
-                        ):
-                            if isinstance(event, ModelEvent):
-                                apply_bridge_event(event)
-                            else:
-                                transcript()._event(event)
-                    finally:
-                        await proc.kill()
+                    # track debug output
+                    debug_output.append(result.stdout)
+                    debug_output.append(result.stderr)
+
+                    # raise for error
+                    if not result.success:
+                        raise RuntimeError(
+                            f"Error executing claude code agent {result.returncode}: {result.stdout}\n{result.stderr}"
+                        )
 
                     # reset timeout counter
                     timeout_count = 0
