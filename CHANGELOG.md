@@ -1,3 +1,7 @@
+## Unreleased
+
+- Attach agent_span_id to tool events for agent spawning tools.
+
 ## 0.2.40 (02 March 2026)
 
 - Claude Code: Revert streaming events while we refine our approach.

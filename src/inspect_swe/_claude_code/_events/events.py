@@ -900,6 +900,7 @@ async def _create_tool_span_events(
             completed=result_timestamp,
         )
         tool_event.span_id = agent_span_id
+        tool_event.agent_span_id = agent_span_id
         events.append(tool_event)
 
         # Load and process nested agent events
