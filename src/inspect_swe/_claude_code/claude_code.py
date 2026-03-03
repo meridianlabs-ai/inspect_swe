@@ -148,6 +148,7 @@ def claude_code(
             model_aliases=model_aliases,
             filter=filter,
             retry_refusals=retry_refusals,
+            sandbox=sandbox,
             port=port,
             bridged_tools=bridged_tools,
         ) as bridge:
