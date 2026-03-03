@@ -33,6 +33,7 @@ from inspect_ai.util._sandbox import (
 )
 from pydantic_core import to_json
 
+from inspect_swe._claude_code._events.spans import annotate_agent_spans
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.path import join_path
 
@@ -167,9 +168,9 @@ def claude_code(
 
             # add interactive options if not running as centaur
             if centaur is False:
-                cmd.append("--print")
+                cmd.extend(["--print", "--output-format", "stream-json", "--verbose"])
                 if debug:
-                    cmd.extend(["--debug", "--verbose"])
+                    cmd.append("--debug")
 
             # system prompt
             system_messages = [
@@ -282,6 +283,9 @@ def claude_code(
                         raise RuntimeError(
                             f"Error executing claude code agent {result.returncode}: {result.stdout}\n{result.stderr}"
                         )
+
+                    # decorate bridge events with agent spans
+                    annotate_agent_spans(result.stdout)
 
                     # reset timeout counter
                     timeout_count = 0

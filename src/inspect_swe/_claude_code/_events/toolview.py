@@ -64,7 +64,9 @@ def task_tool_view(arguments: dict[str, Any]) -> ToolCallContent | None:
     subagent_type = str(arguments.get("subagent_type", ""))
     content = "### {{description}}\n\n{{prompt}}"
     return ToolCallContent(
-        title=subagent_type or "Task", format="markdown", content=content
+        title="Task" + f": {subagent_type}" if subagent_type else "",
+        format="markdown",
+        content=content,
     )
 
 
