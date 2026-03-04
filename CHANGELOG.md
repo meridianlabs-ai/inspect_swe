@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.41 (04 March 2026)
 
 - Claude Code: Annotate event stream with agent spans.
 - Support for sub-agents defined using agent teams.
