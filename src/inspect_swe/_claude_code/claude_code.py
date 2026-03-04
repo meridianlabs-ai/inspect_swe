@@ -275,7 +275,6 @@ def claude_code(
                         stream=False,
                     )
                     # track debug output
-                    debug_output.append(result.stdout)
                     debug_output.append(result.stderr)
 
                     # raise for error
