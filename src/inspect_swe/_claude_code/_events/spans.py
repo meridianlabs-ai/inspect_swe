@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 from inspect_ai.event import (
+    CompactionEvent,
     Event,
     ModelEvent,
     SpanBeginEvent,
@@ -37,6 +38,22 @@ class _AgentSpanInfo:
     # Bridge timestamps from matched ModelEvents (accurate)
     min_timestamp: datetime | None = None
     max_timestamp: datetime | None = None
+
+
+@dataclass
+class _CompactionInfo:
+    """Compaction event discovered in JSONL."""
+
+    # Which span this belongs to (None = top-level)
+    parent_tool_use_id: str | None
+    # The message.id seen before this compaction in the JSONL stream
+    preceding_msg_id: str | None
+    # The message.id seen after this compaction in the JSONL stream
+    following_msg_id: str | None = None
+    # Compaction metadata
+    pre_tokens: int | None = None
+    trigger: str = "auto"
+    content: str = "Conversation compacted"
 
 
 def annotate_agent_spans(jsonl_output: str) -> None:
@@ -87,16 +104,18 @@ def _annotate_events(
                     if tc.view is None:
                         tc.view = tool_view(tc.function, tc.arguments)
 
-    # Step 1: Parse JSONL and build agent hierarchy
-    msg_id_to_span, agent_spans = _parse_agent_hierarchy(jsonl_output)
+    # Step 1: Parse JSONL and build agent hierarchy + compaction events
+    msg_id_to_span, agent_spans, compactions = _parse_agent_hierarchy(jsonl_output)
 
-    if not agent_spans:
+    if not agent_spans and not compactions:
         return []
 
     # Step 2: Match ModelEvents and build anchor timeline
+    # Also build msg_id -> (index, event) map for compaction insertion
     anchors: list[tuple[datetime, str]] = []
+    msg_id_to_event: dict[str, tuple[int, ModelEvent]] = {}
 
-    for event in events:
+    for idx, event in enumerate(events):
         if not isinstance(event, ModelEvent):
             continue
         if event.span_id != agent_span_id:
@@ -107,6 +126,8 @@ def _annotate_events(
         msg_id = _get_message_id(event)
         if msg_id is None:
             continue
+
+        msg_id_to_event[msg_id] = (idx, event)
 
         span_id = msg_id_to_span.get(msg_id)
         if span_id is None:
@@ -130,15 +151,20 @@ def _annotate_events(
             ):
                 span_info.max_timestamp = event.timestamp
 
-    if not anchors:
+    if not anchors and not compactions:
         return []
 
-    # Step 3: Assign remaining events via span time ranges
+    # Step 3: Insert CompactionEvents at correct positions
+    _insert_compaction_events(
+        compactions, events, msg_id_to_event, agent_span_id
+    )
+
+    # Step 4: Assign remaining events via span time ranges
     # For each agent span with matched events, assign unmatched events that fall
     # within that span's [min_timestamp, max_timestamp] range. This avoids
     # sweeping up main-agent events that happen between subagent calls.
     for event in events:
-        if isinstance(event, (SpanBeginEvent, SpanEndEvent)):
+        if isinstance(event, (SpanBeginEvent, SpanEndEvent, CompactionEvent)):
             continue
         if event.span_id != agent_span_id:
             continue
@@ -150,23 +176,29 @@ def _annotate_events(
                 event.span_id = span_info.span_id
                 break
 
-    # Step 4: Build SpanBeginEvent/SpanEndEvent
+    # Step 5: Build SpanBeginEvent/SpanEndEvent
     return _build_span_events(agent_spans, agent_span_id)
 
 
 def _parse_agent_hierarchy(
     jsonl_output: str,
-) -> tuple[dict[str, str], dict[str, _AgentSpanInfo]]:
-    """Parse JSONL and extract agent hierarchy.
+) -> tuple[dict[str, str], dict[str, _AgentSpanInfo], list[_CompactionInfo]]:
+    """Parse JSONL and extract agent hierarchy and compaction events.
 
     Returns:
-        Tuple of (msg_id_to_span, agent_spans) where:
+        Tuple of (msg_id_to_span, agent_spans, compactions) where:
         - msg_id_to_span maps message.id -> span_id for subagent messages
         - agent_spans maps span_id -> AgentSpanInfo
+        - compactions is a list of compaction events found in the JSONL
     """
     msg_id_to_span: dict[str, str] = {}
     agent_spans: dict[str, _AgentSpanInfo] = {}
+    compactions: list[_CompactionInfo] = []
     last_parent_tool_use_id: str | None = None
+
+    # Track last message.id seen per span context (None = top-level)
+    # so we can record which message preceded each compaction
+    last_msg_id_per_context: dict[str | None, str | None] = {}
 
     for line in jsonl_output.splitlines():
         line = line.strip()
@@ -178,6 +210,23 @@ def _parse_agent_hierarchy(
             continue
 
         event_type = raw.get("type")
+
+        # Handle compaction boundary system events
+        if event_type == "system":
+            if raw.get("subtype") == "compact_boundary":
+                parent_id = raw.get("parent_tool_use_id")
+                compact_meta = raw.get("compactMetadata", {}) or {}
+                compactions.append(
+                    _CompactionInfo(
+                        parent_tool_use_id=parent_id,
+                        preceding_msg_id=last_msg_id_per_context.get(parent_id),
+                        pre_tokens=compact_meta.get("preTokens"),
+                        trigger=compact_meta.get("trigger", "auto"),
+                        content=raw.get("content") or "Conversation compacted",
+                    )
+                )
+            continue
+
         if event_type != "assistant":
             continue
 
@@ -235,7 +284,90 @@ def _parse_agent_hierarchy(
         else:
             last_parent_tool_use_id = None
 
-    return msg_id_to_span, agent_spans
+        # Track last message.id per span context for compaction ordering
+        if msg_id:
+            last_msg_id_per_context[parent_tool_use_id] = msg_id
+            # Also update following_msg_id on any pending compactions
+            # in the same context that don't have one yet
+            for comp in reversed(compactions):
+                if comp.parent_tool_use_id == parent_tool_use_id:
+                    if comp.following_msg_id is None:
+                        comp.following_msg_id = msg_id
+                    else:
+                        break
+
+    return msg_id_to_span, agent_spans, compactions
+
+
+def _insert_compaction_events(
+    compactions: list[_CompactionInfo],
+    events: Sequence[Event],
+    msg_id_to_event: dict[str, tuple[int, ModelEvent]],
+    agent_span_id: str,
+) -> None:
+    """Create CompactionEvents and insert them at the correct positions.
+
+    Mutates the events list in-place by inserting CompactionEvents after the
+    ModelEvent that preceded the compaction in the JSONL stream.
+    """
+    if not compactions:
+        return
+
+    events_list: list[Event] = events  # type: ignore[assignment]
+    # Track cumulative offset as we insert into the list
+    offset = 0
+
+    for comp in compactions:
+        # Determine span_id
+        if comp.parent_tool_use_id:
+            span_id = f"agent-{comp.parent_tool_use_id}"
+        else:
+            span_id = agent_span_id
+
+        # Determine timestamp from surrounding bridge ModelEvents
+        before_entry = (
+            msg_id_to_event.get(comp.preceding_msg_id)
+            if comp.preceding_msg_id
+            else None
+        )
+        after_entry = (
+            msg_id_to_event.get(comp.following_msg_id)
+            if comp.following_msg_id
+            else None
+        )
+
+        if before_entry and after_entry:
+            before_ts = before_entry[1].timestamp
+            after_ts = after_entry[1].timestamp
+            # Midpoint between the two surrounding events
+            delta = (after_ts - before_ts) / 2
+            ts = before_ts + delta
+        elif before_entry:
+            ts = before_entry[1].timestamp + timedelta(milliseconds=0.5)
+        elif after_entry:
+            ts = after_entry[1].timestamp - timedelta(milliseconds=1)
+        else:
+            # No surrounding events found — skip this compaction
+            continue
+
+        compaction_event = CompactionEvent(
+            source="claude_code",
+            tokens_before=comp.pre_tokens,
+            metadata={"trigger": comp.trigger, "content": comp.content},
+            timestamp=ts,
+            span_id=span_id,
+        )
+
+        # Find insertion point: after the preceding ModelEvent
+        if before_entry:
+            insert_idx = before_entry[0] + 1 + offset
+        elif after_entry:
+            insert_idx = after_entry[0] + offset
+        else:
+            continue
+
+        events_list.insert(insert_idx, compaction_event)
+        offset += 1
 
 
 def _get_message_id(event: ModelEvent) -> str | None:
