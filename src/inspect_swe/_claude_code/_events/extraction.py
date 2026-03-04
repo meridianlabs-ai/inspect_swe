@@ -15,8 +15,6 @@ from inspect_ai.model import (
     ContentText,
 )
 from inspect_ai.model._chat_message import (
-    ChatMessage,
-    ChatMessageAssistant,
     ChatMessageTool,
     ChatMessageUser,
 )
@@ -24,7 +22,6 @@ from inspect_ai.tool import ToolCall
 
 from .detection import (
     get_timestamp,
-    is_compact_summary,
 )
 from .models import (
     AssistantEvent,
@@ -33,7 +30,6 @@ from .models import (
     UserEvent,
 )
 from .toolview import tool_view
-from .util import parse_timestamp
 
 logger = getLogger(__name__)
 
@@ -232,81 +228,6 @@ def extract_assistant_content(
     return content, tool_calls
 
 
-def extract_assistant_message(event: BaseEvent) -> ChatMessageAssistant | None:
-    """Extract a ChatMessageAssistant from an assistant event.
-
-    Args:
-        event: Claude Code assistant event
-
-    Returns:
-        ChatMessageAssistant, or None if extraction fails
-    """
-    if not isinstance(event, AssistantEvent):
-        return None
-
-    message_content = event.message.content
-
-    if not isinstance(message_content, list):
-        return None
-
-    content, tool_calls = extract_assistant_content(message_content)
-
-    # If we only have text content, simplify to string
-    if len(content) == 1 and isinstance(content[0], ContentText):
-        return ChatMessageAssistant(
-            content=content[0].text,
-            tool_calls=tool_calls if tool_calls else None,
-        )
-
-    # Multiple content blocks or non-text content
-    if content or tool_calls:
-        return ChatMessageAssistant(
-            content=content if content else "",
-            tool_calls=tool_calls if tool_calls else None,
-        )
-
-    return None
-
-
-def extract_messages_from_events(
-    events: list[BaseEvent],
-) -> list[ChatMessage]:
-    """Extract a conversation's messages from events.
-
-    Args:
-        events: List of conversation events (user, assistant)
-
-    Returns:
-        List of ChatMessage objects in conversation order
-    """
-    messages: list[ChatMessage] = []
-
-    for event in events:
-        if isinstance(event, UserEvent):
-            # Check for tool results first
-            tool_msgs = extract_tool_result_messages(event)
-            if tool_msgs:
-                messages.extend(tool_msgs)
-            else:
-                # Regular user message
-                user_msg = extract_user_message(event)
-                if user_msg:
-                    messages.append(user_msg)
-
-        elif isinstance(event, AssistantEvent):
-            assistant_msg = extract_assistant_message(event)
-            if assistant_msg:
-                messages.append(assistant_msg)
-
-        # System events with compact summary become user messages
-        elif is_compact_summary(event):
-            summary_msg = extract_user_message(event)
-            if summary_msg:
-                messages.append(summary_msg)
-
-    return messages
-
-
 def extract_usage(event: BaseEvent) -> dict[str, int]:
     """Extract token usage from an assistant event.
 
@@ -353,32 +274,6 @@ def sum_tokens(events: list[BaseEvent]) -> int:
         total += usage.get("input_tokens", 0)
         total += usage.get("output_tokens", 0)
     return total
-
-
-def sum_latency(events: list[BaseEvent]) -> float:
-    """Calculate total time from first to last event.
-
-    Args:
-        events: List of events
-
-    Returns:
-        Duration in seconds, or 0.0 if cannot be calculated
-    """
-    if not events:
-        return 0.0
-
-    timestamps = []
-    for event in events:
-        ts = parse_timestamp(get_timestamp(event))
-        if ts:
-            timestamps.append(ts)
-
-    if len(timestamps) < 2:
-        return 0.0
-
-    timestamps.sort()
-    duration = (timestamps[-1] - timestamps[0]).total_seconds()
-    return max(0.0, duration)
 
 
 def extract_model_name(events: list[BaseEvent]) -> str | None:

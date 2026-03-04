@@ -12,7 +12,6 @@ from .models import (
     ContentToolUse,
     SystemEvent,
     TaskAgentInfo,
-    ToolUseResult,
     UserEvent,
 )
 
@@ -78,18 +77,6 @@ def is_clear_command(event: BaseEvent) -> bool:
     return _get_command_name(event) == "clear"
 
 
-def is_exit_command(event: BaseEvent) -> bool:
-    """Check if event is a /exit command.
-
-    Args:
-        event: Claude Code event
-
-    Returns:
-        True if this is a /exit command
-    """
-    return _get_command_name(event) == "exit"
-
-
 def is_compact_boundary(event: BaseEvent) -> bool:
     """Check if event is a compaction boundary system event.
 
@@ -126,11 +113,6 @@ def is_turn_duration_event(event: BaseEvent) -> bool:
     if not isinstance(event, SystemEvent):
         return False
     return event.subtype == "turn_duration"
-
-
-def is_sidechain_event(event: BaseEvent) -> bool:
-    """Check if event is from a sidechain (agent subprocess)."""
-    return event.isSidechain
 
 
 def is_skill_command(event: BaseEvent) -> str | None:
@@ -250,30 +232,6 @@ def get_session_id(event: BaseEvent) -> str | None:
     return event.sessionId
 
 
-def get_uuid(event: BaseEvent) -> str | None:
-    """Extract the UUID from an event.
-
-    Args:
-        event: Claude Code event
-
-    Returns:
-        UUID string, or None if not found
-    """
-    return event.uuid
-
-
-def get_parent_uuid(event: BaseEvent) -> str | None:
-    """Extract the parent UUID from an event.
-
-    Args:
-        event: Claude Code event
-
-    Returns:
-        Parent UUID string, or None if root event
-    """
-    return event.parentUuid
-
-
 def get_timestamp(event: BaseEvent) -> str | None:
     """Extract the timestamp from an event.
 
@@ -284,24 +242,6 @@ def get_timestamp(event: BaseEvent) -> str | None:
         ISO timestamp string, or None if not found
     """
     return event.timestamp
-
-
-def get_agent_id(event: BaseEvent) -> str | None:
-    """Extract the agent ID from a user event with tool result.
-
-    Args:
-        event: Claude Code event
-
-    Returns:
-        Agent ID string, or None if not found
-    """
-    if not isinstance(event, UserEvent):
-        return None
-
-    if isinstance(event.toolUseResult, ToolUseResult) and event.toolUseResult.agentId:
-        return event.toolUseResult.agentId
-
-    return None
 
 
 def is_task_tool_call(content_block: ContentToolUse) -> bool:
