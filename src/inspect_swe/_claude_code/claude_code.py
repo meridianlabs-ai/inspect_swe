@@ -73,6 +73,7 @@ def claude_code(
     debug: bool | None = None,
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
+    sandbox_download: bool = False,
 ) -> Agent:
     """Claude Code agent.
 
@@ -118,6 +119,10 @@ def claude_code(
             - "stable": Download and use the current stable version of claude code.
             - "latest": Download and use the very latest version of claude code.
             - "x.x.x": Download and use a specific version of claude code.
+        sandbox_download: If `True`, the sandbox downloads the binary directly from
+            the source URL rather than the host downloading it and transferring it in.
+            Requires the sandbox to have outbound internet access. Useful when the
+            host-to-sandbox transfer is slow.
     """
     # resolve centaur
     if centaur is True:
@@ -154,7 +159,11 @@ def claude_code(
         ) as bridge:
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
-                claude_code_binary_source(), version, user, sandbox_env(sandbox)
+                claude_code_binary_source(),
+                version,
+                user,
+                sandbox_env(sandbox),
+                sandbox_download=sandbox_download,
             )
 
             # allocate session_id

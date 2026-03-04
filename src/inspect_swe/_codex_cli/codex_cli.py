@@ -60,6 +60,7 @@ def codex_cli(
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "latest"] | str = "auto",
     config_overrides: dict[str, str] | None = None,
+    sandbox_download: bool = False,
 ) -> Agent:
     """Codex CLI.
 
@@ -99,6 +100,10 @@ def codex_cli(
             - "x.x.x": Download and use a specific version of codex cli.
         config_overrides: Additional Codex CLI configuration overrides.
             Each key-value pair is passed as `-c key=value` to the CLI.
+        sandbox_download: If `True`, the sandbox downloads the binary directly from
+            the source URL rather than the host downloading it and transferring it in.
+            Requires the sandbox to have outbound internet access. Useful when the
+            host-to-sandbox transfer is slow.
     """
     # resolve centaur
     if centaur is True:
@@ -133,7 +138,11 @@ def codex_cli(
         ) as bridge:
             # ensure codex is installed and get binary location
             codex_binary = await ensure_agent_binary_installed(
-                codex_cli_binary_source(), version, user, sandbox_env(sandbox)
+                codex_cli_binary_source(),
+                version,
+                user,
+                sandbox_env(sandbox),
+                sandbox_download=sandbox_download,
             )
 
             # build system prompt

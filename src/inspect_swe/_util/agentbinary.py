@@ -1,3 +1,4 @@
+import shlex
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +59,7 @@ async def ensure_agent_binary_installed(
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
     user: str | None = None,
     sandbox: SandboxEnvironment | None = None,
+    sandbox_download: bool = False,
 ) -> str:
     # resolve sandbox
     sandbox = sandbox or sandbox_env()
@@ -79,6 +81,11 @@ async def ensure_agent_binary_installed(
 
     # detect the sandbox target platform
     platform = await detect_sandbox_platform(sandbox)
+
+    if sandbox_download:
+        return await _install_binary_via_sandbox_download(
+            source, version, platform, user, sandbox
+        )
 
     # use concurrency so multiple samples don't attempt the same download all at once
     async with concurrency(f"{source.binary}-install", 1, visible=False):
@@ -112,6 +119,74 @@ async def ensure_agent_binary_installed(
                 sandbox, f"{binary_path} {source.post_install}", user=user
             )
         return binary_path
+
+
+async def _resolve_version_cached(
+    source: AgentBinarySource,
+    version: str,
+    platform: SandboxPlatform,
+) -> AgentBinaryVersion:
+    """Resolve version metadata, using the in-process cache to avoid redundant API calls."""
+    cache_key = (source.binary, version, platform)
+    with _resolve_version_lock:
+        cached = _resolved_versions.get(cache_key)
+    if cached is not None:
+        return cached
+    resolved = await source.resolve_version(version, platform)
+    with _resolve_version_lock:
+        _resolved_versions[cache_key] = resolved
+    return resolved
+
+
+async def _install_binary_via_sandbox_download(
+    source: AgentBinarySource,
+    version: str,
+    platform: SandboxPlatform,
+    user: str | None,
+    sandbox: SandboxEnvironment,
+) -> str:
+    """Install binary by having the sandbox download it directly from the source URL.
+
+    Avoids transferring binary bytes through the host. Requires the sandbox to have
+    outbound internet access to the download URL.
+
+    Works for both direct binaries and tar.gz archives (the tarball is extracted
+    in-sandbox rather than on the host).
+    """
+    binary_version = await _resolve_version_cached(source, version, platform)
+    resolved_version = binary_version.version
+    binary_path = f"{SANDBOX_INSTALL_DIR}/{source.binary}-{resolved_version}-{platform}"
+    url = shlex.quote(binary_version.download_url)
+
+    await sandbox_exec(sandbox, f"mkdir -p {SANDBOX_INSTALL_DIR}", user="root")
+
+    if source.post_download is not None:
+        # Tarball: download to a temp dir, extract the single binary, move to final path.
+        tmp_dir = f"/tmp/.{source.binary}-install"
+        try:
+            await sandbox_exec(sandbox, f"mkdir -p {tmp_dir}")
+            await sandbox_exec(
+                sandbox, f"curl -fsSL -o {tmp_dir}/archive.tar.gz {url}"
+            )
+            await sandbox_exec(
+                sandbox, f"tar -xzf {tmp_dir}/archive.tar.gz -C {tmp_dir}/"
+            )
+            await sandbox_exec(sandbox, f"rm {tmp_dir}/archive.tar.gz")
+            # The tarball contains exactly one file — move it to the install path.
+            await sandbox_exec(sandbox, f"mv {tmp_dir}/* {binary_path}")
+        finally:
+            await sandbox_exec(sandbox, f"rm -rf {tmp_dir}")
+    else:
+        # Direct binary: curl straight to install path.
+        await sandbox_exec(sandbox, f"curl -fsSL -o {binary_path} {url}")
+
+    await sandbox_exec(sandbox, f"chmod +x {binary_path}", user="root")
+    if source.post_install:
+        await sandbox_exec(sandbox, f"{binary_path} {source.post_install}", user=user)
+    trace(
+        f"Downloaded {source.agent} binary in sandbox: {resolved_version} ({platform})"
+    )
+    return binary_path
 
 
 async def download_agent_binary_async(
