@@ -472,8 +472,7 @@ class _EventProcessor:
 
         # Build tool_use_id -> function name mapping before popping
         tool_functions: dict[str, str] = {
-            tid: pt.tool_use_block.name
-            for tid, pt in self.pending_tools.items()
+            tid: pt.tool_use_block.name for tid, pt in self.pending_tools.items()
         }
 
         # Process tool results

@@ -167,9 +167,7 @@ def extract_tool_result_messages(
             else:
                 tool_content = str(result_content)
 
-            function_name = (
-                tool_functions.get(tool_use_id) if tool_functions else None
-            )
+            function_name = tool_functions.get(tool_use_id) if tool_functions else None
             tool_messages.append(
                 ChatMessageTool(
                     content=tool_content,

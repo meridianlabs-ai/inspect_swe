@@ -155,9 +155,7 @@ def _annotate_events(
         return []
 
     # Step 3: Insert CompactionEvents at correct positions
-    _insert_compaction_events(
-        compactions, events, msg_id_to_event, agent_span_id
-    )
+    _insert_compaction_events(compactions, events, msg_id_to_event, agent_span_id)
 
     # Step 4: Assign remaining events via span time ranges
     # For each agent span with matched events, assign unmatched events that fall
