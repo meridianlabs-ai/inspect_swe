@@ -3,6 +3,7 @@
 - Claude Code: Annotate event stream with agent spans.
 - Support for sub-agents defined using agent teams.
 - Attach agent_span_id to tool events for agent spawning tools.
+- Pass `sandbox` argument to `sandbox_agent_bridge()`.
 
 ## 0.2.40 (02 March 2026)
 

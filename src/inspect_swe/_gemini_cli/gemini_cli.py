@@ -114,6 +114,7 @@ def gemini_cli(
             model=model,
             model_aliases=model_aliases,
             filter=filter,
+            sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,

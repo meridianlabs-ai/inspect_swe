@@ -133,6 +133,7 @@ def mini_swe_agent(
             model=inspect_model,
             model_aliases=inspect_aliases | (model_aliases or {}),
             filter=filter,
+            sandbox=sandbox,
             retry_refusals=retry_refusals,
             compaction=compaction,
             port=port,
