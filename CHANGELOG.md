@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Claude Code: Annotate event stream with agent spans.
 - Support for sub-agents defined using agent teams.
 - Attach agent_span_id to tool events for agent spawning tools.
 
