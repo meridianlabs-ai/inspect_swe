@@ -130,11 +130,16 @@ def _extract_content_blocks(
     return blocks
 
 
-def extract_tool_result_messages(event: BaseEvent) -> list[ChatMessageTool]:
+def extract_tool_result_messages(
+    event: BaseEvent,
+    tool_functions: dict[str, str] | None = None,
+) -> list[ChatMessageTool]:
     """Extract ChatMessageTool objects from a user event with tool results.
 
     Args:
         event: Claude Code user event that may contain tool results
+        tool_functions: Optional mapping of tool_use_id to function name,
+            used to populate the ``function`` field on ChatMessageTool.
 
     Returns:
         List of ChatMessageTool objects
@@ -155,7 +160,6 @@ def extract_tool_result_messages(event: BaseEvent) -> list[ChatMessageTool]:
             # Note: is_error could be used to set error state in future
 
             # Handle content that might be a list or string
-            # Handle content that might be a list or string
             if isinstance(result_content, list):
                 tool_content = _extract_content_blocks(result_content)
             elif isinstance(result_content, str):
@@ -163,10 +167,14 @@ def extract_tool_result_messages(event: BaseEvent) -> list[ChatMessageTool]:
             else:
                 tool_content = str(result_content)
 
+            function_name = (
+                tool_functions.get(tool_use_id) if tool_functions else None
+            )
             tool_messages.append(
                 ChatMessageTool(
                     content=tool_content,
                     tool_call_id=tool_use_id,
+                    function=function_name,
                 )
             )
 

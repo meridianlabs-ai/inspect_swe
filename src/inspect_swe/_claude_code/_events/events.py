@@ -345,18 +345,20 @@ def _extract_tool_use_blocks(
 def _accumulate_user_messages(
     event: UserEvent,
     accumulated_messages: list[Any],
+    tool_functions: dict[str, str] | None = None,
 ) -> None:
     """Extract and accumulate messages from a user event.
 
     Args:
         event: The user event to process
         accumulated_messages: List to append messages to (modified in place)
+        tool_functions: Optional mapping of tool_use_id to function name
     """
     user_msg = extract_user_message(event)
     if user_msg:
         accumulated_messages.append(user_msg)
 
-    tool_msgs = extract_tool_result_messages(event)
+    tool_msgs = extract_tool_result_messages(event, tool_functions)
     accumulated_messages.extend(tool_msgs)
 
 
@@ -468,6 +470,12 @@ class _EventProcessor:
         if isinstance(event.toolUseResult, ToolUseResult):
             event_agent_id = event.toolUseResult.agentId
 
+        # Build tool_use_id -> function name mapping before popping
+        tool_functions: dict[str, str] = {
+            tid: pt.tool_use_block.name
+            for tid, pt in self.pending_tools.items()
+        }
+
         # Process tool results
         if isinstance(content, list):
             for block in content:
@@ -504,7 +512,7 @@ class _EventProcessor:
                         result.extend(span_events)
 
         # Accumulate user and tool result messages
-        _accumulate_user_messages(event, self.accumulated_messages)
+        _accumulate_user_messages(event, self.accumulated_messages, tool_functions)
 
         return result
 
