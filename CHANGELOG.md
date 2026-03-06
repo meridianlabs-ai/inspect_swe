@@ -1,3 +1,8 @@
+## Unreleased
+
+- Claude Code: Improved detection of final agent span messages.
+- Claude Code: Capture stdout and stderr to store in debug mode.
+
 ## 0.2.41 (04 March 2026)
 
 - Claude Code: Annotate event stream with agent spans.

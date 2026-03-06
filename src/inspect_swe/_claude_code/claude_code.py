@@ -23,7 +23,9 @@ from inspect_ai.util import (
     ExecRemoteAwaitableOptions,
     ExecStderr,
     ExecStdout,
+    StoreModel,
     store,
+    store_as,
 )
 from inspect_ai.util import (
     sandbox as sandbox_env,
@@ -31,6 +33,7 @@ from inspect_ai.util import (
 from inspect_ai.util._sandbox import (
     ExecRemoteProcess,
 )
+from pydantic import Field
 from pydantic_core import to_json
 
 from inspect_swe._claude_code._events.spans import annotate_agent_spans
@@ -278,14 +281,22 @@ def claude_code(
                     # track debug output
                     debug_output.append(result.stderr)
 
-                    # raise for error
-                    if not result.success:
-                        raise RuntimeError(
-                            f"Error executing claude code agent {result.returncode}: {result.stdout}\n{result.stderr}"
-                        )
+                    # if we are in debug mode then save the jsonl in the store
+                    if debug:
+                        cc_debug = store_as(ClaudeCodeDebug)
+                        if result.stderr:
+                            cc_debug.stderr.append(result.stderr)
+                        if result.stdout:
+                            cc_debug.stdout.append(result.stdout)
 
                     # decorate bridge events with agent spans
                     annotate_agent_spans(result.stdout)
+
+                    # raise for error
+                    if not result.success:
+                        raise RuntimeError(
+                            f"Error executing claude code agent {result.returncode}: {result.stderr}"
+                        )
 
                     # reset timeout counter
                     timeout_count = 0
@@ -407,6 +418,11 @@ async def run_claude_code_centaur(
 
     # run the human cli
     await run_centaur(options, instructions, bashrc, state)
+
+
+class ClaudeCodeDebug(StoreModel):
+    stderr: list[str] = Field(default_factory=list)
+    stdout: list[str] = Field(default_factory=list)
 
 
 async def _jsonl_stream(

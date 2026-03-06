@@ -21,6 +21,7 @@ from inspect_ai.event import (
     SpanEndEvent,
 )
 from inspect_ai.log import transcript
+from inspect_ai.model._chat_message import ChatMessageTool
 from inspect_ai.util._span import current_span_id
 
 from .events import to_span_begin_event, to_span_end_event
@@ -157,7 +158,10 @@ def _annotate_events(
     # Step 3: Insert CompactionEvents at correct positions
     _insert_compaction_events(compactions, events, msg_id_to_event, agent_span_id)
 
-    # Step 4: Assign remaining events via span time ranges
+    # Step 4: Match tool results from parent events to sub-agent spans
+    _match_tool_results(events, agent_spans, agent_span_id)
+
+    # Step 5: Assign remaining events via span time ranges
     # For each agent span with matched events, assign unmatched events that fall
     # within that span's [min_timestamp, max_timestamp] range. This avoids
     # sweeping up main-agent events that happen between subagent calls.
@@ -174,8 +178,97 @@ def _annotate_events(
                 event.span_id = span_info.span_id
                 break
 
-    # Step 5: Build SpanBeginEvent/SpanEndEvent
+    # Step 6: Build SpanBeginEvent/SpanEndEvent
     return _build_span_events(agent_spans, agent_span_id)
+
+
+def _match_tool_results(
+    events: Sequence[Event],
+    agent_spans: dict[str, _AgentSpanInfo],
+    agent_span_id: str,
+) -> None:
+    """Match tool result messages in parent events back to sub-agent spans.
+
+    Tool calls made within sub-agent spans produce ChatMessageTool results
+    that appear in subsequent parent ModelEvent inputs. This function matches
+    those results back to the originating span via tool_call_id.
+    """
+    # Collect tool_call IDs per span from sub-agent ModelEvent outputs
+    # (excluding Task/Agent tool_calls which spawn child spans)
+    span_tool_call_ids: dict[str, str] = {}  # tool_call_id -> span_id
+    seen_tool_call_ids: set[str] = set()
+
+    for event in events:
+        if not isinstance(event, ModelEvent):
+            continue
+        if event.span_id == agent_span_id:
+            continue
+
+        # This event is in a sub-agent span — collect its tool_call IDs from output
+        if event.output and event.output.choices:
+            for choice in event.output.choices:
+                if choice.message.tool_calls:
+                    for tc in choice.message.tool_calls:
+                        if tc.function not in ("Task", "Agent") and event.span_id:
+                            span_tool_call_ids[tc.id] = event.span_id
+
+        # Record tool_call_ids already "seen" in this span's inputs
+        if event.input:
+            for msg in event.input:
+                if isinstance(msg, ChatMessageTool) and msg.tool_call_id:
+                    seen_tool_call_ids.add(msg.tool_call_id)
+
+    if not span_tool_call_ids:
+        return
+
+    # Match parent ModelEvents that contain unseen tool results
+    for event in events:
+        if not isinstance(event, ModelEvent):
+            continue
+        if event.pending is not None:
+            continue
+        if event.span_id != agent_span_id:
+            continue
+        if not event.input:
+            continue
+
+        # Check if any input ChatMessageTool matches an unseen sub-agent tool_call
+        matched_span_id: str | None = None
+        for msg in event.input:
+            if isinstance(msg, ChatMessageTool) and msg.tool_call_id:
+                tc_id = msg.tool_call_id
+                if tc_id in span_tool_call_ids and tc_id not in seen_tool_call_ids:
+                    matched_span_id = span_tool_call_ids[tc_id]
+                    seen_tool_call_ids.add(tc_id)
+
+        if matched_span_id is None:
+            continue
+
+        # Move this event to the sub-agent span
+        event.span_id = matched_span_id
+
+        # Update span timestamps
+        span_info = agent_spans.get(matched_span_id)
+        if span_info is not None:
+            if (
+                span_info.min_timestamp is None
+                or event.timestamp < span_info.min_timestamp
+            ):
+                span_info.min_timestamp = event.timestamp
+            if (
+                span_info.max_timestamp is None
+                or event.timestamp > span_info.max_timestamp
+            ):
+                span_info.max_timestamp = event.timestamp
+
+        # If this moved event has new tool_calls in output, add them to the
+        # span's pending set (enables chaining: result → new call → result)
+        if event.output and event.output.choices:
+            for choice in event.output.choices:
+                if choice.message.tool_calls:
+                    for tc in choice.message.tool_calls:
+                        if tc.function not in ("Task", "Agent"):
+                            span_tool_call_ids[tc.id] = matched_span_id
 
 
 def _parse_agent_hierarchy(
@@ -192,7 +285,6 @@ def _parse_agent_hierarchy(
     msg_id_to_span: dict[str, str] = {}
     agent_spans: dict[str, _AgentSpanInfo] = {}
     compactions: list[_CompactionInfo] = []
-    last_parent_tool_use_id: str | None = None
 
     # Track last message.id seen per span context (None = top-level)
     # so we can record which message preceded each compaction
@@ -233,7 +325,6 @@ def _parse_agent_hierarchy(
         parent_tool_use_id = raw.get("parent_tool_use_id")
 
         # Check for Task/Agent tool_use blocks in this assistant event
-        has_agent_tool = False
         for block in content:
             if not isinstance(block, dict):
                 continue
@@ -242,7 +333,6 @@ def _parse_agent_hierarchy(
             if block.get("name") not in ("Task", "Agent"):
                 continue
 
-            has_agent_tool = True
             tool_use_id = block.get("id", "")
             tool_input = block.get("input", {})
             span_id = f"agent-{tool_use_id}"
@@ -263,24 +353,10 @@ def _parse_agent_hierarchy(
             )
         # Map message.id to span for subagent messages
         msg_id = message.get("id")
+
         if msg_id and parent_tool_use_id:
             span_id = f"agent-{parent_tool_use_id}"
             msg_id_to_span[msg_id] = span_id
-
-        # Track last seen parent_tool_use_id to handle orphan final messages.
-        # When a subagent's final message lacks parent_tool_use_id, infer it
-        # from the preceding subagent context.
-        if parent_tool_use_id:
-            last_parent_tool_use_id = parent_tool_use_id
-        elif last_parent_tool_use_id and not has_agent_tool:
-            # This assistant event follows subagent events but has no
-            # parent_tool_use_id — likely the subagent's final message
-            if msg_id:
-                span_id = f"agent-{last_parent_tool_use_id}"
-                msg_id_to_span[msg_id] = span_id
-            last_parent_tool_use_id = None
-        else:
-            last_parent_tool_use_id = None
 
         # Track last message.id per span context for compaction ordering
         if msg_id:
