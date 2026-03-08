@@ -13,6 +13,7 @@ website:
            - href: claude_code.qmd
            - href: codex_cli.qmd
            - href: gemini_cli.qmd
+           - href: mini_swe_agent.qmd
     right:
       - text: Changelog
         href: CHANGELOG.md
@@ -28,6 +29,7 @@ website:
             - href: claude_code.qmd
             - href: codex_cli.qmd
             - href: gemini_cli.qmd
+            - href: mini_swe_agent.qmd
 
 format:
   html:

@@ -214,3 +214,6 @@ logs/
 
 # MacOS
 .DS_Store
+
+_scratch/
+

@@ -11,7 +11,6 @@ from tests.conftest import (
 )
 
 
-@pytest.mark.api
 @skip_if_no_docker
 @skip_if_no_anthropic
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
@@ -28,7 +27,6 @@ def test_claude_code_web_search(sandbox: str) -> None:
     assert next((tc for tc in tool_calls if tc.function == "WebSearch"), None)
 
 
-@pytest.mark.api
 @skip_if_no_openai
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
@@ -49,7 +47,6 @@ def test_codex_cli_web_search(sandbox: str) -> None:
     )
 
 
-@pytest.mark.api
 @skip_if_no_google
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())

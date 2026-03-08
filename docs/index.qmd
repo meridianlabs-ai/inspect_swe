@@ -5,7 +5,7 @@ subtitle: Software Engineering Agents for Inspect AI
 
 ## Overview
 
-The `inspect_swe` package makes software engineering agents like [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex CLI](https://github.com/openai/codex), and [Gemini CLI](https://github.com/google-gemini/gemini-cli) available as standard Inspect agents. For example, here we use the `claude_code()` agent as the solver in an Inspect task:
+The `inspect_swe` package makes software engineering agents like [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), and [Mini SWE Agent](https://github.com/SWE-agent/mini-swe-agent) available as standard Inspect agents. For example, here we use the `claude_code()` agent as the solver in an Inspect task:
 
 ``` python
 from inspect_ai import Task, task
@@ -43,6 +43,7 @@ Then, try out one or more of the available agents:
 | [`claude_code()`](claude_code.qmd) | Anthropic's agentic coding tool [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) |
 | [`codex_cli()`](codex_cli.qmd) | OpenAI's terminal-based coding agent [Codex CLI](https://github.com/openai/codex) |
 | [`gemini_cli()`](gemini_cli.qmd) | Google's open-source AI agent [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
+| [`mini_swe_agent()`](mini_swe_agent.qmd) | SWE-agent's minimal 100-line agent. |
 
 
 : {tbl-colwidths=\[30,70\]}

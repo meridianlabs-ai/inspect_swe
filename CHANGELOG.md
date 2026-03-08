@@ -1,4 +1,35 @@
-## 0.2.35 (23 February 2026)
+## Unreleased
+
+- Claude Code: Improved detection of final agent span messages.
+- Claude Code: Capture stdout and stderr to store in debug mode.
+
+## 0.2.41 (04 March 2026)
+
+- Claude Code: Annotate event stream with agent spans.
+- Support for sub-agents defined using agent teams.
+- Attach agent_span_id to tool events for agent spawning tools.
+- Pass `sandbox` argument to `sandbox_agent_bridge()`.
+
+## 0.2.40 (02 March 2026)
+
+- Claude Code: Revert streaming events while we refine our approach.
+- Use normal heading/body for task tool views.
+
+## 0.2.39 (01 March 2026)
+
+- Improvements to the structure and content of claude code tool events.
+
+## 0.2.38 (28 February 2026)
+
+- Mini SWE Agent: New `mini_swe_agent()` agent implementation.
+- Agent Binaries: Make only a single request for the latest agent binary versions (vs. a request per sample).
+- Model aliases: Enable passing `model_aliases` to all agents (passed through to `sandbox_agent_bridge()`).
+
+## 0.2.37 (24 February 2026)
+
+- Claude Code: Capture `stream-json` output to create agent spans within transcript.
+
+## 0.2.36 (23 February 2026)
 
 - Gemini CLI: New `gemini_cli()` agent for Google Gemini.
 - Sandbox: Use `exec_remote()` interface for impoved robustness of long running processes.

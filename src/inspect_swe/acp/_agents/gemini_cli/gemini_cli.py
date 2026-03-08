@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from inspect_ai.agent import AgentState, agent, sandbox_agent_bridge
+from inspect_ai.agent import AgentState, SandboxAgentBridge, agent, sandbox_agent_bridge
 from inspect_ai.model import Model, get_model
 from inspect_ai.tool import Skill, install_skills, read_skills
 from inspect_ai.util import ExecRemoteProcess, ExecRemoteStreamingOptions, store
@@ -50,7 +50,7 @@ class GeminiCli(ACPAgent):
     @asynccontextmanager
     async def _start_agent(
         self, state: AgentState
-    ) -> AsyncIterator[tuple[ExecRemoteProcess, object]]:
+    ) -> AsyncIterator[tuple[ExecRemoteProcess, SandboxAgentBridge]]:
         sbox = sandbox_env(self.sandbox)
         model = get_model(self.model)
 
@@ -86,9 +86,7 @@ class GeminiCli(ACPAgent):
                     if self.cwd is not None
                     else GEMINI_SKILLS
                 )
-                await install_skills(
-                    self._resolved_skills, sbox, self.user, skills_dir
-                )
+                await install_skills(self._resolved_skills, sbox, self.user, skills_dir)
 
             # Environment variables (matching non-ACP gemini_cli agent).
             agent_env = {

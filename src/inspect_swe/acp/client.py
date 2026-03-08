@@ -158,6 +158,9 @@ class DefaultClient(Client):
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         pass
 
+    def on_connect(self, conn: Any) -> None:
+        return None
+
 
 async def _await_stderr_flush(feeder: asyncio.Task[None]) -> None:
     """Give the feeder a moment to collect trailing stderr."""

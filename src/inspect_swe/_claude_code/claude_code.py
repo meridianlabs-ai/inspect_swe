@@ -1,5 +1,7 @@
+import json
 import shlex
 import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
@@ -13,14 +15,28 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter
+from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
-from inspect_ai.util import sandbox as sandbox_env
-from inspect_ai.util import store
-from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
+from inspect_ai.util import (
+    ExecCompleted,
+    ExecRemoteAwaitableOptions,
+    ExecStderr,
+    ExecStdout,
+    StoreModel,
+    store,
+    store_as,
+)
+from inspect_ai.util import (
+    sandbox as sandbox_env,
+)
+from inspect_ai.util._sandbox import (
+    ExecRemoteProcess,
+)
+from pydantic import Field
 from pydantic_core import to_json
 
+from inspect_swe._claude_code._events.spans import annotate_agent_spans
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.path import join_path
 
@@ -47,6 +63,7 @@ def claude_code(
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    model_aliases: dict[str, str | Model] | None = None,
     opus_model: str | None = None,
     sonnet_model: str | None = None,
     haiku_model: str | None = None,
@@ -84,6 +101,9 @@ def claude_code(
         centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
+        model_aliases: Optional mapping of model names to Model instances or model name strings.
+            Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
+            When a model name in the mapping is referenced, the corresponding Model/string is used.
         opus_model: The model to use for `opus`, or for `opusplan` when Plan Mode is active. Defaults to `model`.
         sonnet_model: The model to use for `sonnet`, or for `opusplan` when Plan Mode is not active. Defaults to `model`.
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
@@ -93,7 +113,7 @@ def claude_code(
         cwd: Working directory to run claude code within.
         env: Environment variables to set for claude code.
         user: User to execute claude code with.
-        debug: Add `--debug` and `--verbose` cli flags.
+        debug: Add `--debug` cli flag. Verbose logging is always enabled.
         sandbox: Optional sandbox environment name.
         version: Version of claude code to use. One of:
             - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
@@ -128,7 +148,9 @@ def claude_code(
         async with sandbox_agent_bridge(
             state,
             model=model,
+            model_aliases=model_aliases,
             filter=filter,
+            sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
@@ -150,14 +172,9 @@ def claude_code(
 
             # add interactive options if not running as centaur
             if centaur is False:
-                cmd.append("--print")
+                cmd.extend(["--print", "--output-format", "stream-json", "--verbose"])
                 if debug:
-                    cmd.extend(
-                        [
-                            "--debug",
-                            "--verbose",
-                        ]
-                    )
+                    cmd.append("--debug")
 
             # system prompt
             system_messages = [
@@ -261,15 +278,24 @@ def claude_code(
                         ),
                         stream=False,
                     )
-
                     # track debug output
-                    debug_output.append(result.stdout)
                     debug_output.append(result.stderr)
+
+                    # if we are in debug mode then save the jsonl in the store
+                    if debug:
+                        cc_debug = store_as(ClaudeCodeDebug)
+                        if result.stderr:
+                            cc_debug.stderr.append(result.stderr)
+                        if result.stdout:
+                            cc_debug.stdout.append(result.stdout)
+
+                    # decorate bridge events with agent spans
+                    annotate_agent_spans(result.stdout)
 
                     # raise for error
                     if not result.success:
                         raise RuntimeError(
-                            f"Error executing claude code agent {result.returncode}: {result.stdout}\n{result.stderr}"
+                            f"Error executing claude code agent {result.returncode}: {result.stderr}"
                         )
 
                     # reset timeout counter
@@ -368,8 +394,6 @@ def resolve_mcp_servers(
     return mcp_config_cmds, allowed_tools
 
 
-
-
 async def run_claude_code_centaur(
     options: CentaurOptions,
     claude_cmd: list[str],
@@ -394,3 +418,43 @@ async def run_claude_code_centaur(
 
     # run the human cli
     await run_centaur(options, instructions, bashrc, state)
+
+
+class ClaudeCodeDebug(StoreModel):
+    stderr: list[str] = Field(default_factory=list)
+    stdout: list[str] = Field(default_factory=list)
+
+
+async def _jsonl_stream(
+    proc: ExecRemoteProcess,
+    debug_output: list[str],
+) -> AsyncIterator[dict[str, Any]]:
+    """Line-buffer stdout chunks from exec_remote, yield parsed JSONL dicts."""
+    line_buffer = ""
+    exit_code = 0
+    async for event in proc:
+        if isinstance(event, ExecStdout):
+            line_buffer += event.data
+            while "\n" in line_buffer:
+                line, line_buffer = line_buffer.split("\n", 1)
+                line = line.strip()
+                if line:
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        debug_output.append(f"JSONL parse error: {line}")
+        elif isinstance(event, ExecStderr):
+            debug_output.append(event.data)
+        elif isinstance(event, ExecCompleted):
+            exit_code = event.exit_code
+    # Handle trailing partial line
+    if line_buffer.strip():
+        try:
+            yield json.loads(line_buffer.strip())
+        except json.JSONDecodeError:
+            debug_output.append(f"JSONL parse error (trailing): {line_buffer}")
+    if exit_code != 0:
+        tail = debug_output[-100:] if len(debug_output) > 100 else debug_output
+        raise RuntimeError(
+            f"Error executing claude code agent {exit_code}: {' '.join(tail)}"
+        )

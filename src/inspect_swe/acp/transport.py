@@ -10,7 +10,7 @@ from asyncio import transports as aio_transports
 from asyncio.streams import FlowControlMixin
 from typing import cast
 
-from inspect_ai.util import ExecRemoteEvent, ExecRemoteProcess
+from inspect_ai.util import ExecCompleted, ExecRemoteProcess, ExecStderr, ExecStdout
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +85,12 @@ async def create_exec_remote_streams(
     async def _feed_stdout() -> None:
         try:
             async for event in proc:
-                if isinstance(event, ExecRemoteEvent.Stdout):
+                if isinstance(event, ExecStdout):
                     reader.feed_data(event.data.encode())
-                elif isinstance(event, ExecRemoteEvent.Stderr):
+                elif isinstance(event, ExecStderr):
                     info.append_stderr(event.data)
                     logger.warning("ACP stderr: %s", event.data.rstrip())
-                elif isinstance(event, ExecRemoteEvent.Completed):
+                elif isinstance(event, ExecCompleted):
                     info.exit_code = event.exit_code
                     if event.exit_code != 0:
                         logger.warning(

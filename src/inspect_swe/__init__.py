@@ -1,7 +1,9 @@
 from ._claude_code.claude_code import claude_code
 from ._codex_cli.codex_cli import codex_cli
 from ._gemini_cli.gemini_cli import gemini_cli
+from ._mini_swe_agent.mini_swe_agent import mini_swe_agent
 from ._tools.download import AgentBinary, cached_agent_binaries, download_agent_binary
+from ._util.agentwheel import download_wheels_tarball
 from ._util.centaur import CentaurOptions
 from ._util.sandbox import SandboxPlatform
 from .acp import ACPAgent, ACPAgentParams, acp_connection, bridge_mcp_to_acp
@@ -23,6 +25,7 @@ __all__ = [
     "claude_code",
     "codex_cli",
     "gemini_cli",
+    "mini_swe_agent",
     "interactive_claude_code",
     "interactive_codex_cli",
     "interactive_gemini_cli",
@@ -32,4 +35,5 @@ __all__ = [
     "SandboxPlatform",
     "CentaurOptions",
     "__version__",
+    "download_wheels_tarball",
 ]

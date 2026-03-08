@@ -1,3 +1,4 @@
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Literal, NamedTuple
@@ -36,6 +37,20 @@ class AgentBinarySource:
     list_cached_binaries: Callable[[], list[Path]]
     post_download: Callable[[bytes], bytes] | None
     post_install: str | None
+
+
+# In-process cache for version resolution results. When many samples run
+# concurrently they all call resolve_version with the same arguments.
+# Without caching, each call hits upstream APIs (e.g. GitHub, GCS),
+# risking rate-limit exhaustion. We use a threading.Lock (not anyio.Lock)
+# because it only guards synchronous dict reads/writes — never held across
+# an await — and avoids issues with module-level anyio.Lock binding to a
+# stale event loop across multiple anyio.run() calls. No expiry: entries
+# live for the process lifetime. Two callers may race on the same key and
+# both call resolve_version(), but this is benign (same result) and unlikely
+# given the per-binary concurrency(1) lock in ensure_agent_binary_installed.
+_resolve_version_lock = threading.Lock()
+_resolved_versions: dict[tuple[str, str, SandboxPlatform], AgentBinaryVersion] = {}
 
 
 async def ensure_agent_binary_installed(
@@ -105,13 +120,21 @@ async def download_agent_binary_async(
     platform: SandboxPlatform,
     logger: Callable[[str], None] | None = None,
 ) -> tuple[bytes, str]:
-    # resovle logger
+    # resolve logger
     logger = logger or print
 
-    # determine version and checksum
-    version, expected_checksum, download_url = await source.resolve_version(
-        version, platform
-    )
+    # determine version and checksum (cached so concurrent samples don't
+    # repeat upstream API calls that may be rate-limited)
+    cache_key = (source.binary, version, platform)
+    with _resolve_version_lock:
+        cached = _resolved_versions.get(cache_key)
+    if cached is not None:
+        resolved = cached
+    else:
+        resolved = await source.resolve_version(version, platform)
+        with _resolve_version_lock:
+            _resolved_versions[cache_key] = resolved
+    version, expected_checksum, download_url = resolved
 
     # check the cache (if post_download is used, don't verify checksum since cached is processed)
     cache_checksum = None if source.post_download else expected_checksum

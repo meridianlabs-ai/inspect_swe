@@ -2,6 +2,7 @@ import importlib
 import os
 import subprocess
 from typing import Any, Callable, List, Literal, TypeVar, cast
+from unittest.mock import MagicMock
 
 import pytest
 from inspect_ai import eval
@@ -162,7 +163,7 @@ def get_available_sandboxes() -> List[Literal["docker", "k8s"]]:
 
 def run_example(
     example: str,
-    agent: Literal["claude_code", "codex_cli", "gemini_cli"],
+    agent: Literal["claude_code", "codex_cli", "gemini_cli", "mini_swe_agent"],
     model: str,
     sandbox: str | None = None,
 ) -> list[EvalLog]:
@@ -174,3 +175,54 @@ def run_example(
     if sandbox is not None:
         task_args["sandbox"] = sandbox
     return eval(example_file, model=model, limit=1, task_args=task_args)
+
+
+# --- Wheels cache utilities ---
+
+
+@pytest.fixture
+def wheels_cache_cleanup() -> Any:
+    """Fixture that redirects wheels cache to a temp directory for test isolation.
+
+    Tests using this fixture will have their cache operations isolated from the
+    real cache directory. The temp directory is automatically cleaned up after
+    the test completes (even if it fails).
+    """
+    import shutil
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+
+    # Create temp directory for test cache
+    temp_dir = Path(tempfile.mkdtemp(prefix="wheels_cache_test_"))
+
+    def mock_cache_dir(package_name: str) -> Path:
+        safe_name = package_name.replace("-", "_").replace(".", "_")
+        cache_path = temp_dir / f"{safe_name}-wheels"
+        cache_path.mkdir(parents=True, exist_ok=True)
+        return cache_path
+
+    with patch("inspect_swe._util.agentwheel._wheels_cache_dir", mock_cache_dir):
+        yield temp_dir
+
+    # Cleanup temp directory (runs even if test fails)
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.fixture
+def mock_pip_download_failure() -> Any:
+    """Fixture to mock pip download network failures.
+
+    Mocks both the cache read (to force download) and subprocess.run (to simulate failure).
+    """
+    from unittest.mock import patch
+
+    # Mock cache to return None (force download path)
+    with patch("inspect_swe._util.agentwheel.read_cached_wheels", return_value=None):
+        # Mock subprocess.run to simulate pip download failure
+        with patch("inspect_swe._util.agentwheel.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1,
+                stderr="ERROR: Could not find a version that satisfies the requirement (network error)",
+            )
+            yield mock_run

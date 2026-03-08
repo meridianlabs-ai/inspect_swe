@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from inspect_ai.agent import AgentState, agent, sandbox_agent_bridge
+from inspect_ai.agent import AgentState, SandboxAgentBridge, agent, sandbox_agent_bridge
 from inspect_ai.model import Model, get_model
 from inspect_ai.tool import Skill, install_skills, read_skills
 from inspect_ai.util import ExecRemoteProcess, ExecRemoteStreamingOptions
@@ -64,7 +64,7 @@ class ClaudeCode(ACPAgent):
     @asynccontextmanager
     async def _start_agent(
         self, state: AgentState
-    ) -> AsyncIterator[tuple[ExecRemoteProcess, object]]:
+    ) -> AsyncIterator[tuple[ExecRemoteProcess, SandboxAgentBridge]]:
         sbox = sandbox_env(self.sandbox)
         default_model = get_model(self.model).canonical_name()
 
