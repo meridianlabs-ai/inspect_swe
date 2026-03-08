@@ -54,16 +54,14 @@ class _WriteStdinTransport(asyncio.BaseTransport):
 class ErrorInfo:
     """Exit code and stderr collected from an ``ExecRemoteProcess``."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_stderr_chars: int = 8000) -> None:
         self.exit_code: int | None = None
         self.stderr: str = ""
+        self._max_stderr_chars = max_stderr_chars
 
-    def summary(self) -> str:
-        """Human-readable summary of the process exit."""
-        parts = [f"exit_code={self.exit_code}"]
-        if self.stderr:
-            parts.append(f"stderr:\n{self.stderr}")
-        return "\n".join(parts)
+    def append_stderr(self, data: str) -> None:
+        """Append stderr while keeping only a bounded tail in memory."""
+        self.stderr = (self.stderr + data)[-self._max_stderr_chars :]
 
 
 async def create_exec_remote_streams(
@@ -85,13 +83,12 @@ async def create_exec_remote_streams(
     info = ErrorInfo()
 
     async def _feed_stdout() -> None:
-        stderr_parts: list[str] = []
         try:
             async for event in proc:
                 if isinstance(event, ExecRemoteEvent.Stdout):
                     reader.feed_data(event.data.encode())
                 elif isinstance(event, ExecRemoteEvent.Stderr):
-                    stderr_parts.append(event.data)
+                    info.append_stderr(event.data)
                     logger.warning("ACP stderr: %s", event.data.rstrip())
                 elif isinstance(event, ExecRemoteEvent.Completed):
                     info.exit_code = event.exit_code
@@ -106,7 +103,6 @@ async def create_exec_remote_streams(
                     else:
                         logger.debug("ACP process completed successfully")
         finally:
-            info.stderr = "".join(stderr_parts)
             reader.feed_eof()
 
     feeder = asyncio.create_task(_feed_stdout())

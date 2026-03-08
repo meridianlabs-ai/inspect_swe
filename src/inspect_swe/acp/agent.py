@@ -21,7 +21,7 @@ from inspect_ai.tool import MCPServerConfig, MCPServerConfigHTTP
 from inspect_ai.util import ExecRemoteProcess
 from typing_extensions import TypedDict, Unpack
 
-from .client import acp_connection
+from .client import ACPError, acp_connection, format_acp_failure
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,32 @@ class ACPAgent(Agent):
             parts.append(self.system_prompt)
         return "\n\n".join(parts) if parts else None
 
+    async def _wait_for_active_session(
+        self,
+        feeder: Any,
+        error_info: Any,
+    ) -> None:
+        """Wait for the ACP adapter to exit and preserve stderr on failure."""
+        try:
+            await feeder
+        except RuntimeError as ex:
+            message = format_acp_failure(
+                phase="active_session",
+                error_info=error_info,
+                acp_error=ex,
+            )
+            raise ACPError(message) from ex
+        if error_info.exit_code != 0:
+            raise ACPError(
+                format_acp_failure(
+                    phase="active_session",
+                    error_info=error_info,
+                    acp_error=(
+                        "ACP adapter process exited with an error while session was still active."
+                    ),
+                )
+            )
+
     # ------------------------------------------------------------------
     # Agent protocol
     # ------------------------------------------------------------------
@@ -196,13 +222,7 @@ class ACPAgent(Agent):
                             self.ready.set()
                             # Block until either the caller cancels the task or
                             # the ACP adapter process exits.
-                            await feeder
-                            if error_info.exit_code != 0:
-                                raise RuntimeError(
-                                    "ACP adapter process exited with an error "
-                                    "while session was still active\n"
-                                    + error_info.summary()
-                                )
+                            await self._wait_for_active_session(feeder, error_info)
                         finally:
                             self.conn = None
                             self.session_id = None
