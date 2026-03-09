@@ -210,7 +210,7 @@ __marimo__/
 src/inspect_swe/_version.py
 
 # Inspect logs
-logs/
+logs*/
 
 # MacOS
 .DS_Store
