@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.42 (09 March 2026)
 
 - Claude Code: Improved detection of final agent span messages.
 - Claude Code: Capture stdout and stderr to store in debug mode.
