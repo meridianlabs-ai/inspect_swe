@@ -1,3 +1,7 @@
+## Unreleased
+
+- Improve ACP error reporting for adapter failures.
+
 ## 0.2.42 (09 March 2026)
 
 - Claude Code: Improved detection of final agent span messages.
