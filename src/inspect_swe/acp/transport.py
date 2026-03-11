@@ -10,6 +10,7 @@ from asyncio import transports as aio_transports
 from asyncio.streams import FlowControlMixin
 from typing import cast
 
+from acp.core import DEFAULT_STDIO_BUFFER_LIMIT_BYTES
 from inspect_ai.util import ExecCompleted, ExecRemoteProcess, ExecStderr, ExecStdout
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ async def create_exec_remote_streams(
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, asyncio.Task[None], ErrorInfo]:
     """Create ``StreamReader``/``StreamWriter`` bridged to *proc*'s stdin/stdout."""
     loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader()
+    reader = asyncio.StreamReader(limit=DEFAULT_STDIO_BUFFER_LIMIT_BYTES)
 
     protocol = FlowControlMixin()
     transport = _WriteStdinTransport(proc)
