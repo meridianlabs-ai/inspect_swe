@@ -94,7 +94,11 @@ async def _download_and_install_node(
 
     node_path = f"{SANDBOX_INSTALL_DIR}/node/bin/node"
 
-    await sandbox_exec(sandbox, f"mkdir -p {SANDBOX_INSTALL_DIR}/node/bin", user="root")
+    await sandbox_exec(
+        sandbox,
+        f"mkdir -p {SANDBOX_INSTALL_DIR}/node/bin && chmod 777 {SANDBOX_INSTALL_DIR}/node/bin",
+        user="root",
+    )
     await sandbox.write_file(node_path, node_binary_data)
     await sandbox_exec(sandbox, f"chmod +x {node_path}", user="root")
 
@@ -224,7 +228,9 @@ async def install_npm_bundle(
     Returns the path to the package's binary at
     ``{install_dir}/node_modules/.bin/{binary_name}``.
     """
-    await sandbox_exec(sandbox, f"mkdir -p {install_dir}", user="root")
+    await sandbox_exec(
+        sandbox, f"mkdir -p {install_dir} && chmod 777 {install_dir}", user="root"
+    )
 
     bundle_path = f"{install_dir}/bundle.tar.gz"
     await sandbox.write_file(bundle_path, bundle_data)
