@@ -4,6 +4,7 @@ Shared infrastructure for agent implementations that need Node.js
 and/or npm packages installed in sandboxes.
 """
 
+import base64
 import json
 import lzma
 import os
@@ -227,19 +228,20 @@ async def install_npm_bundle(
     await sandbox_exec(sandbox, f"mkdir -p {install_dir}", user="root")
 
     bundle_path = f"{install_dir}/bundle.tar.gz"
-    await sandbox.write_file(bundle_path, bundle_data)
 
+    base64_contents = base64.b64encode(bundle_data).decode("ascii")
     result = await sandbox.exec(
-        bash_command(f"test -f {bundle_path}"),
+        bash_command(f'base64 -d | tee -- "{bundle_path}" > /dev/null'),
+        input=base64_contents,
         user="root",
-        timeout=30,
+        timeout=300,
+        timeout_retry=False,
     )
     if not result.success:
         raise RuntimeError(
-            f"write_file for {bundle_path} returned successfully but the file "
-            f"does not exist in the container. This typically indicates the "
-            f"Docker daemon is overloaded (e.g. from stale containers). "
-            f"Try running 'inspect sandbox cleanup docker' and retrying."
+            f"Failed to write npm bundle to {bundle_path}:\n"
+            f"stdout: {result.stdout}\n"
+            f"stderr: {result.stderr}"
         )
 
     result = await sandbox.exec(
