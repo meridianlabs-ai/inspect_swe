@@ -94,11 +94,7 @@ async def _download_and_install_node(
 
     node_path = f"{SANDBOX_INSTALL_DIR}/node/bin/node"
 
-    await sandbox_exec(
-        sandbox,
-        f"mkdir -p {SANDBOX_INSTALL_DIR}/node/bin && chmod 777 {SANDBOX_INSTALL_DIR}/node/bin",
-        user="root",
-    )
+    await sandbox_exec(sandbox, f"mkdir -p {SANDBOX_INSTALL_DIR}/node/bin", user="root")
     await sandbox.write_file(node_path, node_binary_data)
     await sandbox_exec(sandbox, f"chmod +x {node_path}", user="root")
 
@@ -228,12 +224,23 @@ async def install_npm_bundle(
     Returns the path to the package's binary at
     ``{install_dir}/node_modules/.bin/{binary_name}``.
     """
-    await sandbox_exec(
-        sandbox, f"mkdir -p {install_dir} && chmod 777 {install_dir}", user="root"
-    )
+    await sandbox_exec(sandbox, f"mkdir -p {install_dir}", user="root")
 
     bundle_path = f"{install_dir}/bundle.tar.gz"
     await sandbox.write_file(bundle_path, bundle_data)
+
+    result = await sandbox.exec(
+        bash_command(f"test -f {bundle_path}"),
+        user="root",
+        timeout=30,
+    )
+    if not result.success:
+        raise RuntimeError(
+            f"write_file for {bundle_path} returned successfully but the file "
+            f"does not exist in the container. This typically indicates the "
+            f"Docker daemon is overloaded (e.g. from stale containers). "
+            f"Try running 'inspect sandbox cleanup docker' and retrying."
+        )
 
     result = await sandbox.exec(
         bash_command(f"tar -xzf {bundle_path} -C {install_dir} && rm -f {bundle_path}"),
