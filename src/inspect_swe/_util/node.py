@@ -5,6 +5,7 @@ and/or npm packages installed in sandboxes.
 """
 
 import json
+import logging
 import lzma
 import os
 import shutil
@@ -13,11 +14,14 @@ import tarfile
 import tempfile
 from io import BytesIO
 
+import anyio
 from inspect_ai.util import SandboxEnvironment, concurrency
 
 from .appdirs import package_cache_dir
 from .download import download_file
 from .sandbox import SANDBOX_INSTALL_DIR, SandboxPlatform, bash_command, sandbox_exec
+
+logger = logging.getLogger(__name__)
 
 NODE_VERSION = "20.11.0"
 
@@ -212,6 +216,44 @@ def create_npm_bundle(
     return bundle_data
 
 
+async def _docker_cp_to_sandbox(
+    sandbox: SandboxEnvironment,
+    data: bytes,
+    dest_path: str,
+) -> bool:
+    """Copy data into a sandbox container via ``docker cp``.
+
+    Returns True on success, False if the sandbox doesn't support
+    ``docker cp`` (e.g. non-Docker sandboxes).
+    """
+    try:
+        conn = await sandbox.connection()
+    except (NotImplementedError, ConnectionError):
+        return False
+    if not conn.container:
+        return False
+
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = tmp.name
+
+    try:
+        result = await anyio.run_process(
+            ["docker", "cp", tmp_path, f"{conn.container}:{dest_path}"],
+            check=False,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "docker cp failed (rc=%d): %s",
+                result.returncode,
+                result.stderr.decode(errors="replace"),
+            )
+            return False
+        return True
+    finally:
+        os.unlink(tmp_path)
+
+
 async def install_npm_bundle(
     sandbox: SandboxEnvironment,
     bundle_data: bytes,
@@ -227,12 +269,14 @@ async def install_npm_bundle(
     await sandbox_exec(sandbox, f"mkdir -p {install_dir}", user="root")
 
     bundle_path = f"{install_dir}/bundle.tar.gz"
-    await sandbox.write_file(bundle_path, bundle_data)
+
+    if not await _docker_cp_to_sandbox(sandbox, bundle_data, bundle_path):
+        await sandbox.write_file(bundle_path, bundle_data)
 
     result = await sandbox.exec(
         bash_command(f"tar -xzf {bundle_path} -C {install_dir} && rm -f {bundle_path}"),
         user="root",
-        timeout=60,
+        timeout=120,
     )
     if not result.success:
         raise RuntimeError(
