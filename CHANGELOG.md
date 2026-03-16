@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.43 (16 March 2026)
 
 - Improve ACP error reporting for adapter failures.
 
