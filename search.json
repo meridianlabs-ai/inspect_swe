@@ -196,14 +196,49 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Mini SWE Agent: New mini_swe_agent() agent implementation.\nAgent Binaries: Make only a single request for the latest agent binary versions (vs. a request per sample).\nModel aliases: Enable passing model_aliases to all agents (passed through to sandbox_agent_bridge())."
+    "text": "Improve ACP error reporting for adapter failures."
+  },
+  {
+    "objectID": "CHANGELOG.html#march-2026",
+    "href": "CHANGELOG.html#march-2026",
+    "title": "Inspect SWE",
+    "section": "",
+    "text": "Improve ACP error reporting for adapter failures."
+  },
+  {
+    "objectID": "CHANGELOG.html#march-2026-1",
+    "href": "CHANGELOG.html#march-2026-1",
+    "title": "Inspect SWE",
+    "section": "0.2.42 (09 March 2026)",
+    "text": "0.2.42 (09 March 2026)\n\nClaude Code: Improved detection of final agent span messages.\nClaude Code: Capture stdout and stderr to store in debug mode."
+  },
+  {
+    "objectID": "CHANGELOG.html#march-2026-2",
+    "href": "CHANGELOG.html#march-2026-2",
+    "title": "Inspect SWE",
+    "section": "0.2.41 (04 March 2026)",
+    "text": "0.2.41 (04 March 2026)\n\nClaude Code: Annotate event stream with agent spans.\nSupport for sub-agents defined using agent teams.\nAttach agent_span_id to tool events for agent spawning tools.\nPass sandbox argument to sandbox_agent_bridge()."
+  },
+  {
+    "objectID": "CHANGELOG.html#march-2026-3",
+    "href": "CHANGELOG.html#march-2026-3",
+    "title": "Inspect SWE",
+    "section": "0.2.40 (02 March 2026)",
+    "text": "0.2.40 (02 March 2026)\n\nClaude Code: Revert streaming events while we refine our approach.\nUse normal heading/body for task tool views."
+  },
+  {
+    "objectID": "CHANGELOG.html#march-2026-4",
+    "href": "CHANGELOG.html#march-2026-4",
+    "title": "Inspect SWE",
+    "section": "0.2.39 (01 March 2026)",
+    "text": "0.2.39 (01 March 2026)\n\nImprovements to the structure and content of claude code tool events."
   },
   {
     "objectID": "CHANGELOG.html#february-2026",
     "href": "CHANGELOG.html#february-2026",
     "title": "Inspect SWE",
-    "section": "",
-    "text": "Mini SWE Agent: New mini_swe_agent() agent implementation.\nAgent Binaries: Make only a single request for the latest agent binary versions (vs. a request per sample).\nModel aliases: Enable passing model_aliases to all agents (passed through to sandbox_agent_bridge())."
+    "section": "0.2.38 (28 February 2026)",
+    "text": "0.2.38 (28 February 2026)\n\nMini SWE Agent: New mini_swe_agent() agent implementation.\nAgent Binaries: Make only a single request for the latest agent binary versions (vs. a request per sample).\nModel aliases: Enable passing model_aliases to all agents (passed through to sandbox_agent_bridge())."
   },
   {
     "objectID": "CHANGELOG.html#february-2026-1",
