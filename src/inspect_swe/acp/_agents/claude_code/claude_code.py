@@ -1,4 +1,4 @@
-"""Claude Code agent via the ``claude-code-acp`` ACP adapter."""
+"""Claude Code agent via the ``claude-agent-acp`` ACP adapter."""
 
 import logging
 from collections.abc import AsyncIterator
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class ClaudeCode(ACPAgent):
-    """Claude Code agent via the ``claude-code-acp`` ACP adapter.
+    """Claude Code agent via the ``claude-agent-acp`` ACP adapter.
 
     Subclasses :class:`ACPAgent` to provide Claude-specific setup
     (bridge, env vars, MCP config, skills).
@@ -76,7 +76,7 @@ class ClaudeCode(ACPAgent):
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
         ) as bridge:
-            # Install node and claude-code-acp in the sandbox.
+            # Install node and claude-agent-acp in the sandbox.
             acp_binary, node_binary = await ensure_claude_code_acp_setup(
                 sbox, self.user
             )
@@ -136,7 +136,7 @@ class ClaudeCode(ACPAgent):
                 await install_skills(self._resolved_skills, sbox, self.user, skills_dir)
 
             # Start ACP adapter process
-            logger.info("Starting claude-code-acp adapter...")
+            logger.info("Starting claude-agent-acp adapter...")
             proc = await sbox.exec_remote(
                 cmd=[acp_binary],
                 options=ExecRemoteStreamingOptions(
@@ -170,7 +170,7 @@ def interactive_claude_code(
 ) -> ACPAgent:
     """Claude Code agent via ACP.
 
-    Uses the ``claude-code-acp`` adapter in a sandbox.  Supports
+    Uses the ``claude-agent-acp`` adapter in a sandbox.  Supports
     multi-turn sessions and mid-turn interrupts.
 
     Args:
