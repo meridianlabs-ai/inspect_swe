@@ -69,7 +69,8 @@ def claude_code(
     haiku_model: str | None = None,
     subagent_model: str | None = None,
     filter: GenerateFilter | None = None,
-    retry_refusals: int | None = None,
+    retry_refusals: int | None = 3,
+    retry_uncaught_errors: int | None = 3,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -109,7 +110,8 @@ def claude_code(
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
         subagent_model: The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`.
         filter: Filter for intercepting bridged model requests.
-        retry_refusals: Should refusals be retried? (pass number of times to retry)
+        retry_refusals: Should refusals be retried? Defaults to retrying up to 3 times.
+        retry_uncaught_errors: Should uncaught errors (unexpected crashes of Claude Code) be retried. Defaults to retrying up to 3 times.
         cwd: Working directory to run claude code within.
         env: Environment variables to set for claude code.
         user: User to execute claude code with.
@@ -252,10 +254,14 @@ def claude_code(
                 debug_output: list[str] = []
                 agent_prompt = prompt
                 attempt_count = 0
-                timeout_count = 0
+                uncaught_error_count = 0
                 while True:
                     # resume previous conversation
-                    if has_assistant_response or attempt_count > 0 or timeout_count > 0:
+                    if (
+                        has_assistant_response
+                        or attempt_count > 0
+                        or uncaught_error_count > 0
+                    ):
                         agent_cmd = (
                             [claude_binary, "--continue"] + cmd + ["--", agent_prompt]
                         )
@@ -294,12 +300,26 @@ def claude_code(
 
                     # raise for error
                     if not result.success:
+                        # if claude code exits with code 1 and no stderr, this
+                        # means an uncaught exception reached the top of its
+                        # main loop -- we treat this as a scaffold bug and
+                        # retry/resume a configurable number of times
+                        if (
+                            result.returncode == 1
+                            and len(result.stderr.strip()) == 0
+                            and retry_uncaught_errors is not None
+                            and uncaught_error_count < retry_uncaught_errors
+                        ):
+                            uncaught_error_count += 1
+                            continue
+
+                        # otherwise this is a hard failure
                         raise RuntimeError(
                             f"Error executing claude code agent {result.returncode}: {result.stderr}"
                         )
 
-                    # reset timeout counter
-                    timeout_count = 0
+                    # reset uncaught error counter
+                    uncaught_error_count = 0
 
                     # exit if we are at max_attempts
                     attempt_count += 1

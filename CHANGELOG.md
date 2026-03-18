@@ -1,3 +1,8 @@
+## Unreleased
+
+- Claude Code: Retry uncaught errors (unexpected crashes of scaffold) up to 3 times by default.
+- Claude Code: Retry refusals up to 3 times by default.
+
 ## 0.2.43 (16 March 2026)
 
 - Improve ACP error reporting for adapter failures.
