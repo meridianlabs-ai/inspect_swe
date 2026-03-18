@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.44 (18 March 2026)
 
 - Claude Code: Retry uncaught errors (unexpected crashes of scaffold) up to 3 times by default.
 - Claude Code: Retry refusals up to 3 times by default.
