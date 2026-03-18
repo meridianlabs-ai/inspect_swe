@@ -105,7 +105,7 @@ class CodexCli(ACPAgent):
 
             # Write config.toml with model provider pointing at the bridge.
             # Use the canonical model name so the bridge can resolve it
-            # via model_aliases (consistent with how claude-code-acp passes
+            # via model_aliases (consistent with how claude-agent-acp passes
             # ANTHROPIC_MODEL).
             bridge_url = f"http://127.0.0.1:{bridge.port}/v1"
             config_toml_path = await self._config_toml_path(sbox, codex_home)

@@ -1,4 +1,4 @@
-"""Build and install the claude-code-acp ACP adapter in sandboxes.
+"""Build and install the claude-agent-acp ACP adapter in sandboxes.
 
 Downloads Node.js if needed, builds the npm bundle on the host (with
 caching), and copies both into each sandbox.
@@ -23,14 +23,14 @@ from inspect_swe._util.sandbox import (
 
 logger = logging.getLogger(__name__)
 
-_ACP_ADAPTER_PACKAGE = "@zed-industries/claude-code-acp"
+_ACP_ADAPTER_PACKAGE = "@zed-industries/claude-agent-acp"
 
 
 async def ensure_claude_code_acp_setup(
     sandbox: SandboxEnvironment,
     user: str | None = None,
 ) -> tuple[str, str]:
-    """Install node and claude-code-acp in the sandbox.
+    """Install node and claude-agent-acp in the sandbox.
 
     Returns (acp_binary, node_binary) paths.
     """
@@ -45,26 +45,26 @@ async def _ensure_acp_installed(
     platform: SandboxPlatform,
     user: str | None = None,
 ) -> str:
-    """Install claude-code-acp via locally-built npm bundle."""
-    install_dir = f"{SANDBOX_INSTALL_DIR}/claude-code-acp"
-    acp_binary = f"{install_dir}/node_modules/.bin/claude-code-acp"
+    """Install claude-agent-acp via locally-built npm bundle."""
+    install_dir = f"{SANDBOX_INSTALL_DIR}/claude-agent-acp"
+    acp_binary = f"{install_dir}/node_modules/.bin/claude-agent-acp"
 
     result = await sandbox.exec(bash_command(f"test -x {acp_binary}"), user=user)
     if result.success:
         return acp_binary
 
-    async with concurrency("claude-code-acp-install", 1, visible=False):
+    async with concurrency("claude-agent-acp-install", 1, visible=False):
         version = resolve_npm_package_version(_ACP_ADAPTER_PACKAGE)
         bundle_data = create_npm_bundle(
             package=_ACP_ADAPTER_PACKAGE,
             version=version,
             platform=platform,
-            cache_name="claude-code-acp-bundles",
+            cache_name="claude-agent-acp-bundles",
         )
         return await install_npm_bundle(
             sandbox=sandbox,
             bundle_data=bundle_data,
             install_dir=install_dir,
-            binary_name="claude-code-acp",
+            binary_name="claude-agent-acp",
             user=user,
         )
