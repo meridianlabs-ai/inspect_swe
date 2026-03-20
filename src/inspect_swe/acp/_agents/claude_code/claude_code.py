@@ -115,6 +115,7 @@ class ClaudeCode(ACPAgent):
                 else default_model,
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                 "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+                "API_TIMEOUT_MS": "100000000",
                 "IS_SANDBOX": "1",
                 "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
             } | self.env
