@@ -94,7 +94,11 @@ async def create_exec_remote_streams(
                     info.append_stderr(event.data)
                     text = event.data.rstrip()
                     if "ExperimentalWarning" in text or "onPostToolUseHook" in text:
-                        key = "ExperimentalWarning" if "ExperimentalWarning" in text else "onPostToolUseHook"
+                        key = (
+                            "ExperimentalWarning"
+                            if "ExperimentalWarning" in text
+                            else "onPostToolUseHook"
+                        )
                         if key not in _suppressed_stderr:
                             _suppressed_stderr.add(key)
                             logger.info("ACP stderr (suppressing further): %s", text)
