@@ -1,10 +1,11 @@
 import asyncio
 import functools
-from typing import Any
+from typing import Any, Callable, cast
 
 import anyio
 import pytest
 from acp import RequestError
+from acp.client.connection import ClientSideConnection
 from inspect_swe.acp.client import (
     ACPError,
     DefaultClient,
@@ -35,11 +36,14 @@ class PlainAsyncConnection:
         self.close_calls += 1
 
 
-def _compat_wrapped_async(method):
+F = Callable[..., Any]
+
+
+def _compat_wrapped_async(method: F) -> F:
     """Mimic ACP's compatibility wrapper around an async method."""
 
     @functools.wraps(method)
-    def wrapped(self, *args: Any, **kwargs: Any):
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
         return method(self, *args, **kwargs)
 
     return wrapped
@@ -83,10 +87,12 @@ def test_connection_method_wrapping_includes_acp_error_and_stderr() -> None:
             error_info.append_stderr("The requested model does not exist.\n")
 
         feeder = asyncio.create_task(feeder_task())
-        wrapped = _wrap_connection_methods(conn, feeder, error_info)
+        wrapped = _wrap_connection_methods(
+            cast(ClientSideConnection, conn), feeder, error_info
+        )
 
         with pytest.raises(ACPError) as exc_info:
-            await wrapped.prompt()
+            await wrapped.prompt(prompt=[], session_id="test")
 
         message = str(exc_info.value)
         assert "ACP prompt failed" in message
@@ -101,7 +107,9 @@ def test_connection_wrapping_catches_compat_wrapped_methods() -> None:
         error_info = ErrorInfo()
         conn = CompatWrappedConnection(RequestError(-32000, "fetch failed"))
         feeder = asyncio.create_task(asyncio.sleep(0))
-        wrapped = _wrap_connection_methods(conn, feeder, error_info)
+        wrapped = _wrap_connection_methods(
+            cast(ClientSideConnection, conn), feeder, error_info
+        )
 
         with pytest.raises(ACPError, match="ACP initialize failed") as exc_info:
             await wrapped.initialize(protocol_version=1)
@@ -117,7 +125,9 @@ def test_connection_wrapping_does_not_wrap_close() -> None:
         error_info = ErrorInfo()
         conn = PlainAsyncConnection(RequestError(-32000, "Internal error"))
         feeder = asyncio.create_task(asyncio.sleep(0))
-        wrapped = _wrap_connection_methods(conn, feeder, error_info)
+        wrapped = _wrap_connection_methods(
+            cast(ClientSideConnection, conn), feeder, error_info
+        )
         await wrapped.close()
         assert conn.close_calls == 1
         await feeder
