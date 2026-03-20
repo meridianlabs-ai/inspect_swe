@@ -10,9 +10,12 @@ from asyncio import transports as aio_transports
 from asyncio.streams import FlowControlMixin
 from typing import cast
 
+from acp.core import DEFAULT_STDIO_BUFFER_LIMIT_BYTES
 from inspect_ai.util import ExecCompleted, ExecRemoteProcess, ExecStderr, ExecStdout
 
 logger = logging.getLogger(__name__)
+
+_suppressed_stderr: set[str] = set()
 
 
 class _WriteStdinTransport(asyncio.BaseTransport):
@@ -69,7 +72,7 @@ async def create_exec_remote_streams(
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, asyncio.Task[None], ErrorInfo]:
     """Create ``StreamReader``/``StreamWriter`` bridged to *proc*'s stdin/stdout."""
     loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader()
+    reader = asyncio.StreamReader(limit=DEFAULT_STDIO_BUFFER_LIMIT_BYTES)
 
     protocol = FlowControlMixin()
     transport = _WriteStdinTransport(proc)
@@ -89,7 +92,14 @@ async def create_exec_remote_streams(
                     reader.feed_data(event.data.encode())
                 elif isinstance(event, ExecStderr):
                     info.append_stderr(event.data)
-                    logger.warning("ACP stderr: %s", event.data.rstrip())
+                    text = event.data.rstrip()
+                    if "ExperimentalWarning" in text or "onPostToolUseHook" in text:
+                        key = "ExperimentalWarning" if "ExperimentalWarning" in text else "onPostToolUseHook"
+                        if key not in _suppressed_stderr:
+                            _suppressed_stderr.add(key)
+                            logger.info("ACP stderr (suppressing further): %s", text)
+                    else:
+                        logger.warning("ACP stderr: %s", text)
                 elif isinstance(event, ExecCompleted):
                     info.exit_code = event.exit_code
                     if event.exit_code != 0:
