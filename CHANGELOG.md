@@ -1,3 +1,7 @@
+## Unreleased
+
+- Update to latest ACP types.
+
 ## 0.2.45 (20 March 2026)
 
 - ACP protocol improvements.
