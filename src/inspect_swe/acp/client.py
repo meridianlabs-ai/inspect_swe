@@ -22,7 +22,7 @@ from acp.schema import (
     CreateTerminalResponse,
     CurrentModeUpdate,
     EnvVariable,
-    KillTerminalCommandResponse,
+    KillTerminalResponse,
     PermissionOption,
     ReadTextFileResponse,
     ReleaseTerminalResponse,
@@ -149,7 +149,7 @@ class DefaultClient(Client):
 
     async def kill_terminal(
         self, session_id: str, terminal_id: str, **kwargs: Any
-    ) -> KillTerminalCommandResponse | None:
+    ) -> KillTerminalResponse | None:
         raise _unsupported_capability_request("terminal/kill")
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
