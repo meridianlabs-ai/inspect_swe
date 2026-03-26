@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.46 (26 March 2026)
 
 - Update to latest ACP types.
 
