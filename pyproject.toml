@@ -31,6 +31,9 @@ Documentation = "https://meridianlabs-ai.github.io/inspect_swe/"
 [project.entry-points.inspect_ai]
 inspect_swe = "inspect_swe._registry"
 
+[project.scripts]
+inspect-swe-reliability = "inspect_swe.reliability.cli:main"
+
 
 [project.optional-dependencies]
 dev = [

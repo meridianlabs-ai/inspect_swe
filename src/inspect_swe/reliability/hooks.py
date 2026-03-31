@@ -91,6 +91,7 @@ class ReliabilityHooks(Hooks):
         self._sample_attempt: dict[str, int] = {}
         self._task_name_by_eval_id: dict[str, str] = {}
         self._agent_by_eval_id: dict[str, str] = {}
+        self._task_metadata_by_eval_id: dict[str, dict[str, Any]] = {}
 
     def enabled(self) -> bool:
         config = _active_config()
@@ -101,10 +102,12 @@ class ReliabilityHooks(Hooks):
         task_args = data.spec.task_args_passed or {}
         agent = cast(str | None, task_args.get("agent"))
         self._agent_by_eval_id[data.eval_id] = agent or data.spec.model
+        self._task_metadata_by_eval_id[data.eval_id] = dict(data.spec.metadata or {})
 
     async def on_task_end(self, data: TaskEnd) -> None:
         self._task_name_by_eval_id.pop(data.eval_id, None)
         self._agent_by_eval_id.pop(data.eval_id, None)
+        self._task_metadata_by_eval_id.pop(data.eval_id, None)
 
     async def on_sample_attempt_start(self, data: SampleAttemptStart) -> None:
         self._sample_attempt[data.sample_id] = data.attempt
@@ -115,7 +118,8 @@ class ReliabilityHooks(Hooks):
             return
 
         writer = self._resolve_writer(config.sidecar_path)
-        metadata = data.sample.metadata or {}
+        metadata = dict(self._task_metadata_by_eval_id.get(data.eval_id, {}))
+        metadata.update(data.sample.metadata or {})
         phase = self._phase_from_metadata(metadata, config.phase_metadata_key)
         attempt = self._sample_attempt.get(data.sample_id, 1)
 
@@ -124,6 +128,7 @@ class ReliabilityHooks(Hooks):
             metadata, config.agent_attempt_metadata_key, 0
         )
         sample_retry_id = max(0, attempt - 1)
+        identity_agent = self._identity_agent(metadata, data.eval_id)
 
         if config.strict_identity_tags:
             missing = [
@@ -148,7 +153,7 @@ class ReliabilityHooks(Hooks):
             eval_set_id=data.eval_set_id or "no_eval_set",
             run_id=data.run_id,
             phase=phase,
-            agent=self._agent_by_eval_id.get(data.eval_id, "unknown_agent"),
+            agent=identity_agent,
             task=self._task_name_by_eval_id.get(data.eval_id, "unknown_task"),
             sample_id=data.sample.id,
             sample_uuid=data.sample_id,
@@ -198,6 +203,12 @@ class ReliabilityHooks(Hooks):
         except (TypeError, ValueError):
             return default
         return max(0, ivalue)
+
+    def _identity_agent(self, metadata: dict[str, Any], eval_id: str) -> str:
+        metadata_agent = metadata.get("reliability_agent")
+        if isinstance(metadata_agent, str) and metadata_agent.strip():
+            return metadata_agent.strip()
+        return self._agent_by_eval_id.get(eval_id, "unknown_agent")
 
     def _outcome_payload(self, scores: dict[str, Any]) -> dict[str, Any]:
         values: dict[str, Any] = {}

@@ -11,6 +11,10 @@ from .acp._agents.claude_code import interactive_claude_code
 from .acp._agents.codex_cli import interactive_codex_cli
 from .acp._agents.gemini_cli import interactive_gemini_cli
 from .reliability import (
+    BaselineExecutionError,
+    BaselinePhaseConfig,
+    BaselinePhaseResult,
+    BaselineRepeatResult,
     OrchestratorConcurrency,
     PhaseShard,
     ReliabilityHookConfig,
@@ -21,6 +25,7 @@ from .reliability import (
     configure_reliability_hooks,
     disable_reliability_hooks,
     preflight_reliability_spec,
+    run_baseline_phase,
 )
 
 try:
@@ -49,6 +54,10 @@ __all__ = [
     "ReliabilitySpec",
     "ReliabilityRunIdentity",
     "ReliabilityHookConfig",
+    "BaselinePhaseConfig",
+    "BaselineRepeatResult",
+    "BaselinePhaseResult",
+    "BaselineExecutionError",
     "OrchestratorConcurrency",
     "PhaseShard",
     "configure_reliability_hooks",
@@ -56,6 +65,7 @@ __all__ = [
     "assert_reliability_hooks_active",
     "build_phase_shards",
     "preflight_reliability_spec",
+    "run_baseline_phase",
     "__version__",
     "download_wheels_tarball",
 ]
