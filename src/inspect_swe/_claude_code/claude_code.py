@@ -141,6 +141,12 @@ def claude_code(
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
+    # allocate session_id once per agent instance so that all calls to execute()
+    # for the same sample share the same session. this enables --resume <id> to
+    # replay the full conversation history through the bridge on continuation runs,
+    # giving the model proper context (unlike --continue which only sends the new turn).
+    session_id = str(uuid.uuid4())
+
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "claude_code_model_port"
@@ -161,9 +167,6 @@ def claude_code(
             claude_binary = await ensure_agent_binary_installed(
                 claude_code_binary_source(), version, user, sandbox_env(sandbox)
             )
-
-            # allocate session_id
-            session_id = str(uuid.uuid4())
 
             # base options
             cmd = [
@@ -263,7 +266,9 @@ def claude_code(
                         or uncaught_error_count > 0
                     ):
                         agent_cmd = (
-                            [claude_binary, "--continue"] + cmd + ["--", agent_prompt]
+                            [claude_binary, "--resume", session_id]
+                            + cmd
+                            + ["--", agent_prompt]
                         )
                     else:
                         agent_cmd = (

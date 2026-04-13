@@ -1,7 +1,8 @@
 ## Unreleased
 
-- Set 1hr timeout for OpenAI streaming requests (default was 5 minutes).
+- Codex CLI: Set 60 minute timeout for OpenAI streaming requests (default was 5 minutes).
 - Gemini CLI: Use `gemini-3.1-pro-preview` as model for tests.
+- Claude Code: Always use `--resume` for re-attaching to sessions (`--continue` sometimes drops history).
 
 ## 0.2.46 (26 March 2026)
 
