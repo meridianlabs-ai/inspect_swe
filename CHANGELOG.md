@@ -1,6 +1,7 @@
 ## Unreleased
 
 - Set 1hr timeout for OpenAI streaming requests (default was 5 minutes).
+- Gemini CLI: Use `gemini-3.1-pro-preview` as model for tests.
 
 ## 0.2.46 (26 March 2026)
 

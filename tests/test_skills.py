@@ -24,7 +24,7 @@ def test_codex_cli_skills() -> None:
 @skip_if_no_google
 @skip_if_no_docker
 def test_gemini_cli_skills() -> None:
-    check_skills("gemini_cli", "google/gemini-2.5-pro")
+    check_skills("gemini_cli", "google/gemini-3.1-pro-preview")
 
 
 def check_skills(

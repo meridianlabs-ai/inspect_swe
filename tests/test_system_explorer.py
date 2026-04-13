@@ -30,7 +30,9 @@ def test_codex_cli_system_explorer(sandbox: str) -> None:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_gemini_cli_system_explorer(sandbox: str) -> None:
-    check_system_explorer_example("gemini_cli", "google/gemini-2.5-pro", sandbox)
+    check_system_explorer_example(
+        "gemini_cli", "google/gemini-3.1-pro-preview", sandbox
+    )
 
 
 @skip_if_no_openai
