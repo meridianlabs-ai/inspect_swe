@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.47 (13 April 2026)
 
 - Codex CLI: Set 60 minute timeout for OpenAI streaming requests (default was 5 minutes).
 - Gemini CLI: Use `gemini-3.1-pro-preview` as model for tests.
