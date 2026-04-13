@@ -28,8 +28,9 @@ def test_codex_cli_bridged_tools() -> None:
 @skip_if_no_google
 @skip_if_no_docker
 def test_gemini_cli_bridged_tools() -> None:
-    # Gemini CLI uses plain tool names without mcp__/server__ prefix
-    check_bridged_tools("gemini_cli", "google/gemini-2.5-pro", "secret_lookup")
+    check_bridged_tools(
+        "gemini_cli", "google/gemini-3.1-pro-preview", "mcp_secrets_secret_lookup"
+    )
 
 
 def check_bridged_tools(
