@@ -1,3 +1,7 @@
+## Unreleased
+
+- Set 1hr timeout for OpenAI streaming requests (default was 5 minutes).
+
 ## 0.2.46 (26 March 2026)
 
 - Update to latest ACP types.

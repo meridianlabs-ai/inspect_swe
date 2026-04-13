@@ -118,6 +118,7 @@ class CodexCli(ACPAgent):
                     "base_url": bridge_url,
                     "env_key": "OPENAI_API_KEY",
                     "wire_api": "responses",
+                    "stream_idle_timeout_ms": 3_600_000,
                 },
             }
             toml_config.update(self._config_overrides)
