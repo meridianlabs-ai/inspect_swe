@@ -1,4 +1,4 @@
-## 0.2.48
+## 0.2.48 (26 April 2026)
 
 - Update download location for Claude Code binaries.
 
