@@ -23,7 +23,6 @@ class ReliabilitySpec(BaseModel):
 
     Notes:
     - Inspect `.eval` logs are always canonical for execution truth.
-    - Sidecar records are derived analysis projections.
     """
 
     benchmark: str
@@ -39,10 +38,8 @@ class ReliabilitySpec(BaseModel):
         ]
     )
     seed: int = 0
-    sidecar_dir: str = "reliability_sidecars"
     canonical_log_format: Literal["eval"] = "eval"
     strict_identity_tags: bool = True
-    fail_on_missing_hooks: bool = True
     concurrency: OrchestratorConcurrency = Field(
         default_factory=OrchestratorConcurrency
     )
@@ -68,6 +65,3 @@ class ReliabilitySpec(BaseModel):
         if len(self.phases) != len(set(self.phases)):
             raise ValueError("phases must be unique")
         return self
-
-    def has_phase(self, phase: PhaseName) -> bool:
-        return phase in self.phases

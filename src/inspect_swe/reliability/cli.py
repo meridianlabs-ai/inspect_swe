@@ -16,6 +16,15 @@ from .baseline import (
 from .concurrency import OrchestratorConcurrency
 from .spec import ReliabilitySpec
 
+ALL_PHASES = (
+    "baseline",
+    "fault",
+    "prompt",
+    "structural",
+    "safety",
+    "abstention",
+)
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build an argument parser for reliability commands."""
@@ -29,8 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
         "baseline",
         help="Run baseline reliability phase.",
         description=(
-            "Run K independent baseline repeats and emit sidecar telemetry "
-            "alongside canonical Inspect `.eval` logs."
+            "Run K independent baseline repeats with `.eval` logs as the only "
+            "reliability telemetry source."
         ),
     )
     baseline.add_argument("--benchmark", required=True, help="Benchmark label.")
@@ -102,24 +111,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--campaign-id",
         default=None,
         help=(
-            "Campaign identifier used to segregate log/sidecar paths. "
+            "Campaign identifier used to segregate baseline log paths. "
             "Defaults to an auto-generated timestamped id."
         ),
     )
     baseline.add_argument(
         "--log-root",
         default="logs/reliability",
-        help="Root directory for eval logs and default sidecars.",
-    )
-    baseline.add_argument(
-        "--sidecar-dir",
-        default="reliability_sidecars",
-        help="Relative sidecar directory under log root.",
-    )
-    baseline.add_argument(
-        "--sidecar-path",
-        default=None,
-        help="Explicit sidecar JSONL path (overrides sidecar-dir).",
+        help="Root directory for baseline eval logs.",
     )
     baseline.add_argument(
         "--strict-identity-tags",
@@ -128,28 +127,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Require reliability identity metadata tags.",
     )
     baseline.add_argument(
-        "--fail-on-missing-hooks",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Fail preflight when reliability hooks are not active.",
-    )
-    baseline.add_argument(
         "--verify-telemetry",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Validate sidecar coverage against eval logs.",
+        help="Validate eval-native telemetry coverage.",
     )
     baseline.add_argument(
         "--fail-on-incomplete-telemetry",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Fail run when telemetry coverage is incomplete.",
-    )
-    baseline.add_argument(
-        "--configure-hooks",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Configure reliability hooks automatically.",
     )
     baseline.add_argument(
         "--orchestrator-mode",
@@ -200,6 +187,167 @@ def build_parser() -> argparse.ArgumentParser:
     )
     baseline.set_defaults(handler=_handle_baseline_command)
 
+    campaign = subparsers.add_parser(
+        "campaign",
+        help="Run reliability campaign phases.",
+        description=(
+            "Accept reliability phase selection. In this branch, only baseline "
+            "execution is implemented; other phases return a clear message."
+        ),
+    )
+    campaign.add_argument("--benchmark", required=True, help="Benchmark label.")
+    campaign.add_argument(
+        "--tasks",
+        required=True,
+        help="Inspect task path (e.g. inspect_evals/gaia_level1).",
+    )
+    campaign.add_argument(
+        "--agent",
+        dest="agents",
+        action="append",
+        required=True,
+        help="Agent identifier (repeat for multi-agent runs).",
+    )
+    campaign.add_argument(
+        "--phase",
+        dest="phases",
+        action="append",
+        choices=ALL_PHASES,
+        required=True,
+        help="Reliability phase (repeatable).",
+    )
+    campaign.add_argument(
+        "--repeats",
+        type=int,
+        default=5,
+        help="Independent baseline repeats per agent (default: 5).",
+    )
+    campaign.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Campaign seed recorded in reliability metadata.",
+    )
+    campaign.add_argument(
+        "--model",
+        default=None,
+        help="Optional model override passed to inspect eval.",
+    )
+    campaign.add_argument(
+        "--task-arg",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Task arg pair (repeatable).",
+    )
+    campaign.add_argument(
+        "--inject-agent-task-arg",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Inject task arg `agent=<agent>` for each run.",
+    )
+    campaign.add_argument(
+        "--metadata",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Additional metadata pair (repeatable).",
+    )
+    campaign.add_argument(
+        "--sandbox",
+        default=None,
+        help="Sandbox setting passed to inspect eval.",
+    )
+    campaign.add_argument(
+        "--limit",
+        default=None,
+        help="Sample limit (e.g. 3 or 10-20).",
+    )
+    campaign.add_argument(
+        "--sample-id",
+        default=None,
+        help="Sample id(s): one value or comma-separated list.",
+    )
+    campaign.add_argument(
+        "--campaign-id",
+        default=None,
+        help=(
+            "Campaign identifier used to segregate baseline log paths. "
+            "Defaults to an auto-generated timestamped id."
+        ),
+    )
+    campaign.add_argument(
+        "--log-root",
+        default="logs/reliability",
+        help="Root directory for baseline eval logs.",
+    )
+    campaign.add_argument(
+        "--strict-identity-tags",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require reliability identity metadata tags.",
+    )
+    campaign.add_argument(
+        "--verify-telemetry",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Validate eval-native telemetry coverage.",
+    )
+    campaign.add_argument(
+        "--fail-on-incomplete-telemetry",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Fail run when telemetry coverage is incomplete.",
+    )
+    campaign.add_argument(
+        "--orchestrator-mode",
+        choices=("single_process", "multi_process"),
+        default="multi_process",
+        help="Orchestrator policy mode.",
+    )
+    campaign.add_argument(
+        "--orchestrator-workers",
+        type=int,
+        default=1,
+        help="Orchestrator worker count.",
+    )
+    campaign.add_argument(
+        "--max-tasks",
+        type=int,
+        default=None,
+        help="Inspect max_tasks setting.",
+    )
+    campaign.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Inspect max_samples setting.",
+    )
+    campaign.add_argument(
+        "--max-subprocesses",
+        type=int,
+        default=None,
+        help="Inspect max_subprocesses setting.",
+    )
+    campaign.add_argument(
+        "--max-sandboxes",
+        type=int,
+        default=None,
+        help="Inspect max_sandboxes setting.",
+    )
+    campaign.add_argument(
+        "--max-connections",
+        type=int,
+        default=None,
+        help="Inspect max_connections setting.",
+    )
+    campaign.add_argument(
+        "--json",
+        action="store_true",
+        help="Print structured JSON output.",
+    )
+    campaign.set_defaults(handler=_handle_campaign_command)
+
     return parser
 
 
@@ -219,14 +367,30 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _handle_baseline_command(args: argparse.Namespace) -> int:
+    return _run_baseline(args, phases=["baseline"])
+
+
+def _handle_campaign_command(args: argparse.Namespace) -> int:
+    phases = _unique_phases(args.phases)
+    unsupported = [phase for phase in phases if phase != "baseline"]
+    if unsupported:
+        print(
+            "phase(s) not implemented yet: "
+            + ", ".join(unsupported)
+            + ". Implemented phases: baseline",
+            file=sys.stderr,
+        )
+        return 2
+    return _run_baseline(args, phases=["baseline"])
+
+
+def _run_baseline(args: argparse.Namespace, *, phases: list[str]) -> int:
     spec = ReliabilitySpec(
         benchmark=args.benchmark,
         agents=_unique_agents(args.agents),
-        phases=["baseline"],
+        phases=phases,
         seed=args.seed,
-        sidecar_dir=args.sidecar_dir,
         strict_identity_tags=args.strict_identity_tags,
-        fail_on_missing_hooks=args.fail_on_missing_hooks,
         concurrency=OrchestratorConcurrency(
             orchestrator_mode=args.orchestrator_mode,
             orchestrator_workers=args.orchestrator_workers,
@@ -242,7 +406,6 @@ def _handle_baseline_command(args: argparse.Namespace) -> int:
         repeats=args.repeats,
         campaign_id=args.campaign_id,
         log_root=args.log_root,
-        sidecar_path=args.sidecar_path,
         model=args.model,
         task_args=_parse_key_value_pairs(args.task_arg),
         inject_agent_task_arg=args.inject_agent_task_arg,
@@ -252,7 +415,6 @@ def _handle_baseline_command(args: argparse.Namespace) -> int:
         sample_id=_parse_sample_id_arg(args.sample_id),
         verify_telemetry=args.verify_telemetry,
         fail_on_incomplete_telemetry=args.fail_on_incomplete_telemetry,
-        configure_hooks=args.configure_hooks,
     )
 
     result = run_baseline_phase(
@@ -274,7 +436,6 @@ def _print_baseline_result(result: BaselinePhaseResult, *, json_output: bool) ->
         f"benchmark={result.benchmark} repeats={result.repeats} "
         f"campaign_id={result.campaign_id}"
     )
-    print(f"Sidecar: {result.sidecar_path}")
     for row in result.results:
         status = "complete" if row.coverage_complete else "incomplete"
         print(
@@ -363,6 +524,20 @@ def _unique_agents(values: list[str]) -> list[str]:
         seen.add(name)
     if not ordered:
         raise ValueError("at least one non-empty --agent value is required")
+    return ordered
+
+
+def _unique_phases(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in values:
+        name = raw.strip()
+        if not name or name in seen:
+            continue
+        ordered.append(name)
+        seen.add(name)
+    if not ordered:
+        raise ValueError("at least one --phase value is required")
     return ordered
 
 

@@ -21,7 +21,6 @@ class OrchestratorConcurrency(BaseModel):
     max_subprocesses: int | None = Field(default=None, ge=1)
     max_sandboxes: int | None = Field(default=None, ge=1)
     max_connections: int | None = Field(default=None, ge=1)
-    reproducible_profile: bool = True
 
     @model_validator(mode="after")
     def _validate_mode_constraints(self) -> "OrchestratorConcurrency":
