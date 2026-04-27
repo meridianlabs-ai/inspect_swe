@@ -137,6 +137,7 @@ def mini_swe_agent(
             retry_refusals=retry_refusals,
             compaction=compaction,
             port=port,
+            user=user,
         ) as bridge:
             # resolve sandbox
             sbox = sandbox_env(sandbox)

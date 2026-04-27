@@ -74,6 +74,7 @@ class ClaudeCode(ACPAgent):
             model_aliases=self.model_map,
             filter=self.filter,
             retry_refusals=self.retry_refusals,
+            user=self.user,
             bridged_tools=self.bridged_tools or None,
         ) as bridge:
             # Install node and claude-agent-acp in the sandbox.

@@ -72,6 +72,7 @@ class CodexCli(ACPAgent):
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
             port=port,
+            user=self.user,
         ) as bridge:
             # Install node and codex-acp in the sandbox.
             acp_binary, node_binary = await ensure_codex_acp_setup(sbox, self.user)

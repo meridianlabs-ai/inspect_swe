@@ -130,6 +130,7 @@ def codex_cli(
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,
+            user=user,
             bridged_tools=bridged_tools,
         ) as bridge:
             # ensure codex is installed and get binary location
