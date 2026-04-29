@@ -112,6 +112,8 @@ class CodexCli(ACPAgent):
             toml_config: dict[str, Any] = {
                 "model": default_model,
                 "preferred_auth_method": "apikey",
+                "approval_policy": "never",
+                "sandbox_mode": "danger-full-access",
                 "model_provider": "openai-proxy",
                 "model_providers.openai-proxy": {
                     "name": "OpenAI Proxy",
