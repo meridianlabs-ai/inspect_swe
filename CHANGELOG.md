@@ -1,3 +1,7 @@
+## 0.2.49 (29 April 2026)
+
+- Codex CLI: Fix for MCP tool calling (bump to Inspect v0.3.214 which has the fix).
+
 ## 0.2.48 (26 April 2026)
 
 - Update download location for Claude Code binaries.
