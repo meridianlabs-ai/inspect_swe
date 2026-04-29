@@ -1,5 +1,6 @@
-## 0.2.49 (29 April 2026)
+## 0.2.50 (29 April 2026)
 
+- Codex CLI: Run ACP mode with approval_policy: never and sandbox_mode: danger_full_access
 - Codex CLI: Fix for MCP tool calling (bump to Inspect v0.3.214 which has the fix).
 
 ## 0.2.48 (26 April 2026)
