@@ -117,6 +117,7 @@ def gemini_cli(
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,
+            user=user,
             bridged_tools=bridged_tools,
         ) as bridge:
             # resolve sandbox

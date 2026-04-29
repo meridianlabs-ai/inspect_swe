@@ -161,6 +161,7 @@ def claude_code(
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,
+            user=user,
             bridged_tools=bridged_tools,
         ) as bridge:
             # ensure claude is installed and get binary location
