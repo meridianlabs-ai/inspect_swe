@@ -153,11 +153,20 @@ def opencode(
 
             # write opencode config to redirect provider baseURL to the bridge
             # and (optionally) configure mcp servers.
+            #
+            # The bridge's model-proxy server registers OpenAI-compatible
+            # routes (/v1/responses, /v1/chat/completions), the Anthropic
+            # Messages route (/v1/messages), and Gemini routes
+            # (/v1beta/models/*, /models/*). The AI SDK provider clients
+            # append the API-relative path (e.g. "/messages",
+            # "/chat/completions") to the configured baseURL, so we must
+            # include "/v1" in the baseURL we hand to opencode.
             bridge_url = f"http://localhost:{bridge.port}"
+            provider_base_url = f"{bridge_url}/v1"
             opencode_config: dict[str, Any] = {
                 "$schema": "https://opencode.ai/config.json",
                 "provider": {
-                    provider_id: {"options": {"baseURL": bridge_url}},
+                    provider_id: {"options": {"baseURL": provider_base_url}},
                 },
             }
             if all_mcp_servers:
@@ -202,8 +211,10 @@ def opencode(
                 # belt-and-braces: set per-provider base URL env vars in addition
                 # to the config file. Different opencode provider clients honor
                 # different env conventions; the config file is authoritative
-                # but env vars don't hurt.
-                "ANTHROPIC_BASE_URL": bridge_url,
+                # but env vars don't hurt. The bridge mounts API-specific routes
+                # under /v1, so anthropic/openai callers that append "/messages"
+                # or "/chat/completions" land on the right handler.
+                "ANTHROPIC_BASE_URL": f"{bridge_url}/v1",
                 "OPENAI_BASE_URL": f"{bridge_url}/v1",
                 "ANTHROPIC_API_KEY": "sk-none",
                 "OPENAI_API_KEY": "sk-none",
