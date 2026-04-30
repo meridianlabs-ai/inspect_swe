@@ -1,3 +1,7 @@
+## Unreleased
+
+- OpenCode: New agent backend wrapping [OpenCode](https://github.com/anomalyco/opencode) (`opencode-ai` npm package). Bridges via `provider.<id>.options.baseURL` in `~/.config/opencode/opencode.json`.
+
 ## 0.2.50 (29 April 2026)
 
 - Codex CLI: Run ACP mode with approval_policy: never and sandbox_mode: danger_full_access
