@@ -195,7 +195,9 @@ def test_ensure_pip_available_bootstraps_when_missing() -> None:
     from inspect_swe._util.agentwheel import _ensure_pip_available
 
     with (
-        patch("inspect_swe._util.agentwheel.importlib.util.find_spec", return_value=None),
+        patch(
+            "inspect_swe._util.agentwheel.importlib.util.find_spec", return_value=None
+        ),
         patch("inspect_swe._util.agentwheel.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
@@ -213,7 +215,9 @@ def test_ensure_pip_available_raises_on_failure() -> None:
     from inspect_swe._util.agentwheel import _ensure_pip_available
 
     with (
-        patch("inspect_swe._util.agentwheel.importlib.util.find_spec", return_value=None),
+        patch(
+            "inspect_swe._util.agentwheel.importlib.util.find_spec", return_value=None
+        ),
         patch("inspect_swe._util.agentwheel.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(
