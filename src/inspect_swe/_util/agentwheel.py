@@ -1,3 +1,4 @@
+import importlib.util
 import subprocess
 import sys
 import tarfile
@@ -340,6 +341,7 @@ def download_wheels_tarball(
     with tempfile.TemporaryDirectory() as tmpdir:
         wheel_dir = Path(tmpdir) / "wheels"
         wheel_dir.mkdir()
+        _ensure_pip_available()
         # pip download docs https://pip.pypa.io/en/stable/cli/pip_download/
         cmd = [
             sys.executable,
@@ -402,3 +404,21 @@ def download_wheels_tarball(
         )
 
         return tarball, resolved_version
+
+
+def _ensure_pip_available() -> None:
+    if importlib.util.find_spec("pip") is not None:
+        return
+
+    result = subprocess.run(
+        [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip()
+        detail = f": {message}" if message else ""
+        raise RuntimeError(
+            "pip is required to download wheels and could not be bootstrapped"
+            f" via ensurepip{detail}."
+        )

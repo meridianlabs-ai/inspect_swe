@@ -1,3 +1,7 @@
+## Unreleased
+
+- Mini SWE Agent: Ensure that pip is available before attempting installation.
+
 ## 0.2.50 (29 April 2026)
 
 - Codex CLI: Run ACP mode with approval_policy: never and sandbox_mode: danger_full_access

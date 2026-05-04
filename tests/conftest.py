@@ -218,7 +218,13 @@ def mock_pip_download_failure() -> Any:
     from unittest.mock import patch
 
     # Mock cache to return None (force download path)
-    with patch("inspect_swe._util.agentwheel.read_cached_wheels", return_value=None):
+    with (
+        patch("inspect_swe._util.agentwheel.read_cached_wheels", return_value=None),
+        patch(
+            "inspect_swe._util.agentwheel.importlib.util.find_spec",
+            return_value=MagicMock(),
+        ),
+    ):
         # Mock subprocess.run to simulate pip download failure
         with patch("inspect_swe._util.agentwheel.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
