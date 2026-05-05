@@ -128,6 +128,7 @@ def create_npm_bundle(
     version: str,
     platform: SandboxPlatform,
     cache_name: str,
+    ignore_scripts: bool = False,
 ) -> bytes:
     """Create an npm package bundle with dependencies for the target platform.
 
@@ -141,11 +142,16 @@ def create_npm_bundle(
         platform: Target sandbox platform.
         cache_name: Subdirectory name inside the package cache for
             storing the tarball (also used as the cache-key prefix).
+        ignore_scripts: If ``True``, pass ``--ignore-scripts`` so package
+            lifecycle scripts (notably ``postinstall``) do not run on the
+            host. Useful when the postinstall is host-platform-specific
+            and must instead run inside the sandbox after extraction.
     """
     cpu = platform.split("-")[1]
 
     cache_dir = package_cache_dir(cache_name)
-    cache_path = cache_dir / f"{cache_name}-{version}-{platform}.tar.gz"
+    suffix = "-noscripts" if ignore_scripts else ""
+    cache_path = cache_dir / f"{cache_name}-{version}-{platform}{suffix}.tar.gz"
 
     if cache_path.exists():
         with open(cache_path, "rb") as f:
@@ -171,17 +177,21 @@ def create_npm_bundle(
         with open(package_json_path, "w") as f:
             json.dump(package_json, f)
 
+        npm_cmd = [
+            "npm",
+            "install",
+            "--no-audit",
+            "--no-fund",
+            "--os",
+            "linux",
+            "--cpu",
+            cpu,
+        ]
+        if ignore_scripts:
+            npm_cmd.append("--ignore-scripts")
+
         result = subprocess.run(
-            [
-                "npm",
-                "install",
-                "--no-audit",
-                "--no-fund",
-                "--os",
-                "linux",
-                "--cpu",
-                cpu,
-            ],
+            npm_cmd,
             cwd=tmpdir,
             capture_output=True,
             text=True,

@@ -1,5 +1,6 @@
 ## Unreleased
 
+- OpenCode: New agent backend wrapping [OpenCode](https://github.com/anomalyco/opencode).
 - Mini SWE Agent: Ensure that pip is available before attempting installation.
 
 ## 0.2.50 (29 April 2026)

@@ -4,12 +4,14 @@ from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 from inspect_ai.tool import MCPServerConfigStdio
 from inspect_ai.util import SandboxEnvironmentType
-from inspect_swe import claude_code, codex_cli, gemini_cli
+from inspect_swe import claude_code, codex_cli, gemini_cli, opencode
 
 
 @task
 def mcp_memory(
-    agent: Literal["claude_code", "codex_cli", "gemini_cli"] = "claude_code",
+    agent: Literal[
+        "claude_code", "codex_cli", "gemini_cli", "opencode"
+    ] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
     # setup agent
@@ -28,6 +30,8 @@ def mcp_memory(
             solver = codex_cli(system_prompt=system_prompt, mcp_servers=mcp_servers)
         case "gemini_cli":
             solver = gemini_cli(system_prompt=system_prompt, mcp_servers=mcp_servers)
+        case "opencode":
+            solver = opencode(system_prompt=system_prompt, mcp_servers=mcp_servers)
 
     # create task
     return Task(
