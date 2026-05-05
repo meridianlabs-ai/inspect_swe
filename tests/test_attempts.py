@@ -41,8 +41,17 @@ def test_mini_swe_attempts(sandbox: str) -> None:
     check_attempts("mini_swe_agent", "openai/gpt-5-mini", sandbox)
 
 
+@skip_if_no_anthropic
+@skip_if_no_docker
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_opencode_attempts(sandbox: str) -> None:
+    check_attempts("opencode", "anthropic/claude-sonnet-4-0", sandbox)
+
+
 def check_attempts(
-    agent: Literal["claude_code", "codex_cli", "gemini_cli", "mini_swe_agent"],
+    agent: Literal[
+        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent", "opencode"
+    ],
     model: str,
     sandbox: str,
 ) -> None:
