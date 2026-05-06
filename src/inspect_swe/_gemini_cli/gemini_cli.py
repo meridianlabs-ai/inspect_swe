@@ -187,10 +187,16 @@ def gemini_cli(
                 cmd.extend(["--allowed-mcp-server-names", server.name])
 
             # setup agent env (add node to PATH so the gemini shell script can find it)
+            #
+            # GEMINI_CLI_TRUST_WORKSPACE: gemini-cli's settings schema defaults
+            # security.folderTrust.enabled to true; with no trustedFolders.json
+            # entry for the sandbox cwd, MCP discovery is silently skipped. This
+            # env var short-circuits the trust check (core/utils/trust.ts).
             node_dir = str(Path(node_binary).parent)
             agent_env = {
                 "GOOGLE_GEMINI_BASE_URL": f"http://localhost:{bridge.port}",
                 "GEMINI_API_KEY": "api-key",
+                "GEMINI_CLI_TRUST_WORKSPACE": "true",
                 "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
                 "HOME": sandbox_home,  # Use detected sandbox home for config + npm cache
             } | (env or {})

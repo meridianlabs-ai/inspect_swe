@@ -114,9 +114,17 @@ class GeminiCli(ACPAgent):
                 await install_skills(self._resolved_skills, sbox, self.user, skills_dir)
 
             # Environment variables (matching non-ACP gemini_cli agent).
+            #
+            # GEMINI_CLI_TRUST_WORKSPACE: gemini-cli's settings schema defaults
+            # security.folderTrust.enabled to true. With no trustedFolders.json
+            # entry for the sandbox cwd, isTrustedFolder() returns false and
+            # McpClientManager.startConfiguredMcpServers() returns immediately
+            # without connecting to any MCP server (and without logging). This
+            # env var short-circuits the trust check (core/utils/trust.ts).
             agent_env = {
                 "GOOGLE_GEMINI_BASE_URL": f"http://127.0.0.1:{bridge.port}",
                 "GEMINI_API_KEY": "api-key",
+                "GEMINI_CLI_TRUST_WORKSPACE": "true",
                 "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
                 "HOME": sandbox_home,
             } | self.env
@@ -133,8 +141,12 @@ class GeminiCli(ACPAgent):
                 model.name,
             ]
             if self._debug:
+                # In ACP mode console.* is redirected away from stderr by
+                # ConsolePatcher, so --debug/DEBUG produce nothing observable.
+                # GEMINI_DEBUG_LOG_FILE makes debugLogger write to a file we
+                # can read back from the sandbox.
                 cmd.append("--debug")
-                agent_env["DEBUG"] = "1"
+                agent_env["GEMINI_DEBUG_LOG_FILE"] = f"{sandbox_home}/gemini-debug.log"
             logger.info("Starting gemini CLI in ACP mode: %s", " ".join(cmd))
             proc = await sbox.exec_remote(
                 cmd=cmd,
