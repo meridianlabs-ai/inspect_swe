@@ -1,5 +1,6 @@
-## Unreleased
+## 0.2.51 (07 May 2026)
 
+- Gemini CLI: Fix MCP registration via GEMINI_CLI_TRUST_WORKSPACE.
 - Mini SWE Agent: Ensure that pip is available before attempting installation.
 
 ## 0.2.50 (29 April 2026)
