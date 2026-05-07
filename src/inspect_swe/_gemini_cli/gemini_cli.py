@@ -148,9 +148,7 @@ def gemini_cli(
             settings_json = build_gemini_settings(all_mcp_servers)
             gemini_settings_dir = f"{sandbox_home}/.gemini"
             await sbox.exec(["mkdir", "-p", gemini_settings_dir], user=user)
-            await sbox.write_file(
-                f"{gemini_settings_dir}/settings.json", settings_json
-            )
+            await sbox.write_file(f"{gemini_settings_dir}/settings.json", settings_json)
 
             # build system prompt
             system_messages = [
