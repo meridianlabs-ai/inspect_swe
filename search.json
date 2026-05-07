@@ -48,8 +48,8 @@
     ]
   },
   {
-    "objectID": "mini_swe_agent.html#installation-1",
-    "href": "mini_swe_agent.html#installation-1",
+    "objectID": "mini_swe_agent.html#installation",
+    "href": "mini_swe_agent.html#installation",
     "title": "Mini SWE Agent",
     "section": "Installation",
     "text": "Installation\nBy default, the agent will install the current stable version of mini-swe-agent in the sandbox via Python wheels. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"stable\"\nInstall and use the default pinned stable version.\n\n\n\"sandbox\"\nUse the version of mini-swe-agent in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nInstall and use the latest version from PyPI.\n\n\n\"x.x.x\"\nInstall and use a specific version number.\n\n\n\nUnlike the other agents which use standalone binaries, mini-swe-agent is installed via Python wheels using uv. If you don’t ever want to rely on automatic installation of mini-swe-agent (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of mini-swe-agent you want to use in the sandbox, then use version=\"sandbox\":\nmini_swe_agent(version=\"sandbox\")\nPre-install mini-swe-agent in your sandbox Dockerfile:\nRUN pip install mini-swe-agent==2.2.3\nThen reference it with version=\"sandbox\" in your task.",
@@ -156,8 +156,8 @@
     ]
   },
   {
-    "objectID": "codex_cli.html#installation-1",
-    "href": "codex_cli.html#installation-1",
+    "objectID": "codex_cli.html#installation",
+    "href": "codex_cli.html#installation",
     "title": "Codex CLI",
     "section": "Installation",
     "text": "Installation\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Codex CLI in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of Codex CLI in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Codex CLI (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Codex CLI you want to use in the sandbox, then use version=\"sandbox\":\ncodex_cli(version=\"sandbox\")\nDownload the version of Codex CLI you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"codex_cli\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\ncodex_cli(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
@@ -196,39 +196,88 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Improve ACP error reporting for adapter failures."
+    "text": "Gemini CLI: Fix MCP registration via GEMINI_CLI_TRUST_WORKSPACE.\nMini SWE Agent: Ensure that pip is available before attempting installation."
+  },
+  {
+    "objectID": "CHANGELOG.html#may-2026",
+    "href": "CHANGELOG.html#may-2026",
+    "title": "Inspect SWE",
+    "section": "",
+    "text": "Gemini CLI: Fix MCP registration via GEMINI_CLI_TRUST_WORKSPACE.\nMini SWE Agent: Ensure that pip is available before attempting installation."
+  },
+  {
+    "objectID": "CHANGELOG.html#april-2026",
+    "href": "CHANGELOG.html#april-2026",
+    "title": "Inspect SWE",
+    "section": "0.2.50 (29 April 2026)",
+    "text": "0.2.50 (29 April 2026)\n\nCodex CLI: Run ACP mode with approval_policy: never and sandbox_mode: danger_full_access\nCodex CLI: Fix for MCP tool calling (bump to Inspect v0.3.214 which has the fix)."
+  },
+  {
+    "objectID": "CHANGELOG.html#april-2026-1",
+    "href": "CHANGELOG.html#april-2026-1",
+    "title": "Inspect SWE",
+    "section": "0.2.48 (26 April 2026)",
+    "text": "0.2.48 (26 April 2026)\n\nUpdate download location for Claude Code binaries."
+  },
+  {
+    "objectID": "CHANGELOG.html#april-2026-2",
+    "href": "CHANGELOG.html#april-2026-2",
+    "title": "Inspect SWE",
+    "section": "0.2.47 (13 April 2026)",
+    "text": "0.2.47 (13 April 2026)\n\nCodex CLI: Set 60 minute timeout for OpenAI streaming requests (default was 5 minutes).\nGemini CLI: Use gemini-3.1-pro-preview as model for tests.\nClaude Code: Always use --resume for re-attaching to sessions (--continue sometimes drops history)."
   },
   {
     "objectID": "CHANGELOG.html#march-2026",
     "href": "CHANGELOG.html#march-2026",
     "title": "Inspect SWE",
-    "section": "",
-    "text": "Improve ACP error reporting for adapter failures."
+    "section": "0.2.46 (26 March 2026)",
+    "text": "0.2.46 (26 March 2026)\n\nUpdate to latest ACP types."
   },
   {
     "objectID": "CHANGELOG.html#march-2026-1",
     "href": "CHANGELOG.html#march-2026-1",
     "title": "Inspect SWE",
-    "section": "0.2.42 (09 March 2026)",
-    "text": "0.2.42 (09 March 2026)\n\nClaude Code: Improved detection of final agent span messages.\nClaude Code: Capture stdout and stderr to store in debug mode."
+    "section": "0.2.45 (20 March 2026)",
+    "text": "0.2.45 (20 March 2026)\n\nACP protocol improvements."
   },
   {
     "objectID": "CHANGELOG.html#march-2026-2",
     "href": "CHANGELOG.html#march-2026-2",
     "title": "Inspect SWE",
-    "section": "0.2.41 (04 March 2026)",
-    "text": "0.2.41 (04 March 2026)\n\nClaude Code: Annotate event stream with agent spans.\nSupport for sub-agents defined using agent teams.\nAttach agent_span_id to tool events for agent spawning tools.\nPass sandbox argument to sandbox_agent_bridge()."
+    "section": "0.2.44 (18 March 2026)",
+    "text": "0.2.44 (18 March 2026)\n\nClaude Code: Retry uncaught errors (unexpected crashes of scaffold) up to 3 times by default.\nClaude Code: Retry refusals up to 3 times by default."
   },
   {
     "objectID": "CHANGELOG.html#march-2026-3",
     "href": "CHANGELOG.html#march-2026-3",
     "title": "Inspect SWE",
-    "section": "0.2.40 (02 March 2026)",
-    "text": "0.2.40 (02 March 2026)\n\nClaude Code: Revert streaming events while we refine our approach.\nUse normal heading/body for task tool views."
+    "section": "0.2.43 (16 March 2026)",
+    "text": "0.2.43 (16 March 2026)\n\nImprove ACP error reporting for adapter failures."
   },
   {
     "objectID": "CHANGELOG.html#march-2026-4",
     "href": "CHANGELOG.html#march-2026-4",
+    "title": "Inspect SWE",
+    "section": "0.2.42 (09 March 2026)",
+    "text": "0.2.42 (09 March 2026)\n\nClaude Code: Improved detection of final agent span messages.\nClaude Code: Capture stdout and stderr to store in debug mode."
+  },
+  {
+    "objectID": "CHANGELOG.html#march-2026-5",
+    "href": "CHANGELOG.html#march-2026-5",
+    "title": "Inspect SWE",
+    "section": "0.2.41 (04 March 2026)",
+    "text": "0.2.41 (04 March 2026)\n\nClaude Code: Annotate event stream with agent spans.\nSupport for sub-agents defined using agent teams.\nAttach agent_span_id to tool events for agent spawning tools.\nPass sandbox argument to sandbox_agent_bridge()."
+  },
+  {
+    "objectID": "CHANGELOG.html#march-2026-6",
+    "href": "CHANGELOG.html#march-2026-6",
+    "title": "Inspect SWE",
+    "section": "0.2.40 (02 March 2026)",
+    "text": "0.2.40 (02 March 2026)\n\nClaude Code: Revert streaming events while we refine our approach.\nUse normal heading/body for task tool views."
+  },
+  {
+    "objectID": "CHANGELOG.html#march-2026-7",
+    "href": "CHANGELOG.html#march-2026-7",
     "title": "Inspect SWE",
     "section": "0.2.39 (01 March 2026)",
     "text": "0.2.39 (01 March 2026)\n\nImprovements to the structure and content of claude code tool events."
@@ -484,7 +533,7 @@
     "href": "claude_code.html#options",
     "title": "Claude Code",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"WebSearch\")\n\n\ncentaur\nRun in Centaur Mode, which makes Claude Code available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nopus_model\nThe model to use for opus, or for opusplan when Plan Mode is active. Defaults to model.\n\n\nsonnet_model\nThe model to use for sonnet, or for opusplan when Plan Mode is not active. Defaults to model.\n\n\nhaiku_model\nThe model to use for haiku, or background functionality. Defaults to model.\n\n\nsubagent_model\nThe model to use for subagents. Defaults to model.\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\nretry_timeouts\nShould timeouts be retried? (pass number of times to retry)\n\n\ncwd\nWorking directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebSearch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebSearch\"]\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"WebSearch\")\n\n\ncentaur\nRun in Centaur Mode, which makes Claude Code available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nopus_model\nThe model to use for opus, or for opusplan when Plan Mode is active. Defaults to model.\n\n\nsonnet_model\nThe model to use for sonnet, or for opusplan when Plan Mode is not active. Defaults to model.\n\n\nhaiku_model\nThe model to use for haiku, or background functionality. Defaults to model.\n\n\nsubagent_model\nThe model to use for subagents. Defaults to model.\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? Defaults to 3.\n\n\nretry_uncaught_errors\nShould uncaught errors (unexpected crashes of Claude Code) be retried? Defaults to 3.\n\n\ncwd\nWorking directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebSearch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebSearch\"]\n)",
     "crumbs": [
       "Home",
       "Agents",
@@ -516,8 +565,8 @@
     ]
   },
   {
-    "objectID": "claude_code.html#installation-1",
-    "href": "claude_code.html#installation-1",
+    "objectID": "claude_code.html#installation",
+    "href": "claude_code.html#installation",
     "title": "Claude Code",
     "section": "Installation",
     "text": "Installation\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Claude Code in the sandbox, otherwise download the current stable version.\n\n\n\"sandbox\"\nUse the version of Claude Code in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"stable\"\nDownload and use the current stable version.\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Claude Code (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Claude Code you want to use in the sandbox, then use version=\"sandbox\":\nclaude_code(version=\"sandbox\")\nDownload the version of Claude Code you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"claude_code\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\nclaude_code(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
@@ -657,8 +706,8 @@
     ]
   },
   {
-    "objectID": "gemini_cli.html#installation-1",
-    "href": "gemini_cli.html#installation-1",
+    "objectID": "gemini_cli.html#installation",
+    "href": "gemini_cli.html#installation",
     "title": "Gemini CLI",
     "section": "Installation",
     "text": "Installation\nBy default, the agent will download the current stable version of Gemini CLI and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Gemini CLI in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of Gemini CLI in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x-preview.y\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Gemini CLI (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Gemini CLI you want to use in the sandbox, then use version=\"sandbox\":\ngemini_cli(version=\"sandbox\")\nDownload the version of Gemini CLI you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"gemini_cli\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\ngemini_cli(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
