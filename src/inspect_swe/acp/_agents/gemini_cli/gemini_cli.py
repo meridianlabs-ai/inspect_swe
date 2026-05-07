@@ -20,19 +20,6 @@ from inspect_swe.acp.agent import ACPAgentParams
 
 logger = logging.getLogger(__name__)
 
-# Gemini CLI hardcodes these model names for internal utility calls
-# (loop-detection, web-search/web-fetch, edit-fixer, next-speaker-checker,
-# subagent definitions, summarizers, compaction). There is no env var to
-# override them, so map them in the bridge model_aliases so they resolve to
-# the configured target model instead of crashing in get_model().
-GEMINI_UTILITY_MODEL_NAMES = (
-    "gemini-3-flash-preview",
-    "gemini-3-pro-preview",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-)
-
 
 class GeminiCli(ACPAgent):
     """Gemini CLI agent via native ACP support.
@@ -56,17 +43,13 @@ class GeminiCli(ACPAgent):
         super().__init__(**kwargs)
 
     def _build_model_map(self) -> dict[str, str | Model]:
-        """Map gemini-internal model names to the configured target model.
+        """Map the resolved model under its bare ``.name``.
 
-        Adds the resolved model under its bare ``.name`` (Google API URL paths
-        only carry the slash-free model id), plus aliases for every hardcoded
-        utility-model name gemini-cli may request internally.
+        Google API URL paths only carry the slash-free model id, so the bridge sees e.g. ``gemini-3.1-pro-preview`` rather than ``google/gemini-3.1-pro-preview`` for the primary model. All other gemini-internal hardcoded model names (loop-detection, web-search, edit-fixer, next-speaker-checker, subagents, compaction) fall through to the bridge ``model=`` fallback, which resolves to this agent's target model.
         """
         model_map = super()._build_model_map()
         model = get_model(self.model)
         model_map[model.name] = model
-        for name in GEMINI_UTILITY_MODEL_NAMES:
-            model_map.setdefault(name, model)
         return model_map
 
     @asynccontextmanager
@@ -83,10 +66,10 @@ class GeminiCli(ACPAgent):
 
         async with sandbox_agent_bridge(
             state,
-            # Fallback for any model name not covered by model_aliases
-            # (gemini-cli has many hardcoded utility-model names; see
-            # GEMINI_UTILITY_MODEL_NAMES). Mirrors the non-ACP gemini_cli().
-            model=f"inspect/{model.api.model_name}",
+            # Fallback for any model name not covered by model_aliases.
+            # Gemini CLI hardcodes many internal utility-model names with no
+            # env-var override; route all of them to this agent's target.
+            model=str(model),
             model_aliases=self.model_map,
             filter=self.filter,
             retry_refusals=self.retry_refusals,
@@ -114,9 +97,17 @@ class GeminiCli(ACPAgent):
                 await install_skills(self._resolved_skills, sbox, self.user, skills_dir)
 
             # Environment variables (matching non-ACP gemini_cli agent).
+            #
+            # GEMINI_CLI_TRUST_WORKSPACE: gemini-cli's settings schema defaults
+            # security.folderTrust.enabled to true. With no trustedFolders.json
+            # entry for the sandbox cwd, isTrustedFolder() returns false and
+            # McpClientManager.startConfiguredMcpServers() returns immediately
+            # without connecting to any MCP server (and without logging). This
+            # env var short-circuits the trust check (core/utils/trust.ts).
             agent_env = {
                 "GOOGLE_GEMINI_BASE_URL": f"http://127.0.0.1:{bridge.port}",
                 "GEMINI_API_KEY": "api-key",
+                "GEMINI_CLI_TRUST_WORKSPACE": "true",
                 "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
                 "HOME": sandbox_home,
             } | self.env
@@ -133,8 +124,12 @@ class GeminiCli(ACPAgent):
                 model.name,
             ]
             if self._debug:
+                # In ACP mode console.* is redirected away from stderr by
+                # ConsolePatcher, so --debug/DEBUG produce nothing observable.
+                # GEMINI_DEBUG_LOG_FILE makes debugLogger write to a file we
+                # can read back from the sandbox.
                 cmd.append("--debug")
-                agent_env["DEBUG"] = "1"
+                agent_env["GEMINI_DEBUG_LOG_FILE"] = f"{sandbox_home}/gemini-debug.log"
             logger.info("Starting gemini CLI in ACP mode: %s", " ".join(cmd))
             proc = await sbox.exec_remote(
                 cmd=cmd,
@@ -174,8 +169,7 @@ def interactive_gemini_cli(
         version: Version of gemini CLI to use. One of:
             ``"auto"``, ``"sandbox"``, ``"stable"``, ``"latest"``,
             or a specific semver version string.
-        debug: Run gemini-cli with ``--debug`` and ``DEBUG=1`` so MCP
-            connection diagnostics are emitted to stderr.
+        debug: Run gemini-cli with ``--debug`` and ``GEMINI_DEBUG_LOG_FILE`` set to ``$HOME/gemini-debug.log`` in the sandbox (in ACP mode console output is patched away from stderr, so the log file is the only way to surface internals).
         **kwargs: See :class:`ACPAgentParams` for all base options.
     """
     return GeminiCli(
