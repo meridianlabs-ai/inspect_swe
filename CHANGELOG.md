@@ -1,3 +1,8 @@
+## Unreleased
+
+- Codex CLI: Disable telemetry by default.
+- Gemini CLI: Disable telemetry by default.
+
 ## 0.2.51 (07 May 2026)
 
 - Gemini CLI: Fix MCP registration via GEMINI_CLI_TRUST_WORKSPACE.

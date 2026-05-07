@@ -219,6 +219,10 @@ def codex_cli(
             # build toml config
             toml_config: dict[str, Any] = {}
 
+            # disable codex analytics (both the chatgpt.com analytics-events
+            # sink and the always-on Statsig OTel metrics to ab.chatgpt.com)
+            toml_config["analytics"] = {"enabled": False}
+
             # register mcp servers (combine static configs with bridged tools)
             all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
             if all_mcp_servers:
