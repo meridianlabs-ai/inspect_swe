@@ -10,11 +10,11 @@ website:
         href: index.qmd
       - text: Agents
         menu:
-           - href: claude_code.qmd
-           - href: codex_cli.qmd
-           - href: gemini_cli.qmd
-           - href: mini_swe_agent.qmd
-           - href: opencode.qmd
+          - href: claude_code.qmd
+          - href: codex_cli.qmd
+          - href: gemini_cli.qmd
+          - href: opencode.qmd
+          - href: mini_swe_agent.qmd
     right:
       - text: Changelog
         href: CHANGELOG.md
@@ -22,7 +22,7 @@ website:
         href: https://github.com/meridianlabs-ai/inspect_swe
         aria-label: GitHub
   sidebar:
-     - contents:
+    - contents:
         - text: Getting Started
           href: index.qmd
         - section: Agents
@@ -30,8 +30,8 @@ website:
             - href: claude_code.qmd
             - href: codex_cli.qmd
             - href: gemini_cli.qmd
-            - href: mini_swe_agent.qmd
             - href: opencode.qmd
+            - href: mini_swe_agent.qmd
 
 format:
   html:
@@ -40,6 +40,3 @@ format:
       - brand
     css: styles.css
     toc: true
-
-
-

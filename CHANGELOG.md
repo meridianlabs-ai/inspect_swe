@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.52 (09 May 2026)
 
 - OpenCode: New agent backend wrapping [OpenCode](https://github.com/anomalyco/opencode).
 - Codex CLI: Disable telemetry by default.
