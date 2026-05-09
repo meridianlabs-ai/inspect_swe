@@ -51,9 +51,7 @@ def bridged_tools_test(
                 system_prompt=system_prompt, bridged_tools=bridged_tools
             )
         case "opencode":
-            solver = opencode(
-                system_prompt=system_prompt, bridged_tools=bridged_tools
-            )
+            solver = opencode(system_prompt=system_prompt, bridged_tools=bridged_tools)
 
     return Task(
         dataset=[

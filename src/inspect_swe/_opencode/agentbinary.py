@@ -78,9 +78,7 @@ async def ensure_opencode_installed(
             binary_name="opencode",
             user=user,
         )
-        await _run_opencode_postinstall(
-            sandbox, node_path, install_dir, user
-        )
+        await _run_opencode_postinstall(sandbox, node_path, install_dir, user)
         return binary_path
 
 

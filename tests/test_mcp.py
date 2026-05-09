@@ -14,7 +14,9 @@ from tests.conftest import (
 @skip_if_no_anthropic
 @skip_if_no_docker
 def test_claude_code_mcp() -> None:
-    check_mcp("claude_code", "anthropic/claude-sonnet-4-0", "mcp__memory__create_entities")
+    check_mcp(
+        "claude_code", "anthropic/claude-sonnet-4-0", "mcp__memory__create_entities"
+    )
 
 
 @skip_if_no_openai

@@ -108,7 +108,9 @@ def opencode(
     # determine which provider client opencode will use, so we know which
     # provider entry's baseURL to override in the config (the bridge intercepts
     # the request regardless of which provider protocol opencode picks).
-    provider_id = opencode_model.split("/", 1)[0] if "/" in opencode_model else "anthropic"
+    provider_id = (
+        opencode_model.split("/", 1)[0] if "/" in opencode_model else "anthropic"
+    )
 
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
@@ -308,9 +310,7 @@ def resolve_mcp_servers(
     """
     out: dict[str, dict[str, Any]] = {}
     for server in mcp_servers:
-        config = server.model_dump(
-            exclude={"name", "tools", "type"}, exclude_none=True
-        )
+        config = server.model_dump(exclude={"name", "tools", "type"}, exclude_none=True)
         entry: dict[str, Any] = {"enabled": True}
         if isinstance(server, MCPServerConfigHTTP):
             entry["type"] = "remote"
@@ -324,9 +324,7 @@ def resolve_mcp_servers(
             command = config.pop("command", None)
             args = config.pop("args", None)
             if command is None:
-                raise ValueError(
-                    f"Local MCP server {server.name!r} has no command"
-                )
+                raise ValueError(f"Local MCP server {server.name!r} has no command")
             cmd_list = [command] if isinstance(command, str) else list(command)
             if args:
                 cmd_list = cmd_list + list(args)
