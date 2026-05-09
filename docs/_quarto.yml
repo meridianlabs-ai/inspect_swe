@@ -14,6 +14,7 @@ website:
            - href: codex_cli.qmd
            - href: gemini_cli.qmd
            - href: mini_swe_agent.qmd
+           - href: opencode.qmd
     right:
       - text: Changelog
         href: CHANGELOG.md
@@ -30,6 +31,7 @@ website:
             - href: codex_cli.qmd
             - href: gemini_cli.qmd
             - href: mini_swe_agent.qmd
+            - href: opencode.qmd
 
 format:
   html:

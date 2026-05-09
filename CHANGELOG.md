@@ -1,5 +1,6 @@
 ## Unreleased
 
+- OpenCode: New agent backend wrapping [OpenCode](https://github.com/anomalyco/opencode).
 - Codex CLI: Disable telemetry by default.
 - Gemini CLI: Disable telemetry by default.
 

@@ -48,8 +48,17 @@ def test_mini_swe_agent_multi_call_anthropic(sandbox: str) -> None:
     check_multi_call("mini_swe_agent", "anthropic/claude-haiku-4-5", sandbox)
 
 
+@skip_if_no_anthropic
+@skip_if_no_docker
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_opencode_multi_call(sandbox: str) -> None:
+    check_multi_call("opencode", "anthropic/claude-sonnet-4-0", sandbox)
+
+
 def check_multi_call(
-    agent: Literal["claude_code", "codex_cli", "gemini_cli", "mini_swe_agent"],
+    agent: Literal[
+        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent", "opencode"
+    ],
     model: str,
     sandbox: str,
 ) -> None:
@@ -76,5 +85,9 @@ def check_multi_call(
             assert len(assistant_messages) >= 4
         case "mini_swe_agent":
             # model may have more messages due to bash tool use(user/assistant share tool call and tool response)
+            assert len(user_messages) >= 4
+            assert len(assistant_messages) >= 4
+        case "opencode":
+            # opencode may emit extra scaffolding messages and tool turns
             assert len(user_messages) >= 4
             assert len(assistant_messages) >= 4
