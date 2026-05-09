@@ -149,6 +149,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="dropdown-text">Gemini CLI</span></a>
   </li>  
         <li>
+    <a class="dropdown-item" href="./opencode.html">
+ <span class="dropdown-text">OpenCode</span></a>
+  </li>  
+        <li>
     <a class="dropdown-item" href="./mini_swe_agent.html">
  <span class="dropdown-text">Mini SWE Agent</span></a>
   </li>  
@@ -223,6 +227,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="./opencode.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">OpenCode</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="./mini_swe_agent.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Mini SWE Agent</span></a>
   </div>
@@ -269,7 +279,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 <section id="overview" class="level2">
 <h2 class="anchored" data-anchor-id="overview">Overview</h2>
-<p>The <code>inspect_swe</code> package makes software engineering agents like <a href="https://docs.anthropic.com/en/docs/claude-code/overview">Claude Code</a>, <a href="https://github.com/openai/codex">Codex CLI</a>, <a href="https://github.com/google-gemini/gemini-cli">Gemini CLI</a>, and <a href="https://github.com/SWE-agent/mini-swe-agent">Mini SWE Agent</a> available as standard Inspect agents. For example, here we use the <code>claude_code()</code> agent as the solver in an Inspect task:</p>
+<p>The <code>inspect_swe</code> package makes software engineering agents like <a href="https://docs.anthropic.com/en/docs/claude-code/overview">Claude Code</a>, <a href="https://github.com/openai/codex">Codex CLI</a>, <a href="https://github.com/google-gemini/gemini-cli">Gemini CLI</a>, <a href="https://github.com/anomalyco/opencode">OpenCode</a>, and <a href="https://github.com/SWE-agent/mini-swe-agent">Mini SWE Agent</a>. available as standard Inspect agents. For example, here we use the <code>claude_code()</code> agent as the solver in an Inspect task:</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_ai <span class="im">import</span> Task, task</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_ai.dataset <span class="im">import</span> json_dataset</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> inspect_ai.scorer <span class="im">import</span> model_graded_qa</span>
@@ -317,6 +327,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td>Google’s open-source AI agent <a href="https://github.com/google-gemini/gemini-cli">Gemini CLI</a></td>
 </tr>
 <tr class="even">
+<td><a href="./opencode.html"><code>opencode()</code></a></td>
+<td>Provider-independent terminal-based coding agent.</td>
+</tr>
+<tr class="odd">
 <td><a href="./mini_swe_agent.html"><code>mini_swe_agent()</code></a></td>
 <td>SWE-agent’s minimal 100-line agent.</td>
 </tr>
