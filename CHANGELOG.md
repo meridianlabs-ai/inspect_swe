@@ -1,3 +1,7 @@
+## 0.2.53 (13 May 2026)
+
+- Pin `agent-client-protocol>=0.9.0,<0.10` until [init ordering bug](https://github.com/agentclientprotocol/python-sdk/issues/97) is fixed.
+
 ## 0.2.52 (09 May 2026)
 
 - OpenCode: New agent backend wrapping [OpenCode](https://github.com/anomalyco/opencode).
