@@ -8,7 +8,7 @@ from pathlib import Path
 from inspect_ai.agent import AgentState, SandboxAgentBridge, agent, sandbox_agent_bridge
 from inspect_ai.model import Model, get_model
 from inspect_ai.tool import Skill, install_skills, read_skills
-from inspect_ai.util import ExecRemoteProcess, ExecRemoteStreamingOptions
+from inspect_ai.util import ExecRemoteProcess, ExecRemoteStreamingOptions, store
 from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
@@ -68,6 +68,13 @@ class ClaudeCode(ACPAgent):
         sbox = sandbox_env(self.sandbox)
         default_model = get_model(self.model).canonical_name()
 
+        # Use a unique port per agent invocation so re-running the agent in the
+        # same sandbox doesn't collide with a stale model_proxy on 13131
+        # (mirrors the non-ACP claude_code and the ACP codex/gemini agents).
+        MODEL_PORT = "claude_code_acp_model_port"
+        port = store().get(MODEL_PORT, 3000) + 1
+        store().set(MODEL_PORT, port)
+
         async with sandbox_agent_bridge(
             state,
             model=None,
@@ -75,6 +82,7 @@ class ClaudeCode(ACPAgent):
             filter=self.filter,
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
+            port=port,
         ) as bridge:
             # Install node and claude-agent-acp in the sandbox.
             acp_binary, node_binary = await ensure_claude_code_acp_setup(
