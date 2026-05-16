@@ -9,6 +9,7 @@ from .._util.node import (
     ensure_node_available,
     install_npm_bundle,
 )
+from .._util.ripgrep import ensure_ripgrep_available
 from .._util.sandbox import (
     SANDBOX_INSTALL_DIR,
     SandboxPlatform,
@@ -21,18 +22,21 @@ async def ensure_opencode_setup(
     sandbox: SandboxEnvironment,
     version: Literal["auto", "sandbox", "stable", "latest"] | str,
     user: str | None,
-) -> tuple[str, str]:
-    """Install node and OpenCode in the sandbox.
-
-    Returns (opencode_binary, node_binary) paths.
-    """
+) -> tuple[str, list[str]]:
+    """Install OpenCode and return its binary plus dependency bin directories."""
     platform = await detect_sandbox_platform(sandbox)
+
     node_binary = await ensure_node_available(sandbox, platform, user)
+    dependency_bin_dirs = [
+        node_binary.rsplit("/", 1)[0],
+        await ensure_ripgrep_available(sandbox, platform, user),
+    ]
+
     opencode_version = await resolve_opencode_version(version)
     opencode_binary = await ensure_opencode_installed(
         sandbox, node_binary, opencode_version, platform, user
     )
-    return opencode_binary, node_binary
+    return opencode_binary, dependency_bin_dirs
 
 
 async def resolve_opencode_version(
