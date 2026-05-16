@@ -1,5 +1,6 @@
 """ACP (Agent Client Protocol) support for inspect-swe agents."""
 
+from . import _compat  # noqa: F401  # applies SDK workarounds at import
 from .agent import ACPAgent, ACPAgentParams, bridge_mcp_to_acp
 from .client import ACPError, acp_connection
 from .transport import ErrorInfo

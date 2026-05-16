@@ -1,3 +1,7 @@
+## Unreleased
+
+- Workaround for `agent_client_protocol` v0.10.0 connection bug.
+
 ## 0.2.54 (13 May 2026)
 
 - Claude Code (ACP): Allocate per-invocation bridge port.
