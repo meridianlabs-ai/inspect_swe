@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.55 (16 May 2026)
 
 - Workaround for `agent_client_protocol` v0.10.0 connection bug.
 
