@@ -13,7 +13,13 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
+from inspect_ai.model import (
+    ChatMessageSystem,
+    GenerateFilter,
+    Model,
+    ModelName,
+    get_model,
+)
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
@@ -97,7 +103,7 @@ def opencode(
         centaur = CentaurOptions()
 
     # resolve model
-    model = f"inspect/{model}" if model is not None else "inspect"
+    inspect_model = f"inspect/{model}" if model is not None else "inspect"
 
     # resolve skills
     resolved_skills = read_skills(skills) if skills is not None else None
@@ -118,10 +124,21 @@ def opencode(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
+        # OpenCode defaults to an Anthropic-compatible client. When the Inspect
+        # model is OpenAI, force Chat Completions behind the bridge rather than
+        # Responses API so the Anthropic shim can translate tool calls reliably.
+        bridge_model = _model_without_responses_api(model)
+        inspect_aliases: dict[str, str | Model] = {
+            inspect_model: bridge_model,
+            opencode_model: bridge_model,
+        }
+        if "/" in opencode_model:
+            inspect_aliases[opencode_model.split("/", 1)[1]] = bridge_model
+
         async with sandbox_agent_bridge(
             state,
-            model=model,
-            model_aliases=model_aliases,
+            model=inspect_model,
+            model_aliases=inspect_aliases | (model_aliases or {}),
             filter=filter,
             sandbox=sandbox,
             retry_refusals=retry_refusals,
@@ -132,6 +149,7 @@ def opencode(
             sbox = sandbox_env(sandbox)
 
             # install skills
+            skills_prompt: str | None = None
             if resolved_skills is not None:
                 OPENCODE_SKILLS = ".opencode/skills"
                 skills_dir = (
@@ -140,6 +158,7 @@ def opencode(
                     else OPENCODE_SKILLS
                 )
                 await install_skills(resolved_skills, sbox, user, skills_dir)
+                skills_prompt = _skills_system_prompt(skills_dir, resolved_skills)
 
             # install node and opencode in sandbox
             opencode_binary, node_binary = await ensure_opencode_setup(
@@ -171,6 +190,8 @@ def opencode(
                     provider_id: {"options": {"baseURL": provider_base_url}},
                 },
             }
+            if resolved_skills is not None:
+                opencode_config["permission"] = {"skill": {"*": "allow"}}
             if all_mcp_servers:
                 opencode_config["mcp"] = resolve_mcp_servers(all_mcp_servers)
 
@@ -186,6 +207,8 @@ def opencode(
             ]
             if system_prompt is not None:
                 system_messages.append(system_prompt)
+            if skills_prompt is not None:
+                system_messages.append(skills_prompt)
 
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
@@ -297,6 +320,44 @@ def opencode(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+def _skills_system_prompt(skills_dir: str, skills: Sequence[Skill]) -> str:
+    entries = []
+    for skill in skills:
+        skill_dir = f"{skills_dir}/{skill.name}"
+        assets = ", ".join(f"{skill_dir}/assets/{name}" for name in skill.assets)
+        scripts = ", ".join(f"{skill_dir}/scripts/{name}" for name in skill.scripts)
+        entries.append(
+            f"- {skill.name}: {skill.description}; instructions: {skill_dir}/SKILL.md"
+            + (f"; assets: {assets}" if assets else "")
+            + (f"; scripts: {scripts}" if scripts else "")
+        )
+
+    return dedent(f"""
+        OpenCode skills have been installed in the sandbox. In this unattended
+        bridge environment, read the skill files directly with shell commands
+        instead of calling the skill tool. Resolve relative paths in skill
+        instructions against the directory containing that skill's SKILL.md.
+
+        Available skills:
+        {chr(10).join(entries)}
+        """).strip()
+
+
+def _model_without_responses_api(model: str | Model | None) -> Model:
+    model = get_model(model)
+    name = ModelName(model)
+    if name.api == "openai":
+        return get_model(
+            model=str(name),
+            config=model.config,
+            base_url=model.api.base_url,
+            memoize=False,
+            **(model.model_args | {"responses_api": False}),
+        )
+    else:
+        return model
 
 
 def resolve_mcp_servers(

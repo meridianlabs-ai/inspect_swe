@@ -11,6 +11,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT License" }
 dependencies = [
+    "anthropic",
     "httpx",
     "inspect_ai>=0.3.214",
     "nest_asyncio",
