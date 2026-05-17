@@ -2,6 +2,7 @@
 
 [ripgrep]: https://github.com/anomalyco/opencode/blob/be6a89a3b89bcdbd359948078360591a84e91f04/packages/opencode/src/tool/skill.ts#L42
 """
+
 import tarfile
 from io import BytesIO
 
