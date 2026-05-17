@@ -1,15 +1,17 @@
 import json
+import tarfile
+from io import BytesIO
 from typing import Any, Literal
 
 from inspect_ai.util import SandboxEnvironment, concurrency
 
-from .._util.download import download_text_file
+from .._util.appdirs import package_cache_dir
+from .._util.download import download_file, download_text_file
 from .._util.node import (
     create_npm_bundle,
     ensure_node_available,
     install_npm_bundle,
 )
-from .._util.ripgrep import ensure_ripgrep_available
 from .._util.sandbox import (
     SANDBOX_INSTALL_DIR,
     SandboxPlatform,
@@ -29,7 +31,7 @@ async def ensure_opencode_setup(
     node_binary = await ensure_node_available(sandbox, platform, user)
     dependency_bin_dirs = [
         node_binary.rsplit("/", 1)[0],
-        await ensure_ripgrep_available(sandbox, platform, user),
+        await ensure_ripgrep_installed(sandbox, platform, user),
     ]
 
     opencode_version = await resolve_opencode_version(version)
@@ -125,3 +127,68 @@ async def _fetch_latest_release() -> dict[str, Any]:
     releases_url = "https://api.github.com/repos/anomalyco/opencode/releases"
     release_json = await download_text_file(f"{releases_url}/latest")
     return dict(json.loads(release_json))
+
+
+RIPGREP_VERSION = "15.1.0"
+
+
+def _ripgrep_target(platform: SandboxPlatform) -> str:
+    match platform:
+        case "linux-x64" | "linux-x64-musl":
+            return "x86_64-unknown-linux-musl"
+        case "linux-arm64" | "linux-arm64-musl":
+            return "aarch64-unknown-linux-gnu"
+    raise ValueError(f"Unsupported platform: {platform}")
+
+
+async def ensure_ripgrep_installed(
+    sandbox: SandboxEnvironment,
+    platform: SandboxPlatform,
+    user: str | None = None,
+) -> str:
+    """Install ripgrep and return its bin directory."""
+    result = await sandbox.exec(bash_command("command -v rg"), user=user)
+    if result.success:
+        return result.stdout.strip().rsplit("/", 1)[0]
+
+    install_dir = f"{SANDBOX_INSTALL_DIR}/ripgrep"
+    bin_dir = f"{install_dir}/bin"
+    binary = f"{bin_dir}/rg"
+
+    result = await sandbox.exec(bash_command(f"test -x {binary}"), user=user)
+    if result.success:
+        return bin_dir
+
+    async with concurrency("ripgrep-install", 1, visible=False):
+        rg_data = await _ripgrep_binary(platform)
+        await sandbox.exec(bash_command(f"mkdir -p {bin_dir}"), user="root")
+        await sandbox.write_file(binary, rg_data)
+        await sandbox.exec(bash_command(f"chmod +x {binary}"), user="root")
+        return bin_dir
+
+
+async def _ripgrep_binary(platform: SandboxPlatform) -> bytes:
+    target = _ripgrep_target(platform)
+    archive_name = f"ripgrep-{RIPGREP_VERSION}-{target}.tar.gz"
+    cache_dir = package_cache_dir("ripgrep-binary-downloads")
+    cache_path = cache_dir / f"ripgrep-{RIPGREP_VERSION}-{target}"
+
+    if cache_path.exists():
+        with open(cache_path, "rb") as f:
+            return f.read()
+
+    url = (
+        "https://github.com/BurntSushi/ripgrep/releases/download/"
+        f"{RIPGREP_VERSION}/{archive_name}"
+    )
+    archive_data = await download_file(url)
+    with tarfile.open(fileobj=BytesIO(archive_data), mode="r:gz") as tar:
+        rg_member = next(m for m in tar.getmembers() if m.name.endswith("/rg"))
+        extracted = tar.extractfile(rg_member)
+        assert extracted is not None
+        rg_data = extracted.read()
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    with open(cache_path, "wb") as f:
+        f.write(rg_data)
+    return rg_data
