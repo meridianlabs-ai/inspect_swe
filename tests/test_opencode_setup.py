@@ -33,7 +33,7 @@ def install_opencode_in_sandbox(version: str = "stable") -> Solver:
         state.metadata["node_binary"] = node_binary
 
         version_result = await sbox.exec(
-            [node_binary, opencode_binary, "--version"], user=None
+            node_binary + [opencode_binary, "--version"], user=None
         )
         state.metadata["version_ok"] = version_result.success
         state.metadata["reported_version"] = version_result.stdout.strip()

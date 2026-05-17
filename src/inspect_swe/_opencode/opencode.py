@@ -24,7 +24,6 @@ from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
-from inspect_swe._util.path import join_path
 from inspect_swe._util.trace import trace
 
 from .agentbinary import ensure_opencode_setup
@@ -131,18 +130,8 @@ def opencode(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
-            # install skills
-            if resolved_skills is not None:
-                OPENCODE_SKILLS = ".opencode/skills"
-                skills_dir = (
-                    join_path(cwd, OPENCODE_SKILLS)
-                    if cwd is not None
-                    else OPENCODE_SKILLS
-                )
-                await install_skills(resolved_skills, sbox, user, skills_dir)
-
-            # install node and opencode in sandbox
-            opencode_binary, node_binary = await ensure_opencode_setup(
+            # install opencode and its runtime dependencies in sandbox
+            opencode_binary, dependency_bin_dirs = await ensure_opencode_setup(
                 sbox, version, user
             )
 
@@ -171,12 +160,18 @@ def opencode(
                     provider_id: {"options": {"baseURL": provider_base_url}},
                 },
             }
+            if resolved_skills is not None:
+                opencode_config["permission"] = {"skill": {"*": "allow"}}
             if all_mcp_servers:
                 opencode_config["mcp"] = resolve_mcp_servers(all_mcp_servers)
 
             opencode_config_dir = f"{sandbox_home}/.config/opencode"
             opencode_config_path = f"{opencode_config_dir}/opencode.json"
             await sbox.exec(["mkdir", "-p", opencode_config_dir], user=user)
+            if resolved_skills is not None:
+                await install_skills(
+                    resolved_skills, sbox, user, f"{opencode_config_dir}/skills"
+                )
             await sbox.write_file(opencode_config_path, json.dumps(opencode_config))
 
             # build system prompt (opencode run takes a single positional message
@@ -207,8 +202,10 @@ def opencode(
             if centaur is False:
                 cmd.append("--dangerously-skip-permissions")
 
-            # setup agent env (add node to PATH so the opencode shell script can find it)
-            node_dir = str(Path(node_binary).parent)
+            # setup agent env (add dependencies to PATH so opencode can find them)
+            path = ":".join(
+                [*dependency_bin_dirs, "/usr/local/bin", "/usr/bin", "/bin"]
+            )
             agent_env = {
                 # belt-and-braces: set per-provider base URL env vars in addition
                 # to the config file. Different opencode provider clients honor
@@ -221,7 +218,7 @@ def opencode(
                 "ANTHROPIC_API_KEY": "sk-none",
                 "OPENAI_API_KEY": "sk-none",
                 "OPENCODE_CONFIG": opencode_config_path,
-                "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
+                "PATH": path,
                 "HOME": sandbox_home,
             } | (env or {})
 
