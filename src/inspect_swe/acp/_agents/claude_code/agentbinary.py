@@ -23,7 +23,7 @@ from inspect_swe._util.sandbox import (
 
 logger = logging.getLogger(__name__)
 
-_ACP_ADAPTER_PACKAGE = "@zed-industries/claude-agent-acp"
+_ACP_ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp"
 
 
 async def ensure_claude_code_acp_setup(
