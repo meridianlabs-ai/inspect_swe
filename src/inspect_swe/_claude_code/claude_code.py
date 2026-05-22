@@ -77,6 +77,7 @@ def claude_code(
     debug: bool | None = None,
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
+    auto_mode: bool = False,
 ) -> Agent:
     """Claude Code agent.
 
@@ -168,9 +169,15 @@ def claude_code(
                 claude_code_binary_source(), version, user, sandbox_env(sandbox)
             )
 
-            # base options
+            # base options — auto_mode uses --permission-mode auto (monitor active);
+            # otherwise --dangerously-skip-permissions (no permission gating).
+            permission_flag = (
+                ["--permission-mode", "auto"]
+                if auto_mode
+                else ["--dangerously-skip-permissions"]
+            )
             cmd = [
-                "--dangerously-skip-permissions",
+                *permission_flag,
                 "--model",
                 model,
             ]
