@@ -69,6 +69,7 @@ def claude_code(
     haiku_model: str | None = None,
     subagent_model: str | None = None,
     filter: GenerateFilter | None = None,
+    auto_mode: bool = False,
     retry_refusals: int | None = 3,
     retry_uncaught_errors: int | None = 3,
     cwd: str | None = None,
@@ -110,6 +111,7 @@ def claude_code(
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
         subagent_model: The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`.
         filter: Filter for intercepting bridged model requests.
+        auto_mode: Use `auto` permission mode rather than `--dangerously-skip-permissions`. Note that this can result in rejected tool calls so only enable if your evaluation can tolerate this.
         retry_refusals: Should refusals be retried? Defaults to retrying up to 3 times.
         retry_uncaught_errors: Should uncaught errors (unexpected crashes of Claude Code) be retried. Defaults to retrying up to 3 times.
         cwd: Working directory to run claude code within.
@@ -168,9 +170,15 @@ def claude_code(
                 claude_code_binary_source(), version, user, sandbox_env(sandbox)
             )
 
-            # base options
+            # base options — auto_mode uses --permission-mode auto (monitor active);
+            # otherwise --dangerously-skip-permissions (no permission gating).
+            permission_flag = (
+                ["--permission-mode", "auto"]
+                if auto_mode
+                else ["--dangerously-skip-permissions"]
+            )
             cmd = [
-                "--dangerously-skip-permissions",
+                *permission_flag,
                 "--model",
                 model,
             ]
