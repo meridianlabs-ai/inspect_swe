@@ -69,6 +69,7 @@ def claude_code(
     haiku_model: str | None = None,
     subagent_model: str | None = None,
     filter: GenerateFilter | None = None,
+    auto_mode: bool = False,
     retry_refusals: int | None = 3,
     retry_uncaught_errors: int | None = 3,
     cwd: str | None = None,
@@ -77,7 +78,6 @@ def claude_code(
     debug: bool | None = None,
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
-    auto_mode: bool = False,
 ) -> Agent:
     """Claude Code agent.
 
@@ -111,6 +111,7 @@ def claude_code(
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
         subagent_model: The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`.
         filter: Filter for intercepting bridged model requests.
+        auto_mode: Use `auto` permission mode rather than `--dangerously-skip-permissions`. Note that this can result in rejected tool calls so only enable if your evaluation can tolerate this.
         retry_refusals: Should refusals be retried? Defaults to retrying up to 3 times.
         retry_uncaught_errors: Should uncaught errors (unexpected crashes of Claude Code) be retried. Defaults to retrying up to 3 times.
         cwd: Working directory to run claude code within.
