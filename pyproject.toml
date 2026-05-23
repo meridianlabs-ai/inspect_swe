@@ -44,9 +44,16 @@ dev = [
     "IPython",
     "inspect-evals",
     "inspect_k8s_sandbox",
-    "mini-swe-agent"
+    "mini-swe-agent",
+    "inspect_swe[doc]",
 ]
-doc = ["quarto-cli==1.7.31"]
+doc = [
+    "quarto-cli>=1.9.36",
+    "griffe>=2",
+    "panflute",
+    "markdown",
+    "rich",
+]
 
 [tool.hatch.build]
 only-packages = true

@@ -5,6 +5,7 @@ from inspect_ai.util import SandboxEnvironment
 SandboxPlatform: TypeAlias = Literal[
     "linux-x64", "linux-arm64", "linux-x64-musl", "linux-arm64-musl"
 ]
+"""Target platform identifier for sandbox binary and wheel downloads."""
 
 SANDBOX_INSTALL_DIR = "/var/tmp/.5c95f967ca830048"
 

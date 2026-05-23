@@ -1,42 +1,19 @@
 project:
-  type: website
+  type: meridianlabs-ai/inspect-docs
 
-website:
+inspect-docs:
   title: "Inspect SWE"
-  navbar:
-    search: true
-    left:
-      - text: Home
-        href: index.qmd
-      - text: Agents
-        menu:
-          - href: claude_code.qmd
-          - href: codex_cli.qmd
-          - href: gemini_cli.qmd
-          - href: opencode.qmd
-          - href: mini_swe_agent.qmd
-    right:
-      - text: Changelog
-        href: CHANGELOG.md
-      - icon: github
-        href: https://github.com/meridianlabs-ai/inspect_swe
-        aria-label: GitHub
-  sidebar:
-    - contents:
-        - text: Getting Started
-          href: index.qmd
-        - section: Agents
-          contents:
-            - href: claude_code.qmd
-            - href: codex_cli.qmd
-            - href: gemini_cli.qmd
-            - href: opencode.qmd
-            - href: mini_swe_agent.qmd
-
-format:
-  html:
-    theme:
-      - cosmo
-      - brand
-    css: styles.css
-    toc: true
+  description: "Software engineering agents for Inspect AI."
+  url: https://meridianlabs-ai.github.io/inspect_swe
+  repo: meridianlabs-ai/inspect_swe
+  org: Meridian Labs
+  navigation:
+    - text: Home
+      href: index.qmd
+    - text: Agents
+      contents:
+        - href: claude_code.qmd
+        - href: codex_cli.qmd
+        - href: gemini_cli.qmd
+        - href: opencode.qmd
+        - href: mini_swe_agent.qmd

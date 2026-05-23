@@ -1,0 +1,31 @@
+---
+title: Reference
+description: Public API for inspect_swe.
+reference: inspect_swe
+---
+
+## Agents
+
+### claude_code
+### codex_cli
+### gemini_cli
+### opencode
+### mini_swe_agent
+
+## Binaries
+
+### download_agent_binary
+### cached_agent_binaries
+### download_wheels_tarball
+### AgentBinary
+### SandboxPlatform
+
+## ACP
+
+### interactive_claude_code
+### interactive_codex_cli
+### interactive_gemini_cli
+### bridge_mcp_to_acp
+### ACPAgent
+### ACPAgentParams
+### acp_connection
