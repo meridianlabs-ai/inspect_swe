@@ -1,5 +1,6 @@
 ## Changelog 
 
+- Codex CLI: Add `goals` option to enable the `/goal` feature (`get_goal`/`set_goal` tools). Requires Codex CLI 0.128.0 or later.
 - OpenCode: Install ripgrep for access to native skills.
 - Claude Code (ACP): Use officially supported ACP client (@agentclientprotocol/claude-agent-acp)
 

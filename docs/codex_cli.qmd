@@ -21,6 +21,7 @@ The following options are supported for customizing the behavior of the agent:
 | `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
 | `disallowed_tools` | Optionally disallow tools (e.g. `"{{< meta agent_disallowed_tool >}}"`) |
+| `goals` | Enable the Codex [`/goal`](https://developers.openai.com/codex/use-cases/follow-goals) feature (`get_goal`/`set_goal` tools). Requires Codex CLI 0.128.0 or later (set `version` accordingly). |
 | `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended. | 
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |

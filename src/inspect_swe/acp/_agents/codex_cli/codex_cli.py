@@ -42,12 +42,14 @@ class CodexCli(ACPAgent):
         disallowed_tools: list[Literal["web_search"]] | None = None,
         skills: list[str | Path | Skill] | None = None,
         home_dir: str | None = None,
+        goals: bool = False,
         config_overrides: dict[str, str] | None = None,
         **kwargs: Unpack[ACPAgentParams],
     ) -> None:
         self._disallowed_tools = list(disallowed_tools or [])
         self._resolved_skills = read_skills(skills) if skills else None
         self._home_dir = home_dir
+        self._goals = goals
         self._config_overrides = config_overrides or {}
         super().__init__(**kwargs)
 
@@ -123,6 +125,8 @@ class CodexCli(ACPAgent):
                     "stream_idle_timeout_ms": 3_600_000,
                 },
             }
+            if self._goals:
+                toml_config["features"] = {"goals": True}
             toml_config.update(self._config_overrides)
             await sbox.write_file(config_toml_path, to_toml(toml_config))
 
@@ -183,6 +187,7 @@ def interactive_codex_cli(
     disallowed_tools: list[Literal["web_search"]] | None = None,
     skills: list[str | Path | Skill] | None = None,
     home_dir: str | None = None,
+    goals: bool = False,
     config_overrides: dict[str, str] | None = None,
     # Forwarded to ACPAgent
     **kwargs: Unpack[ACPAgentParams],
@@ -196,6 +201,7 @@ def interactive_codex_cli(
         disallowed_tools: Tools to disable (currently only ``"web_search"``).
         skills: Additional skills to make available.
         home_dir: Override for ``CODEX_HOME`` directory in the sandbox.
+        goals: Enable the Codex ``/goal`` feature (``get_goal``/``set_goal`` tools). Requires Codex CLI 0.128.0 or later.
         config_overrides: Extra Codex config.toml key-value pairs.
         **kwargs: See :class:`ACPAgentParams` for all base options.
     """
@@ -203,6 +209,7 @@ def interactive_codex_cli(
         disallowed_tools=disallowed_tools,
         skills=skills,
         home_dir=home_dir,
+        goals=goals,
         config_overrides=config_overrides,
         **kwargs,
     )

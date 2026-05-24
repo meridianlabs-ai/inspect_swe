@@ -47,6 +47,7 @@ def codex_cli(
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     disallowed_tools: list[Literal["web_search"]] | None = None,
+    goals: bool = False,
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
@@ -79,6 +80,7 @@ def codex_cli(
             Each BridgedToolsSpec creates an MCP server that makes the specified
             tools available to the agent running in the sandbox.
         disallowed_tools: Optionally disallow tools (currently only web_search).
+        goals: Enable the Codex `/goal` feature, which registers the `get_goal`/`set_goal` tools for persistent, self-checking task pursuit. Requires Codex CLI 0.128.0 or later (set `version` accordingly).
         centaur: Run in 'centaur' mode, which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use (defaults to main model for task).
@@ -222,6 +224,10 @@ def codex_cli(
             # disable codex analytics (both the chatgpt.com analytics-events
             # sink and the always-on Statsig OTel metrics to ab.chatgpt.com)
             toml_config["analytics"] = {"enabled": False}
+
+            # enable the /goal feature (get_goal/set_goal tools)
+            if goals:
+                toml_config["features"] = {"goals": True}
 
             # register mcp servers (combine static configs with bridged tools)
             all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
