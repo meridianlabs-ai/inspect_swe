@@ -1,4 +1,4 @@
-## Unreleased 
+## 0.2.56 (25 May 2026)
 
 - OpenCode: Install ripgrep for access to native skills.
 - Claude Code: Improved live event capture (no longer requires injection of spans into transcript).
