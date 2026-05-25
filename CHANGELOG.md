@@ -1,4 +1,4 @@
-## Changelog 
+## Unreleased 
 
 - OpenCode: Install ripgrep for access to native skills.
 - Claude Code (ACP): Use officially supported ACP client (@agentclientprotocol/claude-agent-acp)
