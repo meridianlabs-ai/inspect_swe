@@ -1028,9 +1028,7 @@ def _read_jsonl_file(path: Path) -> list[dict[str, Any]]:
                 try:
                     events.append(json.loads(line))
                 except json.JSONDecodeError as ex:
-                    logger.warning(
-                        "Skipping malformed JSONL line in %s: %s", path, ex
-                    )
+                    logger.warning("Skipping malformed JSONL line in %s: %s", path, ex)
     except OSError as ex:
         logger.warning("Failed to read JSONL file %s: %s", path, ex)
     return events
@@ -1082,7 +1080,9 @@ async def _load_agent_events(
     # <session_dir>/<session-stem>/subagents/agent-<agent_id>.jsonl.
     if not raw_events and session_file is not None and agent_id:
         agent_file = (
-            session_file.parent / session_file.stem / "subagents"
+            session_file.parent
+            / session_file.stem
+            / "subagents"
             / f"agent-{agent_id}.jsonl"
         )
         if agent_file.exists():
