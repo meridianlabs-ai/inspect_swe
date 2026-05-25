@@ -1,7 +1,5 @@
-import json
 import shlex
 import uuid
-from collections.abc import AsyncIterator
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
@@ -19,10 +17,7 @@ from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import (
-    ExecCompleted,
-    ExecRemoteAwaitableOptions,
-    ExecStderr,
-    ExecStdout,
+    ExecRemoteStreamingOptions,
     StoreModel,
     store,
     store_as,
@@ -30,13 +25,18 @@ from inspect_ai.util import (
 from inspect_ai.util import (
     sandbox as sandbox_env,
 )
-from inspect_ai.util._sandbox import (
-    ExecRemoteProcess,
-)
+from inspect_ai.util._span import current_span_id
 from pydantic import Field
 from pydantic_core import to_json
 
-from inspect_swe._claude_code._events.spans import annotate_agent_spans
+from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+from inspect_swe._claude_code._events.stream import (
+    ExitEvent,
+    JsonlEvent,
+    JsonlParseError,
+    StderrEvent,
+    claude_code_event_stream,
+)
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.path import join_path
 
@@ -155,6 +155,15 @@ def claude_code(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
+        # Real-time consumer of Claude Code JSONL output. Doubles as the
+        # bridge's ModelEventSink — the bridge hands us every ModelEvent
+        # instead of emitting it to the transcript, and we attribute each
+        # to the correct agent span using parent_tool_use_id from the JSONL
+        # stream. Captures the outer span_id (this @agent's span) so
+        # sub-agent spans we discover from JSONL can be parented correctly.
+        # See live_consumer.py for full mechanism.
+        consumer = LiveConsumer(outer_span_id=current_span_id())
+
         async with sandbox_agent_bridge(
             state,
             model=model,
@@ -164,6 +173,7 @@ def claude_code(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
+            model_event_sink=consumer,
         ) as bridge:
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
@@ -266,98 +276,128 @@ def claude_code(
                 agent_prompt = prompt
                 attempt_count = 0
                 uncaught_error_count = 0
-                while True:
-                    # resume previous conversation
-                    if (
-                        has_assistant_response
-                        or attempt_count > 0
-                        or uncaught_error_count > 0
-                    ):
-                        agent_cmd = (
-                            [claude_binary, "--resume", session_id]
-                            + cmd
-                            + ["--", agent_prompt]
-                        )
-                    else:
-                        agent_cmd = (
-                            [claude_binary, "--session-id", session_id]
-                            + cmd
-                            + ["--", agent_prompt]
-                        )
-
-                    # run agent
-                    result = await sbox.exec_remote(
-                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
-                        + agent_cmd,
-                        options=ExecRemoteAwaitableOptions(
-                            cwd=cwd,
-                            env=agent_env,
-                            user=user,
-                            concurrency=False,
-                        ),
-                        stream=False,
-                    )
-                    # track debug output
-                    debug_output.append(result.stderr)
-
-                    # if we are in debug mode then save the jsonl in the store
-                    if debug:
-                        cc_debug = store_as(ClaudeCodeDebug)
-                        if result.stderr:
-                            cc_debug.stderr.append(result.stderr)
-                        if result.stdout:
-                            cc_debug.stdout.append(result.stdout)
-
-                    # decorate bridge events with agent spans
-                    annotate_agent_spans(result.stdout)
-
-                    # raise for error
-                    if not result.success:
-                        # if claude code exits with code 1 and no stderr, this
-                        # means an uncaught exception reached the top of its
-                        # main loop -- we treat this as a scaffold bug and
-                        # retry/resume a configurable number of times
+                try:
+                    while True:
+                        # resume previous conversation
                         if (
-                            result.returncode == 1
-                            and len(result.stderr.strip()) == 0
-                            and retry_uncaught_errors is not None
-                            and uncaught_error_count < retry_uncaught_errors
+                            has_assistant_response
+                            or attempt_count > 0
+                            or uncaught_error_count > 0
                         ):
-                            uncaught_error_count += 1
-                            continue
-
-                        # otherwise this is a hard failure
-                        raise RuntimeError(
-                            f"Error executing claude code agent {result.returncode}: {result.stderr}"
-                        )
-
-                    # reset uncaught error counter
-                    uncaught_error_count = 0
-
-                    # exit if we are at max_attempts
-                    attempt_count += 1
-                    if attempt_count >= attempts.attempts:
-                        break
-
-                    # score this attempt
-                    answer_scores = await score(state)
-
-                    # break if we score 'correct'
-                    if attempts.score_value(answer_scores[0].value) == 1.0:
-                        break
-
-                    # otherwise update prompt with incorrect message and continue
-                    else:
-                        if callable(attempts.incorrect_message):
-                            if not is_callable_coroutine(attempts.incorrect_message):
-                                raise ValueError(
-                                    "The incorrect_message function must be async."
-                                )
-                            agent_prompt = await attempts.incorrect_message(
-                                state, answer_scores
+                            agent_cmd = (
+                                [claude_binary, "--resume", session_id]
+                                + cmd
+                                + ["--", agent_prompt]
                             )
                         else:
-                            agent_prompt = attempts.incorrect_message
+                            agent_cmd = (
+                                [claude_binary, "--session-id", session_id]
+                                + cmd
+                                + ["--", agent_prompt]
+                            )
+
+                        # Fresh consumer state per attempt — agent-tree maps
+                        # don't carry across Claude Code subprocess restarts.
+                        # reset() also closes any spans the previous attempt
+                        # left open (e.g. Claude exited mid-Task before the
+                        # tool_result), so SpanBegin/End stay balanced.
+                        consumer.reset()
+
+                        # launch Claude Code in streaming mode; drain stdout in
+                        # real time so the consumer emits agent spans and the
+                        # bridge resolver sees Task prompts as they appear.
+                        proc = await sbox.exec_remote(
+                            cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
+                            + agent_cmd,
+                            options=ExecRemoteStreamingOptions(
+                                cwd=cwd,
+                                env=agent_env,
+                                user=user,
+                                concurrency=False,
+                            ),
+                            stream=True,
+                        )
+
+                        cc_debug = store_as(ClaudeCodeDebug) if debug else None
+                        stderr_data = ""
+                        exit_code = 0
+
+                        async for cc_event in claude_code_event_stream(proc):
+                            if isinstance(cc_event, JsonlEvent):
+                                consumer.process_jsonl_line(cc_event.raw)
+                                if cc_debug is not None:
+                                    cc_debug.stdout.append(cc_event.line)
+                            elif isinstance(cc_event, JsonlParseError):
+                                debug_output.append(
+                                    f"JSONL parse error: {cc_event.line}"
+                                )
+                            elif isinstance(cc_event, StderrEvent):
+                                stderr_data += cc_event.data
+                                if cc_debug is not None:
+                                    cc_debug.stderr.append(cc_event.data)
+                            elif isinstance(cc_event, ExitEvent):
+                                exit_code = cc_event.code
+
+                        debug_output.append(stderr_data)
+
+                        # raise for error
+                        if exit_code != 0:
+                            # if claude code exits with code 1 and no stderr,
+                            # this means an uncaught exception reached the top
+                            # of its main loop -- we treat this as a scaffold
+                            # bug and retry/resume a configurable number of
+                            # times
+                            if (
+                                exit_code == 1
+                                and len(stderr_data.strip()) == 0
+                                and retry_uncaught_errors is not None
+                                and uncaught_error_count < retry_uncaught_errors
+                            ):
+                                uncaught_error_count += 1
+                                continue
+
+                            # otherwise this is a hard failure
+                            raise RuntimeError(
+                                f"Error executing claude code agent {exit_code}: {stderr_data}"
+                            )
+
+                        # reset uncaught error counter
+                        uncaught_error_count = 0
+
+                        # exit if we are at max_attempts
+                        attempt_count += 1
+                        if attempt_count >= attempts.attempts:
+                            break
+
+                        # score this attempt
+                        answer_scores = await score(state)
+
+                        # break if we score 'correct'
+                        if attempts.score_value(answer_scores[0].value) == 1.0:
+                            break
+
+                        # otherwise update prompt with incorrect message and continue
+                        else:
+                            if callable(attempts.incorrect_message):
+                                if not is_callable_coroutine(
+                                    attempts.incorrect_message
+                                ):
+                                    raise ValueError(
+                                        "The incorrect_message function must be async."
+                                    )
+                                agent_prompt = await attempts.incorrect_message(
+                                    state, answer_scores
+                                )
+                            else:
+                                agent_prompt = attempts.incorrect_message
+                finally:
+                    # Close any spans the final attempt left open — covers
+                    # both normal exit (last subprocess ran cleanly but a
+                    # sub-agent never returned its tool_result) and
+                    # exception exit (RuntimeError above, or anything else
+                    # raised inside the loop). Without this, the agent
+                    # span tree leaks past the @agent boundary.
+                    consumer.reset()
 
                 # trace debug info
                 debug_output.insert(0, "Claude Code Debug Output:")
@@ -456,38 +496,3 @@ async def run_claude_code_centaur(
 class ClaudeCodeDebug(StoreModel):
     stderr: list[str] = Field(default_factory=list)
     stdout: list[str] = Field(default_factory=list)
-
-
-async def _jsonl_stream(
-    proc: ExecRemoteProcess,
-    debug_output: list[str],
-) -> AsyncIterator[dict[str, Any]]:
-    """Line-buffer stdout chunks from exec_remote, yield parsed JSONL dicts."""
-    line_buffer = ""
-    exit_code = 0
-    async for event in proc:
-        if isinstance(event, ExecStdout):
-            line_buffer += event.data
-            while "\n" in line_buffer:
-                line, line_buffer = line_buffer.split("\n", 1)
-                line = line.strip()
-                if line:
-                    try:
-                        yield json.loads(line)
-                    except json.JSONDecodeError:
-                        debug_output.append(f"JSONL parse error: {line}")
-        elif isinstance(event, ExecStderr):
-            debug_output.append(event.data)
-        elif isinstance(event, ExecCompleted):
-            exit_code = event.exit_code
-    # Handle trailing partial line
-    if line_buffer.strip():
-        try:
-            yield json.loads(line_buffer.strip())
-        except json.JSONDecodeError:
-            debug_output.append(f"JSONL parse error (trailing): {line_buffer}")
-    if exit_code != 0:
-        tail = debug_output[-100:] if len(debug_output) > 100 else debug_output
-        raise RuntimeError(
-            f"Error executing claude code agent {exit_code}: {' '.join(tail)}"
-        )
