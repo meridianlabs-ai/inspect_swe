@@ -1,4 +1,3 @@
-import json
 import shlex
 import uuid
 from pathlib import Path
@@ -18,10 +17,7 @@ from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import (
-    ExecCompleted,
     ExecRemoteStreamingOptions,
-    ExecStderr,
-    ExecStdout,
     StoreModel,
     store,
     store_as,
@@ -34,6 +30,13 @@ from pydantic import Field
 from pydantic_core import to_json
 
 from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+from inspect_swe._claude_code._events.stream import (
+    ExitEvent,
+    JsonlEvent,
+    JsonlParseError,
+    StderrEvent,
+    claude_code_event_stream,
+)
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.path import join_path
 
@@ -152,11 +155,13 @@ def claude_code(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
-        # Real-time consumer of Claude Code JSONL output. Captures the outer
-        # span_id (this @agent's span) so sub-agent spans we discover from
-        # JSONL can be parented correctly, and exposes a resolve_span()
-        # callback used by the bridge to attribute each model call to the
-        # right agent span. See live_consumer.py for full mechanism.
+        # Real-time consumer of Claude Code JSONL output. Doubles as the
+        # bridge's ModelEventSink — the bridge hands us every ModelEvent
+        # instead of emitting it to the transcript, and we attribute each
+        # to the correct agent span using parent_tool_use_id from the JSONL
+        # stream. Captures the outer span_id (this @agent's span) so
+        # sub-agent spans we discover from JSONL can be parented correctly.
+        # See live_consumer.py for full mechanism.
         consumer = LiveConsumer(outer_span_id=current_span_id())
 
         async with sandbox_agent_bridge(
@@ -168,7 +173,7 @@ def claude_code(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
-            span_id_resolver=consumer.resolve_span,
+            model_event_sink=consumer,
         ) as bridge:
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
@@ -222,14 +227,6 @@ def claude_code(
                 cmd.append(",".join(disallowed_tools))
 
             prompt, has_assistant_response = build_user_prompt(state.messages)
-
-            # Seed the consumer with the main agent's first user prompt.
-            # input[0] in every main-agent bridge request is this prompt
-            # (stable across attempts because --resume preserves the
-            # original first user message), so the resolver can
-            # short-circuit main-agent calls without hitting its bounded
-            # wait.
-            consumer.set_main_prompt(prompt)
 
             # resolve sandbox
             sbox = sandbox_env(sandbox)
@@ -323,45 +320,23 @@ def claude_code(
 
                         cc_debug = store_as(ClaudeCodeDebug) if debug else None
                         stderr_data = ""
-                        line_buffer = ""
                         exit_code = 0
 
-                        async for event in proc:
-                            if isinstance(event, ExecStdout):
-                                line_buffer += event.data
-                                while "\n" in line_buffer:
-                                    line, line_buffer = line_buffer.split("\n", 1)
-                                    line = line.strip()
-                                    if not line:
-                                        continue
-                                    try:
-                                        raw = json.loads(line)
-                                    except json.JSONDecodeError:
-                                        debug_output.append(
-                                            f"JSONL parse error: {line}"
-                                        )
-                                        continue
-                                    consumer.process_jsonl_line(raw)
-                                    if cc_debug is not None:
-                                        cc_debug.stdout.append(line)
-                            elif isinstance(event, ExecStderr):
-                                stderr_data += event.data
+                        async for cc_event in claude_code_event_stream(proc):
+                            if isinstance(cc_event, JsonlEvent):
+                                consumer.process_jsonl_line(cc_event.raw)
                                 if cc_debug is not None:
-                                    cc_debug.stderr.append(event.data)
-                            elif isinstance(event, ExecCompleted):
-                                exit_code = event.exit_code
-
-                        # process any trailing partial line
-                        if line_buffer.strip():
-                            try:
-                                raw = json.loads(line_buffer.strip())
-                                consumer.process_jsonl_line(raw)
-                                if cc_debug is not None:
-                                    cc_debug.stdout.append(line_buffer.strip())
-                            except json.JSONDecodeError:
+                                    cc_debug.stdout.append(cc_event.line)
+                            elif isinstance(cc_event, JsonlParseError):
                                 debug_output.append(
-                                    f"JSONL parse error (trailing): {line_buffer}"
+                                    f"JSONL parse error: {cc_event.line}"
                                 )
+                            elif isinstance(cc_event, StderrEvent):
+                                stderr_data += cc_event.data
+                                if cc_debug is not None:
+                                    cc_debug.stderr.append(cc_event.data)
+                            elif isinstance(cc_event, ExitEvent):
+                                exit_code = cc_event.code
 
                         debug_output.append(stderr_data)
 

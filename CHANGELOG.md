@@ -1,6 +1,7 @@
 ## Unreleased 
 
 - OpenCode: Install ripgrep for access to native skills.
+- Claude Code: Improved live event capture (no longer requires injection of spans into transcript).
 - Claude Code (ACP): Use officially supported ACP client (@agentclientprotocol/claude-agent-acp)
 
 ## 0.2.55 (16 May 2026)

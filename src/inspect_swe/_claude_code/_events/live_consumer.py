@@ -1,58 +1,80 @@
 """Real-time consumer of Claude Code JSONL output.
 
-Emits `SpanBeginEvent`/`SpanEndEvent` (for agent boundaries) and
-`CompactionEvent` (for compact-boundary system events) to the transcript
-as the JSONL stream arrives, and resolves per-request `span_id` for the
-inspect bridge so each emitted `ModelEvent` is attributed to the correct
-agent span.
+Two responsibilities, both driven from the same `LiveConsumer` instance:
 
-The agent-tree is reconstructed from `Task`/`Agent` tool_use blocks in
-assistant events and their matching `tool_result` blocks in user events.
-The `parent_tool_use_id` field on each JSONL event tells us the enclosing
-agent context (None for the main agent, the spawning Task's tool_use_id
-for sub-agents). That's enough to compute correct `parent_id`s for span
-emission and to handle nested sub-agents.
+1. **`ModelEventSink`** — installed on the agent bridge so the bridge hands
+   us every `ModelEvent` for routing instead of emitting it to the transcript
+   itself. We attribute each event to the correct agent span at `on_pending`
+   time, then forward to the transcript with the attributed span_id.
 
-The resolver correlates bridge requests to agent spans via the first user
-message's text content. Every sub-agent's `input[0]` is the prompt the
-parent passed to its `Task` tool — sent verbatim by Claude Code, and
-stable across all of the sub-agent's subsequent calls because Anthropic's
-conversation history always begins with the initial user message.
+   **Attribution mechanism (substring match against pending sub-agents)**:
 
-Two refinements keep correlation correct and cheap:
+   Claude Code 2.1.x makes sub-agents opaque in JSONL — sub-agent model
+   calls have no `parent_tool_use_id`, no separate `session_id`, and no
+   `isSidechain` marker. So we cannot use JSONL alone to drive span
+   open/close for sub-agents.
 
-* Open agents are indexed by `tool_use_id` (authoritative key) with a
-  secondary `prompt → [tool_use_id, ...]` index. When an agent closes,
-  both indexes are pruned, so a stale closed-span never gets returned.
-  Duplicate concurrent prompts are detected (list length > 1) and
-  treated as ambiguous — we fall back to outer span with a warning.
+   When a bridge call's output contains Task/Agent tool_calls (i.e. the
+   parent agent is spawning sub-agents), `on_complete` does two things,
+   synchronously, *before* the bridge response is sent back to Claude
+   Code:
 
-* The main agent's first user prompt is seeded via `set_main_prompt()`
-  so its calls match immediately. As an additional safeguard, any
-  request with `len(input_messages) > 1` (i.e. not a first call) is
-  resolved immediately without the bounded wait, since the
-  sub-agent-first-call race window only applies when `len(input) == 1`.
+     1. Open an agent `SpanBeginEvent` for each Task/Agent tool_use, with
+        `parent_id` = the parent call's span_id and span_id =
+        `agent-{tool_use_id}`.
+     2. Register the sub-agent in `_pending_subagents` (mapping
+        `tool_use_id → prompt`).
+
+   When sub-agent's first bridge call arrives, `_attribute` scans its
+   first user message text for any pending sub-agent prompt as a
+   substring. A single hit identifies the sub-agent and we look up its
+   already-open span. Zero hits → main-agent call (outer span). Multiple
+   hits (rare; concurrent sub-agents with substring-overlapping prompts)
+   → outer span as defensive default.
+
+   Doing both open + register in `on_complete` (rather than from JSONL)
+   eliminates a race: the sub-agent's bridge call arrives at the bridge
+   server ~1–2 seconds before our stdout reader processes the parent's
+   `assistant` JSONL line, so a JSONL-driven span open would miss every
+   first call.
+
+   This works for every sub-agent call (not just the first) because
+   Claude Code re-sends the sub-agent's full conversation history on
+   each request, with the original Task prompt always at `input[0]`.
+   `_pending_subagents` and the open span are cleared in `_handle_user`
+   when the matching `tool_result` arrives.
+
+2. **JSONL consumer** — `process_jsonl_line` reads each line printed by
+   Claude Code's `--output-format stream-json` and emits agent
+   `SpanEndEvent` (on `tool_result` for Task/Agent), and emits
+   `CompactionEvent` for `compact_boundary` system events. Span
+   *opening* is no longer driven from JSONL — see callback (1) above.
 """
 
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
 
-import anyio
 from inspect_ai.event import CompactionEvent, SpanBeginEvent, SpanEndEvent
+from inspect_ai.event._model import ModelEvent
 from inspect_ai.log import transcript
 from inspect_ai.model._chat_message import (
     ChatMessage,
     ChatMessageSystem,
     ChatMessageUser,
 )
+from inspect_ai.model._model import ModelEventSink
+
+from .toolview import tool_view
 
 logger = getLogger(__name__)
 
 
-# Bounded wait when a sub-agent's first call beats our JSONL processing.
-# JSONL polling cycles at ~500ms, so we wait one cycle plus a small margin.
-_RESOLVE_WAIT_SECONDS = 0.6
+# Minimum prompt length to consider for substring matching. Short prompts
+# could accidentally appear in unrelated content; this guards against false
+# positives while still catching every plausible Task prompt (which are
+# typically full sentences).
+_MIN_PROMPT_LENGTH = 16
 
 
 @dataclass
@@ -60,293 +82,177 @@ class _OpenAgent:
     """An agent span currently open (Task tool_use seen, no tool_result yet)."""
 
     span_id: str
-    prompt: str
 
 
-class LiveConsumer:
-    """Drains Claude Code JSONL in real time and resolves bridge span_ids.
+class LiveConsumer(ModelEventSink):
+    """Sink + JSONL consumer.
 
-    Two callbacks form the contract:
-
-    - `process_jsonl_line(raw)` is called from the main task as each JSONL
-      line arrives. It updates internal state and emits agent SpanBegin/End
-      and CompactionEvent directly to the transcript.
-
-    - `resolve_span(input_messages)` is called from the bridge's per-request
-      task. It returns the span_id this request belongs to (always
-      non-None: a known sub-agent span, or the outer span as a fallback).
+    The bridge calls `on_pending` / `on_complete` for every `ModelEvent`.
+    The runner loop calls `process_jsonl_line` for every JSONL line printed
+    by Claude Code.
     """
 
     def __init__(self, outer_span_id: str | None) -> None:
         self.outer_span_id = outer_span_id
 
-        # First user prompt of the main agent. Set via set_main_prompt()
-        # after build_user_prompt() in claude_code.py. Used by resolve_span
-        # to short-circuit main-agent calls without hitting the wait.
-        self._main_prompt: str | None = None
-
-        # tool_use_id → _OpenAgent for currently-open agent spans.
-        # Authoritative — tool_use_id is the unique key Claude Code uses.
+        # tool_use_id → _OpenAgent for currently-open agent spans (Task/Agent
+        # tool_use blocks we've SpanBegin'd, not yet SpanEnd'd).
         self._open_agents: dict[str, _OpenAgent] = {}
 
-        # prompt → list of currently-open agent tool_use_ids with that
-        # prompt. Secondary index for resolver lookup. List (not single
-        # value) so we can detect duplicate concurrent prompts as
-        # ambiguous rather than silently returning a stale or wrong span.
-        self._prompt_to_open_agents: dict[str, list[str]] = {}
+        # tool_use_id → Task prompt for sub-agents currently RUNNING. Populated
+        # in `on_complete` when a parent's output contains Task/Agent tool_calls
+        # (synchronously, before the response is sent back to Claude Code, so
+        # the entry is ready before any sub-agent can make a bridge call).
+        # Cleared in `_handle_user` when the matching tool_result arrives.
+        self._pending_subagents: dict[str, str] = {}
 
-        # Signaled after each JSONL line is processed. Consumed by
-        # resolve_span() when it needs to wait for the parent's JSONL line
-        # to arrive before a sub-agent's first bridge call can be
-        # resolved. Replaced with a fresh Event on each notify
-        # (anyio.Event is set-once).
-        self._jsonl_progress = anyio.Event()
-
-    def set_main_prompt(self, prompt: str) -> None:
-        """Seed the main agent's first user prompt.
-
-        Call this after building the prompt that's passed to Claude Code
-        on the command line. The main agent's `input[0]` is always this
-        prompt (stable across attempts because `--resume` preserves the
-        original first user message). Seeding lets the resolver return
-        the outer span_id immediately for main-agent calls instead of
-        timing out on the bounded wait.
-        """
-        self._main_prompt = prompt
+        # Track which event objects we've already _event()'d so on_complete
+        # knows whether to emit _event_updated (yes if we emitted) vs swallow
+        # (no if we didn't — shouldn't happen with current logic but defensive).
+        self._emitted_events: set[int] = set()
 
     def reset(self) -> None:
-        """Close all open agent spans and clear state.
+        """Close any open spans and clear per-attempt state.
 
-        Called between Claude Code subprocess restarts (retry attempts)
-        and in a `finally` after the retry loop. Emits a `SpanEndEvent`
-        for every still-open agent span (innermost first) so the
-        transcript stays balanced even if Claude Code crashed mid-flight
-        before its `tool_result`s were written. Without this, ACP depth
-        tracking and other span-aware consumers would stay stuck inside
-        a phantom sub-agent.
-
-        `outer_span_id` and `_main_prompt` are preserved — they describe
-        the enclosing `@agent` context, which spans all attempts.
+        Called between Claude Code subprocess restarts (retry attempts) and
+        in a `finally` after the retry loop. Emits `SpanEndEvent` for every
+        still-open agent span (innermost first) so the transcript stays
+        balanced even if Claude Code crashed before its tool_result blocks
+        were written.
         """
         for tool_use_id in reversed(list(self._open_agents.keys())):
             agent = self._open_agents.pop(tool_use_id)
             transcript()._event(SpanEndEvent(id=agent.span_id))
-        # _open_agents is now empty; clear the secondary index too.
-        self._prompt_to_open_agents.clear()
+        self._pending_subagents.clear()
+        self._emitted_events.clear()
+
+    # ------------------------------------------------------------------
+    # ModelEventSink callbacks (called from the bridge)
+    # ------------------------------------------------------------------
+
+    def on_pending(self, event: ModelEvent) -> None:
+        event.span_id = self._attribute(event.input)
+        self._emitted_events.add(id(event))
+        transcript()._event(event)
+
+    def on_complete(self, event: ModelEvent) -> None:
+        msg = event.output.message if event.output else None
+        if msg is not None and msg.tool_calls:
+            # Attach custom rendering for Claude Code's built-in tools.
+            # inspect_ai's `tool_call_view` only handles tools registered as
+            # ToolDefs; Claude Code's built-in tools (Write, Task, Agent,
+            # ExitPlanMode, …) aren't, so we fill in our own views here
+            # before `_event_updated` lets the viewer render the call.
+            for tc in msg.tool_calls:
+                if tc.view is None:
+                    custom = tool_view(tc.function, tc.arguments or {})
+                    if custom is not None:
+                        tc.view = custom
+
+            # If this call's response launched any Task/Agent sub-agents,
+            # open their spans and register pending entries NOW —
+            # synchronously, before the bridge response is sent back to
+            # Claude Code. By the time any sub-agent makes its first bridge
+            # call, both `_open_agents` and `_pending_subagents` are ready.
+            parent_span_id = event.span_id or self.outer_span_id
+            for tc in msg.tool_calls:
+                if tc.function not in ("Task", "Agent"):
+                    continue
+                args = tc.arguments or {}
+                prompt = args.get("prompt")
+                if not isinstance(prompt, str) or not prompt:
+                    continue
+                if tc.id in self._open_agents:
+                    # idempotent — defensive against retries
+                    continue
+                agent_span_id = f"agent-{tc.id}"
+                self._open_agents[tc.id] = _OpenAgent(span_id=agent_span_id)
+                self._pending_subagents[tc.id] = prompt
+                span_name = args.get("subagent_type") or args.get("name") or "agent"
+                description = args.get("description") or ""
+                transcript()._event(
+                    SpanBeginEvent(
+                        id=agent_span_id,
+                        parent_id=parent_span_id,
+                        type="agent",
+                        name=str(span_name),
+                        metadata={"description": description} if description else None,
+                    )
+                )
+
+        if id(event) in self._emitted_events:
+            self._emitted_events.discard(id(event))
+            transcript()._event_updated(event)
+
+    # ------------------------------------------------------------------
+    # JSONL consumer
+    # ------------------------------------------------------------------
 
     def process_jsonl_line(self, raw: dict[str, Any]) -> None:
         """Process one raw JSONL event from Claude Code.
 
-        Called from the main task; no awaits — safe to call from sync code
-        too.
+        Called from the runner loop as each JSONL line arrives.
+
+        Note: sub-agent span *opening* is no longer driven from JSONL —
+        it happens in `on_complete` (synchronous with the parent's bridge
+        call, ahead of the race with stdout-buffered JSONL arrival). We
+        only consume `user` (for tool_result → span close) and `system`
+        (for compaction) events here.
         """
         event_type = raw.get("type")
-
-        if event_type == "assistant":
-            self._handle_assistant(raw)
-        elif event_type == "user":
+        if event_type == "user":
             self._handle_user(raw)
         elif event_type == "system":
             self._handle_system(raw)
 
-        # Wake any resolver waiting for new agent boundaries.
-        prev = self._jsonl_progress
-        self._jsonl_progress = anyio.Event()
-        prev.set()
+    # ------------------------------------------------------------------
+    # Attribution
+    # ------------------------------------------------------------------
 
-    async def resolve_span(self, input_messages: list[ChatMessage]) -> str | None:
-        """Return the span_id this bridge request belongs to.
+    def _attribute(self, input_messages: list[ChatMessage]) -> str | None:
+        """Resolve the span_id for an incoming bridge call.
 
-        Resolution order:
-
-        1. Empty input → outer span (defensive).
-        2. Find the first ChatMessageUser, skipping any leading
-           ChatMessageSystem entries (the bridge prepends one for any
-           API request with a `system` field — Anthropic, OpenAI Chat,
-           OpenAI Responses, Google all do this). Claude Code uses
-           `--append-system-prompt`, so every request has at least one
-           leading system message. If there's no user message at all →
-           outer span (defensive).
-        3. Seeded main prompt match → outer span (immediate).
-        4. Open sub-agent match by prompt → that sub-agent's span
-           (immediate; ambiguity falls back to outer with warning).
-        5. Subsequent call (any messages after the first user) → outer
-           span (immediate; the race window only applies to a sub-agent's
-           very first bridge call).
-        6. Bounded wait for a matching sub-agent prompt to appear in our
-           map (sub-agent's first call before our JSONL caught up).
-        7. Timeout → outer span (logged warning).
+        Substring-matches the first user message's text against currently-
+        pending sub-agent prompts. Exactly one match → that sub-agent's
+        span. Zero or multiple matches → outer span.
         """
-        if not input_messages:
+        if not self._pending_subagents:
             return self.outer_span_id
 
-        # Find the first user message past any leading system messages.
-        first_user_idx: int | None = None
-        for i, msg in enumerate(input_messages):
+        user_text = self._first_user_text(input_messages)
+        if not user_text:
+            return self.outer_span_id
+
+        matches: list[str] = []
+        for tool_use_id, prompt in self._pending_subagents.items():
+            if len(prompt) < _MIN_PROMPT_LENGTH:
+                continue
+            if prompt in user_text:
+                matches.append(tool_use_id)
+
+        if len(matches) == 1:
+            agent = self._open_agents.get(matches[0])
+            if agent is not None:
+                return agent.span_id
+        return self.outer_span_id
+
+    @staticmethod
+    def _first_user_text(input_messages: list[ChatMessage]) -> str | None:
+        """Return the text of the first ChatMessageUser past leading system messages."""
+        for msg in input_messages:
             if isinstance(msg, ChatMessageSystem):
                 continue
             if isinstance(msg, ChatMessageUser):
-                first_user_idx = i
+                return msg.text
             break
-        if first_user_idx is None:
-            return self.outer_span_id
-
-        prompt = input_messages[first_user_idx].text
-
-        # Main agent — known prompt, immediate.
-        if self._main_prompt is not None and prompt == self._main_prompt:
-            return self.outer_span_id
-
-        # Known sub-agent — immediate.
-        span_id = self._lookup_open_agent(prompt)
-        if span_id is not None:
-            return span_id
-
-        # Not a first call: a sub-agent's first call has exactly one
-        # message after the leading system prefix (the Task prompt).
-        # Anything more means the conversation has progressed past the
-        # first turn, so the race window for an unobserved sub-agent
-        # first-call is past — if we still don't recognize the prompt,
-        # it's not a sub-agent we know about. Fall back rather than
-        # waste the wait timeout.
-        if len(input_messages) > first_user_idx + 1:
-            return self.outer_span_id
-
-        # Bounded wait: rearm-aware loop that captures the current Event
-        # before checking the dict, so we never miss a notification.
-        # Also re-check main_prompt in case it gets seeded mid-wait.
-        with anyio.move_on_after(_RESOLVE_WAIT_SECONDS):
-            while True:
-                event = self._jsonl_progress
-                if self._main_prompt is not None and prompt == self._main_prompt:
-                    return self.outer_span_id
-                span_id = self._lookup_open_agent(prompt)
-                if span_id is not None:
-                    return span_id
-                await event.wait()
-
-        logger.warning(
-            "span_id_resolver: timed out resolving first-call prompt "
-            "(len=%d); falling back to outer span",
-            len(prompt),
-        )
-        return self.outer_span_id
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _lookup_open_agent(self, prompt: str) -> str | None:
-        """Look up the open agent span_id for a given prompt.
-
-        Returns:
-          - the span_id if exactly one open agent has this prompt.
-          - `outer_span_id` (with a logged warning) if multiple open
-            agents share this prompt — we can't disambiguate from
-            input[0] alone, so we fall back rather than guess.
-          - `None` if no open agent has this prompt.
-        """
-        ids = self._prompt_to_open_agents.get(prompt)
-        if not ids:
-            return None
-        if len(ids) > 1:
-            logger.warning(
-                "span_id_resolver: %d open agents share the same first-user "
-                "prompt — cannot disambiguate from request content alone; "
-                "falling back to outer span",
-                len(ids),
-            )
-            return self.outer_span_id
-        return self._open_agents[ids[0]].span_id
-
-    def _open_agent(
-        self,
-        tool_use_id: str,
-        span_id: str,
-        prompt: str,
-    ) -> None:
-        """Record a newly-opened agent in both indexes."""
-        self._open_agents[tool_use_id] = _OpenAgent(span_id=span_id, prompt=prompt)
-        self._prompt_to_open_agents.setdefault(prompt, []).append(tool_use_id)
-
-    def _close_agent(self, tool_use_id: str) -> _OpenAgent | None:
-        """Remove an agent from both indexes; return the _OpenAgent or None."""
-        agent = self._open_agents.pop(tool_use_id, None)
-        if agent is None:
-            return None
-        ids_list = self._prompt_to_open_agents.get(agent.prompt)
-        if ids_list is not None:
-            try:
-                ids_list.remove(tool_use_id)
-            except ValueError:
-                pass
-            if not ids_list:
-                self._prompt_to_open_agents.pop(agent.prompt, None)
-        return agent
+        return None
 
     # ------------------------------------------------------------------
     # JSONL event handlers
     # ------------------------------------------------------------------
 
-    def _handle_assistant(self, raw: dict[str, Any]) -> None:
-        """Look for Task tool_use blocks and open agent spans."""
-        message = raw.get("message", {})
-        content = message.get("content", [])
-        if not isinstance(content, list):
-            return
-
-        enclosing_parent_tool_use_id = raw.get("parent_tool_use_id")
-
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") != "tool_use":
-                continue
-            if block.get("name") not in ("Task", "Agent"):
-                continue
-
-            tool_use_id = block.get("id")
-            tool_input = block.get("input", {}) or {}
-            prompt = str(tool_input.get("prompt", ""))
-            if not tool_use_id or not prompt:
-                continue
-
-            agent_span_id = f"agent-{tool_use_id}"
-
-            # Parent span: the enclosing agent context for the assistant
-            # message that issued this Task call. None means main agent —
-            # the outer @agent span.
-            if enclosing_parent_tool_use_id:
-                parent_agent = self._open_agents.get(enclosing_parent_tool_use_id)
-                parent_id = (
-                    parent_agent.span_id if parent_agent else self.outer_span_id
-                )
-            else:
-                parent_id = self.outer_span_id
-
-            # Record before emitting so any racing resolver finds the
-            # mapping the moment _jsonl_progress is signaled.
-            self._open_agent(
-                tool_use_id=tool_use_id, span_id=agent_span_id, prompt=prompt
-            )
-
-            span_name = (
-                tool_input.get("name") or tool_input.get("subagent_type") or "agent"
-            )
-            description = tool_input.get("description") or ""
-
-            transcript()._event(
-                SpanBeginEvent(
-                    id=agent_span_id,
-                    parent_id=parent_id,
-                    type="agent",
-                    name=str(span_name),
-                    metadata={"description": description} if description else None,
-                )
-            )
-
     def _handle_user(self, raw: dict[str, Any]) -> None:
-        """Look for tool_result blocks that close open agent spans."""
+        """Close agent spans and clear pending-sub-agent entries for tool_result blocks."""
         message = raw.get("message", {})
         content = message.get("content", [])
         if not isinstance(content, list):
@@ -360,19 +266,29 @@ class LiveConsumer:
             tool_use_id = block.get("tool_use_id")
             if not tool_use_id:
                 continue
-            agent = self._close_agent(tool_use_id)
+            # Clear pending-subagent entry (no-op for non-Task tool_results).
+            self._pending_subagents.pop(tool_use_id, None)
+            agent = self._open_agents.pop(tool_use_id, None)
             if agent is None:
                 continue
             transcript()._event(SpanEndEvent(id=agent.span_id))
 
     def _handle_system(self, raw: dict[str, Any]) -> None:
-        """Emit CompactionEvent for compact_boundary system events."""
-        if raw.get("subtype") != "compact_boundary":
-            return
+        """Handle system events (only compaction boundaries today).
 
-        enclosing_parent_tool_use_id = raw.get("parent_tool_use_id")
-        if enclosing_parent_tool_use_id:
-            parent_agent = self._open_agents.get(enclosing_parent_tool_use_id)
+        Sub-agent lifecycle (`task_started`/`task_notification`) intentionally
+        ignored: registration happens in `on_complete` (synchronous with the
+        parent's bridge call, ahead of any race), and cleanup happens in
+        `_handle_user` on the matching tool_result.
+        """
+        subtype = raw.get("subtype")
+        if subtype == "compact_boundary":
+            self._handle_compact_boundary(raw)
+
+    def _handle_compact_boundary(self, raw: dict[str, Any]) -> None:
+        parent_tool_use_id = raw.get("parent_tool_use_id")
+        if parent_tool_use_id:
+            parent_agent = self._open_agents.get(parent_tool_use_id)
             span_id = parent_agent.span_id if parent_agent else self.outer_span_id
         else:
             span_id = self.outer_span_id
