@@ -7,6 +7,8 @@ Converts Claude Code events to Scout event types:
 - System events -> InfoEvent
 """
 
+import json
+import re
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -164,11 +166,57 @@ def to_model_event(
     )
 
 
+_PERSISTED_OUTPUT_PATH_RE = re.compile(r"Full output saved to:\s*(\S+)")
+
+
+def _resolve_persisted_output(content: str, session_file: Path | None) -> str:
+    """Inline the full content of a Claude Code <persisted-output> overflow file.
+
+    Claude Code 2.1.x truncates large tool results in JSONL to a ~2KB preview
+    wrapped in ``<persisted-output>`` and writes the full output to
+    ``<session-dir>/tool-results/<id>.txt``. If *content* is such a wrapper,
+    replace it with the file's contents; otherwise return unchanged.
+
+    Every failure path is silent (returns *content*) — false positives are
+    common (plan docs, prior conversation transcripts, anything that quotes
+    the wrapper), and a missing/corrupt overflow file just means the user
+    sees the original preview.
+    """
+    # Tight prefix anchor: prevents matching content that merely *quotes*
+    # the wrapper somewhere in the middle (plan files, replayed transcripts).
+    if not content.startswith("<persisted-output>"):
+        return content
+    match = _PERSISTED_OUTPUT_PATH_RE.search(content)
+    if not match:
+        return content
+    raw_path = match.group(1).strip()
+    # Reject paths containing escape sequences or real newlines — both
+    # indicate the regex captured past the intended path (e.g. content was
+    # JSON-encoded with literal "\n", or CLI text-wrapping inserted real
+    # newlines into the line). The path string is unrecoverable.
+    if "\\n" in raw_path or "\n" in raw_path or "\r" in raw_path:
+        return content
+    path = Path(raw_path)
+    if not path.is_file():
+        return content
+    if session_file is not None:
+        # Defensive: only follow paths under the session's project dir.
+        try:
+            path.resolve().relative_to(session_file.parent.resolve())
+        except ValueError:
+            return content
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return content
+
+
 def to_tool_event(
     tool_use_block: ContentToolUse,
     tool_result: dict[str, Any] | None,
     timestamp: datetime,
     completed: datetime | None = None,
+    session_file: Path | None = None,
 ) -> ToolEvent:
     """Create a ToolEvent from a tool_use block and its result.
 
@@ -177,6 +225,8 @@ def to_tool_event(
         tool_result: The tool_result content block from user message, or None
         timestamp: When the tool call started
         completed: When the tool call completed, or None
+        session_file: Path to the session JSONL (used to resolve
+            ``<persisted-output>`` overflow files for large tool results).
 
     Returns:
         ToolEvent object
@@ -197,7 +247,7 @@ def to_tool_event(
         if isinstance(result_content, list):
             result = cast(ToolResult, _extract_content_blocks(result_content))
         elif isinstance(result_content, str):
-            result = result_content
+            result = _resolve_persisted_output(result_content, session_file)
         else:
             result = str(result_content)
 
@@ -550,6 +600,7 @@ class _EventProcessor:
                 project_dir=None,  # Don't load agents for incomplete tools
                 subagent_events=None,
                 max_depth=0,
+                session_file=self.session_file,
                 agent_loader=self.agent_loader,
             )
             result.extend(span_events)
@@ -906,6 +957,7 @@ async def _create_tool_span_events(
             tool_result,
             tool_timestamp,
             completed=result_timestamp,
+            session_file=session_file,
         )
         tool_event.span_id = agent_span_id
         tool_event.agent_span_id = agent_span_id
@@ -954,12 +1006,31 @@ async def _create_tool_span_events(
             tool_result,
             tool_timestamp,
             completed=result_timestamp,
+            session_file=session_file,
         )
         tool_event.span_id = tool_span_id
         events.append(tool_event)
 
         events.append(to_span_end_event(tool_span_id, result_timestamp))
 
+    return events
+
+
+def _read_jsonl_file(path: Path) -> list[dict[str, Any]]:
+    """Read a JSONL file into a list of dicts, skipping malformed lines."""
+    events: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError as ex:
+                    logger.warning("Skipping malformed JSONL line in %s: %s", path, ex)
+    except OSError as ex:
+        logger.warning("Failed to read JSONL file %s: %s", path, ex)
     return events
 
 
@@ -992,16 +1063,33 @@ async def _load_agent_events(
 
     raw_events: list[dict[str, Any]] | None = None
 
-    # Use stream-provided events (inline subagent events from stdout).
-    # Note: subagent_events is keyed by sessionId, not agentId.
-    # In streaming mode, we collect all buffered events for this tool since
-    # they all belong to this agent (one subagent session per Task tool).
+    # Use stream-provided events (inline subagent events from stdout, or
+    # pre-2.1.x session files where sub-agent events are inlined in the
+    # main file under isSidechain=true).
+    # subagent_events is keyed by sessionId; collect all buffered events
+    # for this tool since they all belong to this agent (one subagent
+    # session per Task tool).
     if subagent_events:
         all_events = []
         for session_events in subagent_events.values():
             all_events.extend(session_events)
         if all_events:
             raw_events = all_events
+
+    # 2.1.x layout: sub-agent activity lives in a sibling file at
+    # <session_dir>/<session-stem>/subagents/agent-<agent_id>.jsonl.
+    if not raw_events and session_file is not None and agent_id:
+        agent_file = (
+            session_file.parent
+            / session_file.stem
+            / "subagents"
+            / f"agent-{agent_id}.jsonl"
+        )
+        if agent_file.exists():
+            raw_events = _read_jsonl_file(agent_file)
+        # The meta sidecar (agent-<id>.meta.json) carries agentType /
+        # description, but the caller already has those from the parent's
+        # tool_use arguments — no need to read it here.
 
     if not raw_events:
         return []
@@ -1019,12 +1107,16 @@ async def _load_agent_events(
     # Filter to conversation events
     conversation_events = get_conversation_events(flat_events)
 
-    # Convert to Scout events, with bounded recursion for nested subagents
+    # Convert to Scout events, with bounded recursion for nested subagents.
+    # Pass session_file so nested sub-agents (Agent spawning Agent) can find
+    # their own files under the same subagents/ directory.
     next_depth = max_depth - 1
     result: list[Event] = []
     async for event in process_parsed_events(
         conversation_events,
+        project_dir=project_dir,
         max_depth=next_depth,
+        session_file=session_file,
     ):
         result.append(event)
     return result
