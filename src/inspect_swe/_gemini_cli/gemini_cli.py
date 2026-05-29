@@ -284,6 +284,11 @@ def build_gemini_settings(mcp_servers: Sequence[MCPServerConfig]) -> str:
     """Build Gemini CLI settings.json content (privacy + MCP server configs)."""
     settings: dict[str, Any] = {
         "privacy": {"usageStatisticsEnabled": False},
+        # gemini-cli v0.13+ getAuthTypeFromEnv() maps GOOGLE_GEMINI_BASE_URL to
+        # AuthType.GATEWAY, which validateAuthMethod() rejects in non-interactive
+        # mode ("Invalid auth method selected"). Pinning selectedType here
+        # short-circuits the env-based inference.
+        "security": {"auth": {"selectedType": "gemini-api-key"}},
     }
     if mcp_servers:
         mcp_servers_config: dict[str, Any] = {}
