@@ -2,7 +2,7 @@ import shlex
 from logging import getLogger
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Literal, Sequence
+from typing import Any, Literal, Sequence, cast
 
 from inspect_ai.agent import (
     Agent,
@@ -19,6 +19,7 @@ from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import SandboxEnvironment, store
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
+from typing_extensions import Unpack
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
@@ -30,13 +31,21 @@ from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
 from .agentbinary import codex_cli_binary_source
+from .config import (
+    CodexDeprecatedArgs,
+    CodexWebSearch,
+    codex_cli_config_overrides,
+    codex_config_options,
+    resolve_codex_deprecated_args,
+    resolve_codex_web_search,
+)
 
 logger = getLogger(__file__)
 
 
 @agent
 def codex_cli(
-    name: str = "Codex CLI",
+    name: str = "codex_cli",
     description: str = dedent("""
        Autonomous coding agent capable of writing, testing, debugging,
        and iterating on code across multiple languages.
@@ -46,7 +55,8 @@ def codex_cli(
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
-    disallowed_tools: list[Literal["web_search"]] | None = None,
+    web_search: CodexWebSearch = "live",
+    goals: bool = True,
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
@@ -60,6 +70,7 @@ def codex_cli(
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "latest"] | str = "auto",
     config_overrides: dict[str, str] | None = None,
+    **deprecated_args: Unpack[CodexDeprecatedArgs],
 ) -> Agent:
     """Codex CLI.
 
@@ -72,13 +83,14 @@ def codex_cli(
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
         system_prompt: Additional system prompt to append to default system prompt.
-        model_config: Model configuration profile (e.g. used to determine the system prompt).
+        model_config: Model configuration profile (e.g. used to determine the system prompt). Defaults to `gpt-5.1`.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
             tools available to the agent running in the sandbox.
-        disallowed_tools: Optionally disallow tools (currently only web_search).
+        web_search: Web search mode. Use "live" for live web search, "cached" for cached web search, or "disabled" to disable web search. Defaults to "live".
+        goals: Enable Codex goal tools (defaults to `True`).
         centaur: Run in 'centaur' mode, which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use (defaults to main model for task).
@@ -99,6 +111,7 @@ def codex_cli(
             - "x.x.x": Download and use a specific version of codex cli.
         config_overrides: Additional Codex CLI configuration overrides.
             Each key-value pair is passed as `-c key=value` to the CLI.
+        **deprecated_args: Deprecated compatibility arguments.
     """
     # resolve centaur
     if centaur is True:
@@ -113,8 +126,11 @@ def codex_cli(
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
-    # ensure disallowed_tools list
-    disallowed_tools = disallowed_tools or []
+    # resolve deprecated arguments
+    disallowed_tools = resolve_codex_deprecated_args(
+        cast(dict[str, Any], deprecated_args)
+    )
+    effective_web_search = resolve_codex_web_search(web_search, disallowed_tools)
 
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
@@ -207,14 +223,16 @@ def codex_cli(
                 ]
             )
 
-            # include web search if appropriate
-            if "web_search" not in disallowed_tools:
-                cmd.extend(["--enable", "web_search_request"])
-
             # apply config overrides
             if config_overrides:
                 for key, value in config_overrides.items():
                     cmd.extend(["-c", f"{key}={value}"])
+
+            # apply final Codex config overrides for explicit arguments
+            for key, value in codex_cli_config_overrides(
+                effective_web_search, goals
+            ).items():
+                cmd.extend(["-c", f"{key}={value}"])
 
             # build toml config
             toml_config: dict[str, Any] = {}
@@ -222,6 +240,7 @@ def codex_cli(
             # disable codex analytics (both the chatgpt.com analytics-events
             # sink and the always-on Statsig OTel metrics to ab.chatgpt.com)
             toml_config["analytics"] = {"enabled": False}
+            toml_config.update(codex_config_options(effective_web_search, goals))
 
             # register mcp servers (combine static configs with bridged tools)
             all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs

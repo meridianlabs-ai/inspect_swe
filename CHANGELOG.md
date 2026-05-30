@@ -1,3 +1,8 @@
+## Unreleased
+
+- Codex CLI: Add options for enabling/disabling `web_search` and `goals` tools (both default to enabled).
+- Codex CLI: Improve MCP tests to check for correct tool names and assert results.
+
 ## 0.2.56 (25 May 2026)
 
 - OpenCode: Install ripgrep for access to native skills.
