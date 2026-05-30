@@ -284,6 +284,16 @@ def build_gemini_settings(mcp_servers: Sequence[MCPServerConfig]) -> str:
     """Build Gemini CLI settings.json content (privacy + MCP server configs)."""
     settings: dict[str, Any] = {
         "privacy": {"usageStatisticsEnabled": False},
+        # Pin the auth type to the Gemini API key. As of recent gemini-cli
+        # releases, getAuthTypeFromEnv() resolves auth to the new
+        # AuthType.GATEWAY whenever GOOGLE_GEMINI_BASE_URL is set (which we set
+        # to point at the Inspect bridge) — and it checks that *before*
+        # GEMINI_API_KEY. But validateAuthMethod() has no case for GATEWAY, so
+        # non-interactive runs fail with "Invalid auth method selected." Forcing
+        # selectedType="gemini-api-key" uses the USE_GEMINI path (which passes
+        # validation since GEMINI_API_KEY is set) while still honoring
+        # GOOGLE_GEMINI_BASE_URL for the base URL, keeping traffic on the bridge.
+        "security": {"auth": {"selectedType": "gemini-api-key"}},
     }
     if mcp_servers:
         mcp_servers_config: dict[str, Any] = {}

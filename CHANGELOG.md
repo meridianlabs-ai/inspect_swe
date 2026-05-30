@@ -3,6 +3,7 @@
 - Codex CLI: Align the system prompt and tool set with the real bridged model. `model_config` now defaults to `None`, deriving Codex's `--model` slug from the actual model. Pass an explicit `model_config` to override.
 - Codex CLI: Add options for enabling/disabling `web_search` and `goals` tools (both default to enabled).
 - Codex CLI: Improve MCP tests to check for correct tool names and assert results.
+- Gemini CLI: Explicity set auth type to "gemini-api-key" (required for recent versions of the CLI).
 
 ## 0.2.56 (25 May 2026)
 
