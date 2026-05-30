@@ -61,9 +61,7 @@ class CodexCli(ACPAgent):
         self._disallowed_tools = resolve_codex_deprecated_args(
             {"disallowed_tools": deprecated_args.pop("disallowed_tools", None)}
         )
-        self._web_search = resolve_codex_web_search(
-            web_search, self._disallowed_tools
-        )
+        self._web_search = resolve_codex_web_search(web_search, self._disallowed_tools)
         self._goals = goals
         self._resolved_skills = read_skills(skills) if skills else None
         self._home_dir = home_dir

@@ -31,9 +31,7 @@ def resolve_codex_web_search(
     disallowed_tools: list[Literal["web_search"]] | None = None,
 ) -> CodexWebSearch:
     if web_search not in ("live", "cached", "disabled"):
-        raise ValueError(
-            "web_search must be one of 'live', 'cached', or 'disabled'."
-        )
+        raise ValueError("web_search must be one of 'live', 'cached', or 'disabled'.")
     if disallowed_tools and "web_search" in disallowed_tools:
         return "disabled"
     return cast(CodexWebSearch, web_search)

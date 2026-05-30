@@ -13,7 +13,13 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
+from inspect_ai.model import (
+    ChatMessageSystem,
+    GenerateFilter,
+    Model,
+    ModelName,
+    get_model,
+)
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import SandboxEnvironment, store
@@ -30,7 +36,11 @@ from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
-from .agentbinary import codex_cli_binary_source
+from .agentbinary import (
+    codex_binary_version,
+    codex_cli_binary_source,
+    codex_models_catalog,
+)
 from .config import (
     CodexDeprecatedArgs,
     CodexWebSearch,
@@ -39,6 +49,7 @@ from .config import (
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
+from .model_catalog import resolve_codex_model_slug
 
 logger = getLogger(__file__)
 
@@ -51,7 +62,7 @@ def codex_cli(
        and iterating on code across multiple languages.
     """),
     system_prompt: str | None = None,
-    model_config: str = "gpt-5.1",
+    model_config: str | None = None,
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
@@ -83,7 +94,13 @@ def codex_cli(
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
         system_prompt: Additional system prompt to append to default system prompt.
-        model_config: Model configuration profile (e.g. used to determine the system prompt). Defaults to `gpt-5.1`.
+        model_config: Codex model slug used to select the system prompt and tool
+            set (Codex picks these from its model catalog, independent of the real
+            model served via the bridge). Defaults to `None`, which derives the
+            slug from the real model so Codex's prompt/tooling aligns with what's
+            actually running (OpenAI models map to the matching catalog entry, or
+            the latest entry if not yet in the catalog; non-OpenAI models use
+            Codex's generic prompt). Pass an explicit slug to override.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
@@ -117,8 +134,8 @@ def codex_cli(
     if centaur is True:
         centaur = CentaurOptions()
 
-    # resolve model
-    model = f"inspect/{model}" if model is not None else "inspect"
+    # resolve bridge model (preserve original `model` for prompt/tool alignment)
+    bridge_model = f"inspect/{model}" if model is not None else "inspect"
 
     # resolve skills
     resolved_skills = read_skills(skills) if skills is not None else None
@@ -140,7 +157,7 @@ def codex_cli(
 
         async with sandbox_agent_bridge(
             state,
-            model=model,
+            model=bridge_model,
             model_aliases=model_aliases,
             filter=filter,
             sandbox=sandbox,
@@ -162,6 +179,18 @@ def codex_cli(
 
             # resolve sandbox
             sbox = sandbox_env(sandbox)
+
+            # align Codex's prompt/tooling to the real bridged model by deriving
+            # the `--model` slug from it (overridden by an explicit model_config).
+            real_model = ModelName(get_model(model))
+            codex_version = await codex_binary_version(sbox, codex_binary, user)
+            codex_catalog = await codex_models_catalog(codex_version)
+            codex_model = resolve_codex_model_slug(
+                real_model.name,
+                api=real_model.api,
+                catalog=codex_catalog,
+                override=model_config,
+            )
 
             # determine CODEX_HOME (default to whatever sandbox working dir is)
             if home_dir is None:
@@ -216,9 +245,10 @@ def codex_cli(
             # default cli args
             cmd.extend(
                 [
-                    # real model is passed to the bridge above, this just affects defaults e.g. system prompt
+                    # the real model is served via the bridge; this slug only
+                    # selects Codex's system prompt + tool set (see codex_model above)
                     "--model",
-                    model_config,
+                    codex_model,
                     "--dangerously-bypass-approvals-and-sandbox",
                 ]
             )
