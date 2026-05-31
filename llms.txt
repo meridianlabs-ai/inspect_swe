@@ -1,0 +1,19 @@
+# Inspect SWE
+
+> Software engineering agents for Inspect AI.
+
+## Home
+
+- [Home](https://meridianlabs-ai.github.io/inspect_swe/index.html.md)
+
+## Agents
+
+- [Claude Code](https://meridianlabs-ai.github.io/inspect_swe/claude_code.html.md)
+- [Codex CLI](https://meridianlabs-ai.github.io/inspect_swe/codex_cli.html.md)
+- [Gemini CLI](https://meridianlabs-ai.github.io/inspect_swe/gemini_cli.html.md)
+- [OpenCode](https://meridianlabs-ai.github.io/inspect_swe/opencode.html.md)
+- [Mini SWE Agent](https://meridianlabs-ai.github.io/inspect_swe/mini_swe_agent.html.md)
+
+## Reference
+
+- [Reference](https://meridianlabs-ai.github.io/inspect_swe/reference/index.html.md): Public API for inspect_swe.

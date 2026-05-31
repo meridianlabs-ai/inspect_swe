@@ -1,31 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/mini_swe_agent.html</loc>
-    <lastmod>2026-02-27T13:31:50.263Z</lastmod>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/reference/index.html</loc>
+    <lastmod>2026-05-23T17:14:11.153Z</lastmod>
   </url>
   <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/codex_cli.html</loc>
-    <lastmod>2026-01-03T13:58:52.113Z</lastmod>
-  </url>
-  <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/index.html</loc>
-    <lastmod>2026-05-09T13:58:27.418Z</lastmod>
-  </url>
-  <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/claude_code.html</loc>
-    <lastmod>2026-03-18T17:34:30.127Z</lastmod>
-  </url>
-  <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/CHANGELOG.html</loc>
-    <lastmod>2026-05-09T13:56:12.698Z</lastmod>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/gemini_cli.html</loc>
+    <lastmod>2026-02-20T07:29:20.244Z</lastmod>
   </url>
   <url>
     <loc>https://meridianlabs-ai.github.io/inspect_swe/opencode.html</loc>
     <lastmod>2026-05-09T13:55:45.899Z</lastmod>
   </url>
   <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/gemini_cli.html</loc>
-    <lastmod>2026-02-20T07:29:20.244Z</lastmod>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/CHANGELOG.html</loc>
+    <lastmod>2026-05-30T22:50:12.632Z</lastmod>
+  </url>
+  <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/claude_code.html</loc>
+    <lastmod>2026-03-18T17:34:30.127Z</lastmod>
+  </url>
+  <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/index.html</loc>
+    <lastmod>2026-05-09T13:58:27.418Z</lastmod>
+  </url>
+  <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/codex_cli.html</loc>
+    <lastmod>2026-05-30T16:33:46.067Z</lastmod>
+  </url>
+  <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/mini_swe_agent.html</loc>
+    <lastmod>2026-02-27T13:31:50.263Z</lastmod>
   </url>
 </urlset>

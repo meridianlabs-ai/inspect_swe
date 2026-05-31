@@ -1,335 +1,262 @@
 [
   {
-    "objectID": "mini_swe_agent.html",
-    "href": "mini_swe_agent.html",
-    "title": "Mini SWE Agent",
+    "objectID": "reference/index.html",
+    "href": "reference/index.html",
+    "title": "Reference",
     "section": "",
-    "text": "The mini_swe_agent() agent uses the unattended mode of SWE-agent mini-swe-agent to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNotemini-swe-agent Installation\n\n\n\nBy default, the agent will download the current stable version of mini-swe-agent and copy it to the sandbox. You can also exercise more explicit control over which version of mini-swe-agent is used—see the Installation section below for details.",
+    "text": "Claude Code agent.\nAgent that uses Claude Code running in a sandbox.\nThe agent can either use a version of Claude Code installed in the sandbox, or can download a version and install it in the sandbox (see docs on version option below for details).\nUse disallowed_tools to control access to tools. See Tools available to Claude for the list of built-in tools which can be disallowed.\nUse the attempts option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).\n\nSource\n\n@agent\ndef claude_code(\n    name: str = \"Claude Code\",\n    description: str = dedent(\"\"\"\n       Autonomous coding agent capable of writing, testing, debugging,\n       and iterating on code across multiple languages.\n    \"\"\"),\n    system_prompt: str | None = None,\n    skills: Sequence[str | Path | Skill] | None = None,\n    mcp_servers: Sequence[MCPServerConfig] | None = None,\n    bridged_tools: Sequence[BridgedToolsSpec] | None = None,\n    disallowed_tools: list[str] | None = None,\n    centaur: bool | CentaurOptions = False,\n    attempts: int | AgentAttempts = 1,\n    model: str | None = None,\n    model_aliases: dict[str, str | Model] | None = None,\n    opus_model: str | None = None,\n    sonnet_model: str | None = None,\n    haiku_model: str | None = None,\n    subagent_model: str | None = None,\n    filter: GenerateFilter | None = None,\n    auto_mode: bool = False,\n    retry_refusals: int | None = 3,\n    retry_uncaught_errors: int | None = 3,\n    cwd: str | None = None,\n    env: dict[str, str] | None = None,\n    user: str | None = None,\n    debug: bool | None = None,\n    sandbox: str | None = None,\n    version: Literal[\"auto\", \"sandbox\", \"stable\", \"latest\"] | str = \"auto\",\n) -&gt; Agent\n\nname str\n\nAgent name (used in multi-agent systems with as_tool() and handoff())\n\ndescription str\n\nAgent description (used in multi-agent systems with as_tool() and handoff())\n\nsystem_prompt str | None\n\nAdditional system prompt to append to default system prompt.\n\nskills Sequence[str | Path | Skill] | None\n\nAdditional skills to make available to the agent.\n\nmcp_servers Sequence[MCPServerConfig] | None\n\nMCP servers to make available to the agent.\n\nbridged_tools Sequence[BridgedToolsSpec] | None\n\nHost-side Inspect tools to expose to the agent via MCP. Each BridgedToolsSpec creates an MCP server that makes the specified tools available to the agent running in the sandbox.\n\ndisallowed_tools list[str] | None\n\nList of tool names to disallow entirely.\n\ncentaur bool | CentaurOptions\n\nRun in ‘centaur’ mode, which makes Claude Code available to an Inspect human_cli() agent rather than running it unattended.\n\nattempts int | AgentAttempts\n\nConfigure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.\n\nmodel str | None\n\nModel name to use for Opus and Sonnet calls (defaults to main model for task).\n\nmodel_aliases dict[str, str | Model] | None\n\nOptional mapping of model names to Model instances or model name strings. Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models. When a model name in the mapping is referenced, the corresponding Model/string is used.\n\nopus_model str | None\n\nThe model to use for opus, or for opusplan when Plan Mode is active. Defaults to model.\n\nsonnet_model str | None\n\nThe model to use for sonnet, or for opusplan when Plan Mode is not active. Defaults to model.\n\nhaiku_model str | None\n\nThe model to use for haiku, or background functionality. Defaults to model.\n\nsubagent_model str | None\n\nThe model to use for subagents. Defaults to model.\n\nfilter GenerateFilter | None\n\nFilter for intercepting bridged model requests.\n\nauto_mode bool\n\nUse auto permission mode rather than --dangerously-skip-permissions. Note that this can result in rejected tool calls so only enable if your evaluation can tolerate this.\n\nretry_refusals int | None\n\nShould refusals be retried? Defaults to retrying up to 3 times.\n\nretry_uncaught_errors int | None\n\nShould uncaught errors (unexpected crashes of Claude Code) be retried. Defaults to retrying up to 3 times.\n\ncwd str | None\n\nWorking directory to run claude code within.\n\nenv dict[str, str] | None\n\nEnvironment variables to set for claude code.\n\nuser str | None\n\nUser to execute claude code with.\n\ndebug bool | None\n\nAdd --debug cli flag. Verbose logging is always enabled.\n\nsandbox str | None\n\nOptional sandbox environment name.\n\nversion Literal['auto', 'sandbox', 'stable', 'latest'] | str\n\nVersion of claude code to use. One of: - “auto”: Use any available version of claude code in the sandbox, otherwise download the current stable version. - “sandbox”: Use the version of claude code in the sandbox (raises RuntimeError if claude is not available in the sandbox) - “stable”: Download and use the current stable version of claude code. - “latest”: Download and use the very latest version of claude code. - “x.x.x”: Download and use a specific version of claude code.\n\n\n\n\n\nCodex CLI.\nAgent that uses OpenAI Codex CLI running in a sandbox.\nUse the attempts option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).\n\nSource\n\ndef codex_cli(\n    name: str = ...,\n    description: str = ...,\n    system_prompt: str | None = ...,\n    model_config: str | None = ...,\n    skills: Sequence[str | Path | Skill] | None = ...,\n    mcp_servers: Sequence[MCPServerConfig] | None = ...,\n    bridged_tools: Sequence[BridgedToolsSpec] | None = ...,\n    web_search: CodexWebSearch = ...,\n    goals: bool = ...,\n    centaur: bool | CentaurOptions = ...,\n    attempts: int | AgentAttempts = ...,\n    model: str | None = ...,\n    model_aliases: dict[str, str | Model] | None = ...,\n    filter: GenerateFilter | None = ...,\n    retry_refusals: int | None = ...,\n    home_dir: str | None = ...,\n    cwd: str | None = ...,\n    env: dict[str, str] | None = ...,\n    user: str | None = ...,\n    sandbox: str | None = ...,\n    version: Literal['auto', 'sandbox', 'latest'] | str = ...,\n    config_overrides: dict[str, str] | None = ...,\n    *,\n    disallowed_tools: list[Literal['web_search']] | None = ...,\n) -&gt; Agent\n\nname str\n\nAgent name (used in multi-agent systems with as_tool() and handoff())\n\ndescription str\n\nAgent description (used in multi-agent systems with as_tool() and handoff())\n\nsystem_prompt str | None\n\nAdditional system prompt to append to default system prompt.\n\nmodel_config str | None\n\nCodex model slug used to select the system prompt and tool set (Codex picks these from its model catalog, independent of the real model served via the bridge). Defaults to None, which derives the slug from the real model so Codex’s prompt/tooling aligns with what’s actually running (OpenAI models map to the matching catalog entry, or the latest entry if not yet in the catalog; non-OpenAI models use Codex’s generic prompt). Pass an explicit slug to override.\n\nskills Sequence[str | Path | Skill] | None\n\nAdditional skills to make available to the agent.\n\nmcp_servers Sequence[MCPServerConfig] | None\n\nMCP servers to make available to the agent.\n\nbridged_tools Sequence[BridgedToolsSpec] | None\n\nHost-side Inspect tools to expose to the agent via MCP. Each BridgedToolsSpec creates an MCP server that makes the specified tools available to the agent running in the sandbox.\n\nweb_search CodexWebSearch\n\nWeb search mode. Use “live” for live web search, “cached” for cached web search, or “disabled” to disable web search. Defaults to “live”.\n\ngoals bool\n\nEnable Codex goal tools (defaults to True).\n\ncentaur bool | CentaurOptions\n\nRun in ‘centaur’ mode, which makes Codex CLI available to an Inspect human_cli() agent rather than running it unattended.\n\nattempts int | AgentAttempts\n\nConfigure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.\n\nmodel str | None\n\nModel name to use (defaults to main model for task).\n\nmodel_aliases dict[str, str | Model] | None\n\nOptional mapping of model names to Model instances or model name strings. Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models. When a model name in the mapping is referenced, the corresponding Model/string is used.\n\nfilter GenerateFilter | None\n\nFilter for intercepting bridged model requests.\n\nretry_refusals int | None\n\nShould refusals be retried? (pass number of times to retry)\n\nhome_dir str | None\n\nHome directory to use for codex cli. If set, AGENTS.md, skills, and the MCP configuration will be written here.\n\ncwd str | None\n\nWorking directory to run codex cli within.\n\nenv dict[str, str] | None\n\nEnvironment variables to set for codex cli\n\nuser str | None\n\nUser to execute codex cli with.\n\nsandbox str | None\n\nOptional sandbox environment name.\n\nversion Literal['auto', 'sandbox', 'latest'] | str\n\nVersion of codex cli to use. One of: - “auto”: Use any available version of codex cli in the sandbox, otherwise download the latest version. - “sandbox”: Use the version of codex cli in the sandbox (raises RuntimeError if codex is not available in the sandbox) - “latest”: Download and use the very latest version of codex cli. - “x.x.x”: Download and use a specific version of codex cli.\n\nconfig_overrides dict[str, str] | None\n\nAdditional Codex CLI configuration overrides. Each key-value pair is passed as -c key=value to the CLI.\n\ndisallowed_tools list[Literal['web_search']] | None\n\n\n\n\n\n\n\nGemini CLI agent.\nAgent that uses Google Gemini CLI running in a sandbox with Inspect model bridging.\nUse the attempts option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).\n\nSource\n\n@agent\ndef gemini_cli(\n    name: str = \"Gemini CLI\",\n    description: str = dedent(\"\"\"\n       Autonomous coding agent capable of writing, testing, debugging,\n       and iterating on code across multiple languages.\n    \"\"\"),\n    system_prompt: str | None = None,\n    skills: Sequence[str | Path | Skill] | None = None,\n    mcp_servers: Sequence[MCPServerConfig] | None = None,\n    bridged_tools: Sequence[BridgedToolsSpec] | None = None,\n    centaur: bool | CentaurOptions = False,\n    attempts: int | AgentAttempts = 1,\n    model: str | None = None,\n    model_aliases: dict[str, str | Model] | None = None,\n    gemini_model: str = \"gemini-2.5-pro\",\n    filter: GenerateFilter | None = None,\n    retry_refusals: int | None = None,\n    cwd: str | None = None,\n    env: dict[str, str] | None = None,\n    user: str | None = None,\n    sandbox: str | None = None,\n    version: Literal[\"auto\", \"sandbox\", \"stable\", \"latest\"] | str = \"auto\",\n) -&gt; Agent\n\nname str\n\nAgent name (used in multi-agent systems with as_tool() and handoff())\n\ndescription str\n\nAgent description\n\nsystem_prompt str | None\n\nAdditional system prompt to append\n\nskills Sequence[str | Path | Skill] | None\n\nAdditional skills to make available to the agent.\n\nmcp_servers Sequence[MCPServerConfig] | None\n\nMCP servers to make available to the agent\n\nbridged_tools Sequence[BridgedToolsSpec] | None\n\nHost-side Inspect tools to expose to the agent via MCP\n\ncentaur bool | CentaurOptions\n\nRun in ‘centaur’ mode, which makes Gemini CLI available to an Inspect human_cli() agent rather than running it unattended.\n\nattempts int | AgentAttempts\n\nConfigure agent to make multiple attempts\n\nmodel str | None\n\nModel name to use for inspect bridge (defaults to main model for task)\n\nmodel_aliases dict[str, str | Model] | None\n\nOptional mapping of model names to Model instances or model name strings. Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models. When a model name in the mapping is referenced, the corresponding Model/string is used.\n\ngemini_model str\n\nGemini model name to pass to CLI. This bypasses the auto-router. Use “gemini-2.5-pro” (default) or “gemini-2.5-flash”. The actual model calls still go through the inspect bridge, but this disables the router.\n\nfilter GenerateFilter | None\n\nFilter for intercepting bridged model requests\n\nretry_refusals int | None\n\nShould refusals be retried? (pass number of times to retry)\n\ncwd str | None\n\nWorking directory to run gemini cli within\n\nenv dict[str, str] | None\n\nEnvironment variables to set for gemini cli\n\nuser str | None\n\nUser to execute gemini cli with\n\nsandbox str | None\n\nOptional sandbox environment name\n\nversion Literal['auto', 'sandbox', 'stable', 'latest'] | str\n\nVersion of gemini cli to use. One of: - “auto”: Use any available version in sandbox, otherwise download latest - “sandbox”: Use sandbox version (raises RuntimeError if not available) - “stable”/“latest”: Download and use the latest version - “x.x.x”: Download and use a specific version\n\n\n\n\n\nOpenCode agent.\nAgent that uses OpenCode running in a sandbox with Inspect model bridging.\nUse the attempts option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).\n\nSource\n\n@agent\ndef opencode(\n    name: str = \"OpenCode\",\n    description: str = dedent(\"\"\"\n       Open-source autonomous coding agent for the terminal, capable\n       of writing, testing, debugging, and iterating on code across\n       multiple languages.\n    \"\"\"),\n    system_prompt: str | None = None,\n    skills: Sequence[str | Path | Skill] | None = None,\n    mcp_servers: Sequence[MCPServerConfig] | None = None,\n    bridged_tools: Sequence[BridgedToolsSpec] | None = None,\n    centaur: bool | CentaurOptions = False,\n    attempts: int | AgentAttempts = 1,\n    model: str | None = None,\n    model_aliases: dict[str, str | Model] | None = None,\n    opencode_model: str = \"anthropic/claude-sonnet-4-5\",\n    filter: GenerateFilter | None = None,\n    retry_refusals: int | None = None,\n    cwd: str | None = None,\n    env: dict[str, str] | None = None,\n    user: str | None = None,\n    sandbox: str | None = None,\n    version: Literal[\"auto\", \"sandbox\", \"stable\", \"latest\"] | str = \"auto\",\n) -&gt; Agent\n\nname str\n\nAgent name (used in multi-agent systems with as_tool() and handoff())\n\ndescription str\n\nAgent description\n\nsystem_prompt str | None\n\nAdditional system prompt to append\n\nskills Sequence[str | Path | Skill] | None\n\nAdditional skills to make available to the agent.\n\nmcp_servers Sequence[MCPServerConfig] | None\n\nMCP servers to make available to the agent\n\nbridged_tools Sequence[BridgedToolsSpec] | None\n\nHost-side Inspect tools to expose to the agent via MCP\n\ncentaur bool | CentaurOptions\n\nRun in ‘centaur’ mode, which makes OpenCode available to an Inspect human_cli() agent rather than running it unattended.\n\nattempts int | AgentAttempts\n\nConfigure agent to make multiple attempts\n\nmodel str | None\n\nModel name to use for inspect bridge (defaults to main model for task)\n\nmodel_aliases dict[str, str | Model] | None\n\nOptional mapping of model names to Model instances or model name strings. Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models. When a model name in the mapping is referenced, the corresponding Model/string is used.\n\nopencode_model str\n\nOpenCode model identifier to pass to the CLI in the form provider/model (default: \"anthropic/claude-sonnet-4-5\"). The actual model calls still go through the Inspect bridge; this just selects which provider client OpenCode uses to format the request.\n\nfilter GenerateFilter | None\n\nFilter for intercepting bridged model requests\n\nretry_refusals int | None\n\nShould refusals be retried? (pass number of times to retry)\n\ncwd str | None\n\nWorking directory to run opencode within\n\nenv dict[str, str] | None\n\nEnvironment variables to set for opencode\n\nuser str | None\n\nUser to execute opencode with\n\nsandbox str | None\n\nOptional sandbox environment name\n\nversion Literal['auto', 'sandbox', 'stable', 'latest'] | str\n\nVersion of opencode to use. One of: - “auto”: Use any available version in sandbox, otherwise download latest - “sandbox”: Use sandbox version (raises RuntimeError if not available) - “stable”/“latest”: Download and use the latest version - “x.x.x”: Download and use a specific version\n\n\n\n\n\nmini-swe-agent agent.\nAgent that uses mini-swe-agent running in a sandbox. Mini-swe-agent is a minimal 100-line agent that solves GitHub issues using only bash commands.\nThe agent can either use a version of mini-swe-agent installed in the sandbox, or can download and install it via pip (see docs on version option below).\nUse attempts to enable additional submissions if initial submission(s) are incorrect (by default, no additional attempts are permitted).\nThis agent does not handle compaction natively. Use compaction to specify a compaction strategy.\n\nSource\n\n@agent\ndef mini_swe_agent(\n    name: str = \"mini-swe-agent\",\n    description: str = dedent(\"\"\"\n       Minimal AI agent that solves software engineering tasks using bash commands.\n       100 lines of Python, radically simple, scores &gt;74% on SWE-bench verified.\n    \"\"\"),\n    system_prompt: str | None = None,\n    centaur: bool | CentaurOptions = False,\n    attempts: int | AgentAttempts = 1,\n    model: str | None = None,\n    model_aliases: dict[str, str | Model] | None = None,\n    filter: GenerateFilter | None = None,\n    retry_refusals: int | None = None,\n    compaction: CompactionStrategy | None = None,\n    cwd: str | None = None,\n    env: dict[str, str] | None = None,\n    user: str | None = None,\n    sandbox: str | None = None,\n    version: Literal[\"stable\", \"sandbox\", \"latest\"] | str = \"stable\",\n) -&gt; Agent\n\nname str\n\nAgent name (used in multi-agent systems with as_tool() and handoff())\n\ndescription str\n\nAgent description (used in multi-agent systems)\n\nsystem_prompt str | None\n\nAdditional system prompt to include (appended to any system messages from the task).\n\ncentaur bool | CentaurOptions\n\nRun in ‘centaur’ mode, which makes mini-swe-agent available to an Inspect human_cli() agent rather than running it unattended.\n\nattempts int | AgentAttempts\n\nConfigure agent to make multiple attempts.\n\nmodel str | None\n\nModel name to use (defaults to main model for task).\n\nmodel_aliases dict[str, str | Model] | None\n\nOptional mapping of model names to Model instances or model name strings. Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models. When a model name in the mapping is referenced, the corresponding Model/string is used.\n\nfilter GenerateFilter | None\n\nFilter for intercepting bridged model requests.\n\nretry_refusals int | None\n\nShould refusals be retried? (pass number of times to retry)\n\ncompaction CompactionStrategy | None\n\nCompaction strategy for managing context window overflow.\n\ncwd str | None\n\nWorking directory to run mini-swe-agent within.\n\nenv dict[str, str] | None\n\nEnvironment variables to set for mini-swe-agent.\n\nuser str | None\n\nUser to execute mini-swe-agent with.\n\nsandbox str | None\n\nOptional sandbox environment name.\n\nversion Literal['stable', 'sandbox', 'latest'] | str\n\nVersion of mini-swe-agent to use. One of: - “stable”: Download and install the default pinned version. - “sandbox”: Use version in sandbox (raises RuntimeError if not available) - “latest”: Download and install latest version from PyPI. - “x.x.x”: Install and use a specific version.",
     "crumbs": [
       "Home",
-      "Agents",
-      "Mini SWE Agent"
+      "Reference"
     ]
   },
   {
-    "objectID": "mini_swe_agent.html#overview",
-    "href": "mini_swe_agent.html#overview",
-    "title": "Mini SWE Agent",
+    "objectID": "reference/index.html#agents",
+    "href": "reference/index.html#agents",
+    "title": "Reference",
     "section": "",
-    "text": "The mini_swe_agent() agent uses the unattended mode of SWE-agent mini-swe-agent to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNotemini-swe-agent Installation\n\n\n\nBy default, the agent will download the current stable version of mini-swe-agent and copy it to the sandbox. You can also exercise more explicit control over which version of mini-swe-agent is used—see the Installation section below for details.",
+    "text": "Claude Code agent.\nAgent that uses Claude Code running in a sandbox.\nThe agent can either use a version of Claude Code installed in the sandbox, or can download a version and install it in the sandbox (see docs on version option below for details).\nUse disallowed_tools to control access to tools. See Tools available to Claude for the list of built-in tools which can be disallowed.\nUse the attempts option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).\n\nSource\n\n@agent\ndef claude_code(\n    name: str = \"Claude Code\",\n    description: str = dedent(\"\"\"\n       Autonomous coding agent capable of writing, testing, debugging,\n       and iterating on code across multiple languages.\n    \"\"\"),\n    system_prompt: str | None = None,\n    skills: Sequence[str | Path | Skill] | None = None,\n    mcp_servers: Sequence[MCPServerConfig] | None = None,\n    bridged_tools: Sequence[BridgedToolsSpec] | None = None,\n    disallowed_tools: list[str] | None = None,\n    centaur: bool | CentaurOptions = False,\n    attempts: int | AgentAttempts = 1,\n    model: str | None = None,\n    model_aliases: dict[str, str | Model] | None = None,\n    opus_model: str | None = None,\n    sonnet_model: str | None = None,\n    haiku_model: str | None = None,\n    subagent_model: str | None = None,\n    filter: GenerateFilter | None = None,\n    auto_mode: bool = False,\n    retry_refusals: int | None = 3,\n    retry_uncaught_errors: int | None = 3,\n    cwd: str | None = None,\n    env: dict[str, str] | None = None,\n    user: str | None = None,\n    debug: bool | None = None,\n    sandbox: str | None = None,\n    version: Literal[\"auto\", \"sandbox\", \"stable\", \"latest\"] | str = \"auto\",\n) -&gt; Agent\n\nname str\n\nAgent name (used in multi-agent systems with as_tool() and handoff())\n\ndescription str\n\nAgent description (used in multi-agent systems with as_tool() and handoff())\n\nsystem_prompt str | None\n\nAdditional system prompt to append to default system prompt.\n\nskills Sequence[str | Path | Skill] | None\n\nAdditional skills to make available to the agent.\n\nmcp_servers Sequence[MCPServerConfig] | None\n\nMCP servers to make available to the agent.\n\nbridged_tools Sequence[BridgedToolsSpec] | None\n\nHost-side Inspect tools to expose to the agent via MCP. Each BridgedToolsSpec creates an MCP server that makes the specified tools available to the agent running in the sandbox.\n\ndisallowed_tools list[str] | None\n\nList of tool names to disallow entirely.\n\ncentaur bool | CentaurOptions\n\nRun in ‘centaur’ mode, which makes Claude Code available to an Inspect human_cli() agent rather than running it unattended.\n\nattempts int | AgentAttempts\n\nConfigure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.\n\nmodel str | None\n\nModel name to use for Opus and Sonnet calls (defaults to main model for task).\n\nmodel_aliases dict[str, str | Model] | None\n\nOptional mapping of model names to Model instances or model name strings. Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models. When a model name in the mapping is referenced, the corresponding Model/string is used.\n\nopus_model str | None\n\nThe model to use for opus, or for opusplan when Plan Mode is active. Defaults to model.\n\nsonnet_model str | None\n\nThe model to use for sonnet, or for opusplan when Plan Mode is not active. Defaults to model.\n\nhaiku_model str | None\n\nThe model to use for haiku, or background functionality. Defaults to model.\n\nsubagent_model str | None\n\nThe model to use for subagents. Defaults to model.\n\nfilter GenerateFilter | None\n\nFilter for intercepting bridged model requests.\n\nauto_mode bool\n\nUse auto permission mode rather than --dangerously-skip-permissions. Note that this can result in rejected tool calls so only enable if your evaluation can tolerate this.\n\nretry_refusals int | None\n\nShould refusals be retried? Defaults to retrying up to 3 times.\n\nretry_uncaught_errors int | None\n\nShould uncaught errors (unexpected crashes of Claude Code) be retried. Defaults to retrying up to 3 times.\n\ncwd str | None\n\nWorking directory to run claude code within.\n\nenv dict[str, str] | None\n\nEnvironment variables to set for claude code.\n\nuser str | None\n\nUser to execute claude code with.\n\ndebug bool | None\n\nAdd --debug cli flag. Verbose logging is always enabled.\n\nsandbox str | None\n\nOptional sandbox environment name.\n\nversion Literal['auto', 'sandbox', 'stable', 'latest'] | str\n\nVersion of claude code to use. One of: - “auto”: Use any available version of claude code in the sandbox, otherwise download the current stable version. - “sandbox”: Use the version of claude code in the sandbox (raises RuntimeError if claude is not available in the sandbox) - “stable”: Download and use the current stable version of claude code. - “latest”: Download and use the very latest version of claude code. - “x.x.x”: Download and use a specific version of claude code.\n\n\n\n\n\nCodex CLI.\nAgent that uses OpenAI Codex CLI running in a sandbox.\nUse the attempts option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).\n\nSource\n\ndef codex_cli(\n    name: str = ...,\n    description: str = ...,\n    system_prompt: str | None = ...,\n    model_config: str | None = ...,\n    skills: Sequence[str | Path | Skill] | None = ...,\n    mcp_servers: Sequence[MCPServerConfig] | None = ...,\n    bridged_tools: Sequence[BridgedToolsSpec] | None = ...,\n    web_search: CodexWebSearch = ...,\n    goals: bool = ...,\n    centaur: bool | CentaurOptions = ...,\n    attempts: int | AgentAttempts = ...,\n    model: str | None = ...,\n    model_aliases: dict[str, str | Model] | None = ...,\n    filter: GenerateFilter | None = ...,\n    retry_refusals: int | None = ...,\n    home_dir: str | None = ...,\n    cwd: str | None = ...,\n    env: dict[str, str] | None = ...,\n    user: str | None = ...,\n    sandbox: str | None = ...,\n    version: Literal['auto', 'sandbox', 'latest'] | str = ...,\n    config_overrides: dict[str, str] | None = ...,\n    *,\n    disallowed_tools: list[Literal['web_search']] | None = ...,\n) -&gt; Agent\n\nname str\n\nAgent name (used in multi-agent systems with as_tool() and handoff())\n\ndescription str\n\nAgent description (used in multi-agent systems with as_tool() and handoff())\n\nsystem_prompt str | None\n\nAdditional system prompt to append to default system prompt.\n\nmodel_config str | None\n\nCodex model slug used to select the system prompt and tool set (Codex picks these from its model catalog, independent of the real model served via the bridge). Defaults to None, which derives the slug from the real model so Codex’s prompt/tooling aligns with what’s actually running (OpenAI models map to the matching catalog entry, or the latest entry if not yet in the catalog; non-OpenAI models use Codex’s generic prompt). Pass an explicit slug to override.\n\nskills Sequence[str | Path | Skill] | None\n\nAdditional skills to make available to the agent.\n\nmcp_servers Sequence[MCPServerConfig] | None\n\nMCP servers to make available to the agent.\n\nbridged_tools Sequence[BridgedToolsSpec] | None\n\nHost-side Inspect tools to expose to the agent via MCP. Each BridgedToolsSpec creates an MCP server that makes the specified tools available to the agent running in the sandbox.\n\nweb_search CodexWebSearch\n\nWeb search mode. Use “live” for live web search, “cached” for cached web search, or “disabled” to disable web search. Defaults to “live”.\n\ngoals bool\n\nEnable Codex goal tools (defaults to True).\n\ncentaur bool | CentaurOptions\n\nRun in ‘centaur’ mode, which makes Codex CLI available to an Inspect human_cli() agent rather than running it unattended.\n\nattempts int | AgentAttempts\n\nConfigure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.\n\nmodel str | None\n\nModel name to use (defaults to main model for task).\n\nmodel_aliases dict[str, str | Model] | None\n\nOptional mapping of model names to Model instances or model name strings. Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models. When a model name in the mapping is referenced, the corresponding Model/string is used.\n\nfilter GenerateFilter | None\n\nFilter for intercepting bridged model requests.\n\nretry_refusals int | None\n\nShould refusals be retried? (pass number of times to retry)\n\nhome_dir str | None\n\nHome directory to use for codex cli. If set, AGENTS.md, skills, and the MCP configuration will be written here.\n\ncwd str | None\n\nWorking directory to run codex cli within.\n\nenv dict[str, str] | None\n\nEnvironment variables to set for codex cli\n\nuser str | None\n\nUser to execute codex cli with.\n\nsandbox str | None\n\nOptional sandbox environment name.\n\nversion Literal['auto', 'sandbox', 'latest'] | str\n\nVersion of codex cli to use. One of: - “auto”: Use any available version of codex cli in the sandbox, otherwise download the latest version. - “sandbox”: Use the version of codex cli in the sandbox (raises RuntimeError if codex is not available in the sandbox) - “latest”: Download and use the very latest version of codex cli. - “x.x.x”: Download and use a specific version of codex cli.\n\nconfig_overrides dict[str, str] | None\n\nAdditional Codex CLI configuration overrides. Each key-value pair is passed as -c key=value to the CLI.\n\ndisallowed_tools list[Literal['web_search']] | None\n\n\n\n\n\n\n\nGemini CLI agent.\nAgent that uses Google Gemini CLI running in a sandbox with Inspect model bridging.\nUse the attempts option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).\n\nSource\n\n@agent\ndef gemini_cli(\n    name: str = \"Gemini CLI\",\n    description: str = dedent(\"\"\"\n       Autonomous coding agent capable of writing, testing, debugging,\n       and iterating on code across multiple languages.\n    \"\"\"),\n    system_prompt: str | None = None,\n    skills: Sequence[str | Path | Skill] | None = None,\n    mcp_servers: Sequence[MCPServerConfig] | None = None,\n    bridged_tools: Sequence[BridgedToolsSpec] | None = None,\n    centaur: bool | CentaurOptions = False,\n    attempts: int | AgentAttempts = 1,\n    model: str | None = None,\n    model_aliases: dict[str, str | Model] | None = None,\n    gemini_model: str = \"gemini-2.5-pro\",\n    filter: GenerateFilter | None = None,\n    retry_refusals: int | None = None,\n    cwd: str | None = None,\n    env: dict[str, str] | None = None,\n    user: str | None = None,\n    sandbox: str | None = None,\n    version: Literal[\"auto\", \"sandbox\", \"stable\", \"latest\"] | str = \"auto\",\n) -&gt; Agent\n\nname str\n\nAgent name (used in multi-agent systems with as_tool() and handoff())\n\ndescription str\n\nAgent description\n\nsystem_prompt str | None\n\nAdditional system prompt to append\n\nskills Sequence[str | Path | Skill] | None\n\nAdditional skills to make available to the agent.\n\nmcp_servers Sequence[MCPServerConfig] | None\n\nMCP servers to make available to the agent\n\nbridged_tools Sequence[BridgedToolsSpec] | None\n\nHost-side Inspect tools to expose to the agent via MCP\n\ncentaur bool | CentaurOptions\n\nRun in ‘centaur’ mode, which makes Gemini CLI available to an Inspect human_cli() agent rather than running it unattended.\n\nattempts int | AgentAttempts\n\nConfigure agent to make multiple attempts\n\nmodel str | None\n\nModel name to use for inspect bridge (defaults to main model for task)\n\nmodel_aliases dict[str, str | Model] | None\n\nOptional mapping of model names to Model instances or model name strings. Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models. When a model name in the mapping is referenced, the corresponding Model/string is used.\n\ngemini_model str\n\nGemini model name to pass to CLI. This bypasses the auto-router. Use “gemini-2.5-pro” (default) or “gemini-2.5-flash”. The actual model calls still go through the inspect bridge, but this disables the router.\n\nfilter GenerateFilter | None\n\nFilter for intercepting bridged model requests\n\nretry_refusals int | None\n\nShould refusals be retried? (pass number of times to retry)\n\ncwd str | None\n\nWorking directory to run gemini cli within\n\nenv dict[str, str] | None\n\nEnvironment variables to set for gemini cli\n\nuser str | None\n\nUser to execute gemini cli with\n\nsandbox str | None\n\nOptional sandbox environment name\n\nversion Literal['auto', 'sandbox', 'stable', 'latest'] | str\n\nVersion of gemini cli to use. One of: - “auto”: Use any available version in sandbox, otherwise download latest - “sandbox”: Use sandbox version (raises RuntimeError if not available) - “stable”/“latest”: Download and use the latest version - “x.x.x”: Download and use a specific version\n\n\n\n\n\nOpenCode agent.\nAgent that uses OpenCode running in a sandbox with Inspect model bridging.\nUse the attempts option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).\n\nSource\n\n@agent\ndef opencode(\n    name: str = \"OpenCode\",\n    description: str = dedent(\"\"\"\n       Open-source autonomous coding agent for the terminal, capable\n       of writing, testing, debugging, and iterating on code across\n       multiple languages.\n    \"\"\"),\n    system_prompt: str | None = None,\n    skills: Sequence[str | Path | Skill] | None = None,\n    mcp_servers: Sequence[MCPServerConfig] | None = None,\n    bridged_tools: Sequence[BridgedToolsSpec] | None = None,\n    centaur: bool | CentaurOptions = False,\n    attempts: int | AgentAttempts = 1,\n    model: str | None = None,\n    model_aliases: dict[str, str | Model] | None = None,\n    opencode_model: str = \"anthropic/claude-sonnet-4-5\",\n    filter: GenerateFilter | None = None,\n    retry_refusals: int | None = None,\n    cwd: str | None = None,\n    env: dict[str, str] | None = None,\n    user: str | None = None,\n    sandbox: str | None = None,\n    version: Literal[\"auto\", \"sandbox\", \"stable\", \"latest\"] | str = \"auto\",\n) -&gt; Agent\n\nname str\n\nAgent name (used in multi-agent systems with as_tool() and handoff())\n\ndescription str\n\nAgent description\n\nsystem_prompt str | None\n\nAdditional system prompt to append\n\nskills Sequence[str | Path | Skill] | None\n\nAdditional skills to make available to the agent.\n\nmcp_servers Sequence[MCPServerConfig] | None\n\nMCP servers to make available to the agent\n\nbridged_tools Sequence[BridgedToolsSpec] | None\n\nHost-side Inspect tools to expose to the agent via MCP\n\ncentaur bool | CentaurOptions\n\nRun in ‘centaur’ mode, which makes OpenCode available to an Inspect human_cli() agent rather than running it unattended.\n\nattempts int | AgentAttempts\n\nConfigure agent to make multiple attempts\n\nmodel str | None\n\nModel name to use for inspect bridge (defaults to main model for task)\n\nmodel_aliases dict[str, str | Model] | None\n\nOptional mapping of model names to Model instances or model name strings. Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models. When a model name in the mapping is referenced, the corresponding Model/string is used.\n\nopencode_model str\n\nOpenCode model identifier to pass to the CLI in the form provider/model (default: \"anthropic/claude-sonnet-4-5\"). The actual model calls still go through the Inspect bridge; this just selects which provider client OpenCode uses to format the request.\n\nfilter GenerateFilter | None\n\nFilter for intercepting bridged model requests\n\nretry_refusals int | None\n\nShould refusals be retried? (pass number of times to retry)\n\ncwd str | None\n\nWorking directory to run opencode within\n\nenv dict[str, str] | None\n\nEnvironment variables to set for opencode\n\nuser str | None\n\nUser to execute opencode with\n\nsandbox str | None\n\nOptional sandbox environment name\n\nversion Literal['auto', 'sandbox', 'stable', 'latest'] | str\n\nVersion of opencode to use. One of: - “auto”: Use any available version in sandbox, otherwise download latest - “sandbox”: Use sandbox version (raises RuntimeError if not available) - “stable”/“latest”: Download and use the latest version - “x.x.x”: Download and use a specific version\n\n\n\n\n\nmini-swe-agent agent.\nAgent that uses mini-swe-agent running in a sandbox. Mini-swe-agent is a minimal 100-line agent that solves GitHub issues using only bash commands.\nThe agent can either use a version of mini-swe-agent installed in the sandbox, or can download and install it via pip (see docs on version option below).\nUse attempts to enable additional submissions if initial submission(s) are incorrect (by default, no additional attempts are permitted).\nThis agent does not handle compaction natively. Use compaction to specify a compaction strategy.\n\nSource\n\n@agent\ndef mini_swe_agent(\n    name: str = \"mini-swe-agent\",\n    description: str = dedent(\"\"\"\n       Minimal AI agent that solves software engineering tasks using bash commands.\n       100 lines of Python, radically simple, scores &gt;74% on SWE-bench verified.\n    \"\"\"),\n    system_prompt: str | None = None,\n    centaur: bool | CentaurOptions = False,\n    attempts: int | AgentAttempts = 1,\n    model: str | None = None,\n    model_aliases: dict[str, str | Model] | None = None,\n    filter: GenerateFilter | None = None,\n    retry_refusals: int | None = None,\n    compaction: CompactionStrategy | None = None,\n    cwd: str | None = None,\n    env: dict[str, str] | None = None,\n    user: str | None = None,\n    sandbox: str | None = None,\n    version: Literal[\"stable\", \"sandbox\", \"latest\"] | str = \"stable\",\n) -&gt; Agent\n\nname str\n\nAgent name (used in multi-agent systems with as_tool() and handoff())\n\ndescription str\n\nAgent description (used in multi-agent systems)\n\nsystem_prompt str | None\n\nAdditional system prompt to include (appended to any system messages from the task).\n\ncentaur bool | CentaurOptions\n\nRun in ‘centaur’ mode, which makes mini-swe-agent available to an Inspect human_cli() agent rather than running it unattended.\n\nattempts int | AgentAttempts\n\nConfigure agent to make multiple attempts.\n\nmodel str | None\n\nModel name to use (defaults to main model for task).\n\nmodel_aliases dict[str, str | Model] | None\n\nOptional mapping of model names to Model instances or model name strings. Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models. When a model name in the mapping is referenced, the corresponding Model/string is used.\n\nfilter GenerateFilter | None\n\nFilter for intercepting bridged model requests.\n\nretry_refusals int | None\n\nShould refusals be retried? (pass number of times to retry)\n\ncompaction CompactionStrategy | None\n\nCompaction strategy for managing context window overflow.\n\ncwd str | None\n\nWorking directory to run mini-swe-agent within.\n\nenv dict[str, str] | None\n\nEnvironment variables to set for mini-swe-agent.\n\nuser str | None\n\nUser to execute mini-swe-agent with.\n\nsandbox str | None\n\nOptional sandbox environment name.\n\nversion Literal['stable', 'sandbox', 'latest'] | str\n\nVersion of mini-swe-agent to use. One of: - “stable”: Download and install the default pinned version. - “sandbox”: Use version in sandbox (raises RuntimeError if not available) - “latest”: Download and install latest version from PyPI. - “x.x.x”: Install and use a specific version.",
     "crumbs": [
       "Home",
-      "Agents",
-      "Mini SWE Agent"
+      "Reference"
     ]
   },
   {
-    "objectID": "mini_swe_agent.html#basic-usage",
-    "href": "mini_swe_agent.html#basic-usage",
-    "title": "Mini SWE Agent",
+    "objectID": "reference/index.html#binaries",
+    "href": "reference/index.html#binaries",
+    "title": "Reference",
+    "section": "Binaries",
+    "text": "Binaries\n\ndownload_agent_binary\nDownload agent binary.\nDownload an agent binary. This version will be added to the cache of downloaded versions (which retains the 5 most recently downloaded versions).\nUse this if you need to ensure that a specific version of an agent binary is downloaded in advance (e.g. if you are going to run your evaluations offline). After downloading, explicit requests for the downloaded version (e.g. claude_code(version=\"1.0.98\")) will not require network access.\n\nSource\n\ndef download_agent_binary(\n    binary: Literal[\"claude_code\", \"codex_cli\"],\n    version: Literal[\"stable\", \"latest\"] | str,\n    platform: SandboxPlatform,\n) -&gt; None\n\nbinary Literal['claude_code', 'codex_cli']\n\nType of binary to download\n\nversion Literal['stable', 'latest'] | str\n\nVersion to download (“stable”, “latest”, or an explicit version number).\n\nplatform SandboxPlatform\n\nTarget platform (“linux-x64”, “linux-arm64”, “linux-x64-musl”, or “linux-arm64-musl”)\n\n\n\n\ncached_agent_binaries\nList the agent binaries which have been cached on this system.\n\nSource\n\ndef cached_agent_binaries(\n    binary: Literal[\"claude_code\", \"codex_cli\"] | None = None, quiet: bool = False\n) -&gt; AgentBinaries\n\nbinary Literal['claude_code', 'codex_cli'] | None\n\nType of binary to list (lists all of if not specified).\n\nquiet bool\n\nDo not print the binaries as a side effect\n\n\n\n\ndownload_wheels_tarball\nDownload all wheels for a package and its dependencies.\nDownloads wheels from PyPI for the specified platform and Python version, then bundles them into a tarball for offline installation in sandbox. Downloaded wheels are cached locally (retaining 5 most recent versions).\n\nSource\n\ndef download_wheels_tarball(\n    package_name: str,\n    version: str | None,\n    platform: SandboxPlatform,\n    python_version: str,\n) -&gt; tuple[bytes, str]\n\npackage_name str\n\nPyPI package name (e.g., “mini-swe-agent”)\n\nversion str | None\n\nPackage version or None for latest\n\nplatform SandboxPlatform\n\nTarget sandbox platform\n\npython_version str\n\nPython version without dots (e.g., “312”)\n\n\n\n\nAgentBinary\nAgent binary.\n\nSource\n\nclass AgentBinary(NamedTuple)\n\nAttributes\n\nagent Literal['claude_code', 'codex_cli']\n\nAgent type.\n\nversion str\n\nAgent version.\n\npath Path\n\n“Agent path.\n\n\n\n\n\nSandboxPlatform\nTarget platform identifier for sandbox binary and wheel downloads.\n\nSource\n\nSandboxPlatform: TypeAlias = Literal[\n    \"linux-x64\", \"linux-arm64\", \"linux-x64-musl\", \"linux-arm64-musl\"\n]",
+    "crumbs": [
+      "Home",
+      "Reference"
+    ]
+  },
+  {
+    "objectID": "reference/index.html#acp",
+    "href": "reference/index.html#acp",
+    "title": "Reference",
+    "section": "ACP",
+    "text": "ACP\n\ninteractive_claude_code\nClaude Code agent via ACP.\nUses the claude-agent-acp adapter in a sandbox. Supports multi-turn sessions and mid-turn interrupts.\n\nSource\n\ndef interactive_claude_code(\n    *,\n    disallowed_tools: list[str] | None = ...,\n    skills: list[str | Path | Skill] | None = ...,\n    opus_model: str | Model | None = ...,\n    sonnet_model: str | Model | None = ...,\n    haiku_model: str | Model | None = ...,\n    subagent_model: str | Model | None = ...,\n    model: str | Model | None = ...,\n    filter: GenerateFilter | None = ...,\n    bridged_tools: list[BridgedToolsSpec] | None = ...,\n    mcp_servers: list[MCPServerConfig] | None = ...,\n    system_prompt: str | None = ...,\n    retry_refusals: int | None = ...,\n    model_map: dict[str, str | Model] | None = ...,\n    cwd: str | None = ...,\n    env: dict[str, str] | None = ...,\n    user: str | None = ...,\n    sandbox: str | None = ...,\n) -&gt; ACPAgent\n\ndisallowed_tools list[str] | None\n\nTool names to disallow.\n\nskills list[str | Path | Skill] | None\n\nAdditional skills to make available.\n\nopus_model str | Model | None\n\nModel for opus calls.\n\nsonnet_model str | Model | None\n\nModel for sonnet calls.\n\nhaiku_model str | Model | None\n\nModel for haiku / background calls.\n\nsubagent_model str | Model | None\n\nModel for subagents.\n\nmodel str | Model | None\n\n\n\nfilter GenerateFilter | None\n\n\n\nbridged_tools list[BridgedToolsSpec] | None\n\n\n\nmcp_servers list[MCPServerConfig] | None\n\n\n\nsystem_prompt str | None\n\n\n\nretry_refusals int | None\n\n\n\nmodel_map dict[str, str | Model] | None\n\n\n\ncwd str | None\n\n\n\nenv dict[str, str] | None\n\n\n\nuser str | None\n\n\n\nsandbox str | None\n\n\n\n\n\n\ninteractive_codex_cli\nCodex CLI agent via ACP.\nUses the codex-acp adapter in a sandbox. Supports multi-turn sessions and mid-turn interrupts.\n\nSource\n\ndef interactive_codex_cli(\n    *,\n    web_search: CodexWebSearch = ...,\n    goals: bool = ...,\n    skills: list[str | Path | Skill] | None = ...,\n    home_dir: str | None = ...,\n    config_overrides: dict[str, str] | None = ...,\n    disallowed_tools: list[Literal['web_search']] | None = ...,\n) -&gt; ACPAgent\n\nweb_search CodexWebSearch\n\nWeb search mode. Use \"live\" for live web search, \"cached\" for cached web search, or \"disabled\" to disable web search.\n\ngoals bool\n\nEnable Codex goal tools.\n\nskills list[str | Path | Skill] | None\n\nAdditional skills to make available.\n\nhome_dir str | None\n\nOverride for CODEX_HOME directory in the sandbox.\n\nconfig_overrides dict[str, str] | None\n\nExtra Codex config.toml key-value pairs.\n\ndisallowed_tools list[Literal['web_search']] | None\n\n\n\n\n\n\ninteractive_gemini_cli\nGemini CLI agent via ACP.\nUses gemini’s native --experimental-acp flag in a sandbox. Supports multi-turn sessions and mid-turn interrupts.\n\nSource\n\ndef interactive_gemini_cli(\n    *,\n    skills: list[str | Path | Skill] | None = ...,\n    version: Literal['auto', 'sandbox', 'stable', 'latest'] | str = ...,\n    debug: bool = ...,\n    model: str | Model | None = ...,\n    filter: GenerateFilter | None = ...,\n    bridged_tools: list[BridgedToolsSpec] | None = ...,\n    mcp_servers: list[MCPServerConfig] | None = ...,\n    system_prompt: str | None = ...,\n    retry_refusals: int | None = ...,\n    model_map: dict[str, str | Model] | None = ...,\n    cwd: str | None = ...,\n    env: dict[str, str] | None = ...,\n    user: str | None = ...,\n    sandbox: str | None = ...,\n) -&gt; ACPAgent\n\nskills list[str | Path | Skill] | None\n\nAdditional skills to make available.\n\nversion Literal['auto', 'sandbox', 'stable', 'latest'] | str\n\nVersion of gemini CLI to use. One of: \"auto\", \"sandbox\", \"stable\", \"latest\", or a specific semver version string.\n\ndebug bool\n\nRun gemini-cli with --debug and GEMINI_DEBUG_LOG_FILE set to $HOME/gemini-debug.log in the sandbox (in ACP mode console output is patched away from stderr, so the log file is the only way to surface internals).\n\nmodel str | Model | None\n\n\n\nfilter GenerateFilter | None\n\n\n\nbridged_tools list[BridgedToolsSpec] | None\n\n\n\nmcp_servers list[MCPServerConfig] | None\n\n\n\nsystem_prompt str | None\n\n\n\nretry_refusals int | None\n\n\n\nmodel_map dict[str, str | Model] | None\n\n\n\ncwd str | None\n\n\n\nenv dict[str, str] | None\n\n\n\nuser str | None\n\n\n\nsandbox str | None\n\n\n\n\n\n\nbridge_mcp_to_acp\nConvert bridge MCPServerConfigHTTP objects to ACP HttpMcpServer.\n\nSource\n\ndef bridge_mcp_to_acp(configs: list[MCPServerConfigHTTP]) -&gt; list[HttpMcpServer]\n\nconfigs list[MCPServerConfigHTTP]\n\n\n\n\n\n\nACPAgent\nBase class for ACP-based agents running in sandboxes.\nManages the ACP lifecycle (connection, session, MCP announcement, cleanup). Subclasses implement :meth:_start_agent for agent-specific setup.\nSets up the ACP lifecycle, exposes .conn and .session_id, signals .ready, then blocks until the task is cancelled. The caller drives all prompts via conn.prompt() / conn.cancel().\n\nSource\n\nclass ACPAgent(Agent)\n\n\nACPAgentParams\nKeyword arguments accepted by :class:ACPAgent.\n\nSource\n\nclass ACPAgentParams(TypedDict, total=False)\n\n\nacp_connection\nBridge an ExecRemoteProcess to ACP. Yield (conn, feeder, error_info).\nBridges ExecRemoteProcess to the SDK’s connect_to_agent() via a transport wrapper, then cleans up on exit.\nfeeder is a background task that reads process stdout and feeds it into the ACP reader. It completes when the process exits, so callers can await feeder to detect unexpected process termination.\nproc_info collects stderr output and the exit code as the process runs. Inspect after await feeder for full diagnostics.\nUsage::\nasync with acp_connection(proc) as (conn, feeder, proc_info):\n    await conn.initialize(...)\n    session = await conn.new_session(...)\n    await conn.prompt(...)\n\nSource\n\n@contextlib.asynccontextmanager\nasync def acp_connection(\n    proc: ExecRemoteProcess,\n) -&gt; AsyncIterator[tuple[ClientSideConnection, asyncio.Task[None], ErrorInfo]]\n\nproc ExecRemoteProcess",
+    "crumbs": [
+      "Home",
+      "Reference"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html",
+    "href": "gemini_cli.html",
+    "title": "Gemini CLI",
+    "section": "",
+    "text": "The gemini_cli() agent uses the unattended mode of Google Gemini CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteGemini CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Gemini CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Gemini CLI is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html#overview",
+    "href": "gemini_cli.html#overview",
+    "title": "Gemini CLI",
+    "section": "",
+    "text": "The gemini_cli() agent uses the unattended mode of Google Gemini CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteGemini CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Gemini CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Gemini CLI is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Gemini CLI"
+    ]
+  },
+  {
+    "objectID": "gemini_cli.html#basic-usage",
+    "href": "gemini_cli.html#basic-usage",
+    "title": "Gemini CLI",
     "section": "Basic Usage",
-    "text": "Basic Usage\nUse the mini_swe_agent() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import mini_swe_agent\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=mini_swe_agent(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/mini_swe_agent\nIf you want to try this out locally, see the system_explorer example.",
+    "text": "Basic Usage\nUse the gemini_cli() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import gemini_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=gemini_cli(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/gemini_cli\nIf you want to try this out locally, see the system_explorer example.",
     "crumbs": [
       "Home",
       "Agents",
-      "Mini SWE Agent"
+      "Gemini CLI"
     ]
   },
   {
-    "objectID": "mini_swe_agent.html#options",
-    "href": "mini_swe_agent.html#options",
-    "title": "Mini SWE Agent",
+    "objectID": "gemini_cli.html#options",
+    "href": "gemini_cli.html#options",
+    "title": "Gemini CLI",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\ncentaur\nRun in Centaur Mode, which makes mini-swe-agent available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncompaction\nCompaction strategy for managing context window overflow.\n\n\ncwd\nWorking directory for mini-swe-agent session.\n\n\nenv\nEnvironment variables to set for mini-swe-agent.\n\n\nuser\nUser to execute mini-swe-agent as in the sandbox.\n\n\nsandbox\nSandbox environment name.\n\n\nversion\nVersion of mini-swe-agent to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt:\nmini_swe_agent(\n    system_prompt=\"You are an ace system researcher.\",\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ncentaur\nRun in Centaur Mode, which makes Gemini CLI available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\ngemini_model\nGemini model name to pass to CLI. This bypasses the auto-router. Use \"gemini-2.5-pro\" (default) or \"gemini-2.5-flash\".\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorking directory for Gemini CLI session.\n\n\nenv\nEnvironment variables to set for Gemini CLI.\n\n\nversion\nVersion of Gemini CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt:\ngemini_cli(\n    system_prompt=\"You are an ace system researcher.\"\n)",
     "crumbs": [
       "Home",
       "Agents",
-      "Mini SWE Agent"
+      "Gemini CLI"
     ]
   },
   {
-    "objectID": "mini_swe_agent.html#installation",
-    "href": "mini_swe_agent.html#installation",
-    "title": "Mini SWE Agent",
-    "section": "Installation",
-    "text": "Installation\nBy default, the agent will install the current stable version of mini-swe-agent in the sandbox via Python wheels. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"stable\"\nInstall and use the default pinned stable version.\n\n\n\"sandbox\"\nUse the version of mini-swe-agent in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nInstall and use the latest version from PyPI.\n\n\n\"x.x.x\"\nInstall and use a specific version number.\n\n\n\nUnlike the other agents which use standalone binaries, mini-swe-agent is installed via Python wheels using uv. If you don’t ever want to rely on automatic installation of mini-swe-agent (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of mini-swe-agent you want to use in the sandbox, then use version=\"sandbox\":\nmini_swe_agent(version=\"sandbox\")\nPre-install mini-swe-agent in your sandbox Dockerfile:\nRUN pip install mini-swe-agent==2.2.3\nThen reference it with version=\"sandbox\" in your task.",
-    "crumbs": [
-      "Home",
-      "Agents",
-      "Mini SWE Agent"
-    ]
-  },
-  {
-    "objectID": "mini_swe_agent.html#centaur-mode",
-    "href": "mini_swe_agent.html#centaur-mode",
-    "title": "Mini SWE Agent",
-    "section": "Centaur Mode",
-    "text": "Centaur Mode\nThe mini_swe_agent() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes mini-swe-agent available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the mini_swe_agent() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import mini_swe_agent\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=mini_swe_agent(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/mini_swe_agent -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=mini_swe_agent(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
-    "crumbs": [
-      "Home",
-      "Agents",
-      "Mini SWE Agent"
-    ]
-  },
-  {
-    "objectID": "mini_swe_agent.html#troubleshooting",
-    "href": "mini_swe_agent.html#troubleshooting",
-    "title": "Mini SWE Agent",
-    "section": "Troubleshooting",
-    "text": "Troubleshooting\nIf mini-swe-agent doesn’t appear to be working or working as expected, you can troubleshoot by dumping the mini-swe-agent debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"mini-swe-agent\"",
-    "crumbs": [
-      "Home",
-      "Agents",
-      "Mini SWE Agent"
-    ]
-  },
-  {
-    "objectID": "codex_cli.html",
-    "href": "codex_cli.html",
-    "title": "Codex CLI",
-    "section": "",
-    "text": "The codex_cli() agent uses the unattended mode of OpenAI Codex CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteCodex CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used—see the Installation section below for details.",
-    "crumbs": [
-      "Home",
-      "Agents",
-      "Codex CLI"
-    ]
-  },
-  {
-    "objectID": "codex_cli.html#overview",
-    "href": "codex_cli.html#overview",
-    "title": "Codex CLI",
-    "section": "",
-    "text": "The codex_cli() agent uses the unattended mode of OpenAI Codex CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteCodex CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used—see the Installation section below for details.",
-    "crumbs": [
-      "Home",
-      "Agents",
-      "Codex CLI"
-    ]
-  },
-  {
-    "objectID": "codex_cli.html#basic-usage",
-    "href": "codex_cli.html#basic-usage",
-    "title": "Codex CLI",
-    "section": "Basic Usage",
-    "text": "Basic Usage\nUse the codex_cli() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import codex_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=codex_cli(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/codex_cli\nIf you want to try this out locally, see the system_explorer example.",
-    "crumbs": [
-      "Home",
-      "Agents",
-      "Codex CLI"
-    ]
-  },
-  {
-    "objectID": "codex_cli.html#options",
-    "href": "codex_cli.html#options",
-    "title": "Codex CLI",
-    "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmodel_config\nModel configuration profile (e.g. used to determine the system prompt). Defaults to gpt-5-codex.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"web_search\")\n\n\ncentaur\nRun in Centaur Mode, which makes Codex CLI available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\nhome_dir\nHome directory to use for codex cli. When set, AGENTS.md and the MCP configuration will be written here rather than to .codex\n\n\ncwd\nWorking directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the web_search tool:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"web_search\"]\n)",
-    "crumbs": [
-      "Home",
-      "Agents",
-      "Codex CLI"
-    ]
-  },
-  {
-    "objectID": "codex_cli.html#mcp-servers",
-    "href": "codex_cli.html#mcp-servers",
-    "title": "Codex CLI",
+    "objectID": "gemini_cli.html#mcp-servers",
+    "href": "gemini_cli.html#mcp-servers",
+    "title": "Gemini CLI",
     "section": "MCP Servers",
-    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Codex CLI. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MCP server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import codex_cli\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=codex_cli(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
+    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Gemini CLI. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MCP server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import gemini_cli\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=gemini_cli(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
     "crumbs": [
       "Home",
       "Agents",
-      "Codex CLI"
+      "Gemini CLI"
     ]
   },
   {
-    "objectID": "codex_cli.html#bridged-tools",
-    "href": "codex_cli.html#bridged-tools",
-    "title": "Codex CLI",
+    "objectID": "gemini_cli.html#bridged-tools",
+    "href": "gemini_cli.html#bridged-tools",
+    "title": "Gemini CLI",
     "section": "Bridged Tools",
-    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import codex_cli\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=codex_cli(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
+    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import gemini_cli\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=gemini_cli(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
     "crumbs": [
       "Home",
       "Agents",
-      "Codex CLI"
+      "Gemini CLI"
     ]
   },
   {
-    "objectID": "codex_cli.html#installation",
-    "href": "codex_cli.html#installation",
-    "title": "Codex CLI",
+    "objectID": "gemini_cli.html#installation",
+    "href": "gemini_cli.html#installation",
+    "title": "Gemini CLI",
     "section": "Installation",
-    "text": "Installation\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Codex CLI in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of Codex CLI in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Codex CLI (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Codex CLI you want to use in the sandbox, then use version=\"sandbox\":\ncodex_cli(version=\"sandbox\")\nDownload the version of Codex CLI you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"codex_cli\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\ncodex_cli(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
+    "text": "Installation\nBy default, the agent will download the current stable version of Gemini CLI and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Gemini CLI in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of Gemini CLI in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x-preview.y\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Gemini CLI (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Gemini CLI you want to use in the sandbox, then use version=\"sandbox\":\ngemini_cli(version=\"sandbox\")\nDownload the version of Gemini CLI you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"gemini_cli\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\ngemini_cli(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
     "crumbs": [
       "Home",
       "Agents",
-      "Codex CLI"
+      "Gemini CLI"
     ]
   },
   {
-    "objectID": "codex_cli.html#centaur-mode",
-    "href": "codex_cli.html#centaur-mode",
-    "title": "Codex CLI",
+    "objectID": "gemini_cli.html#centaur-mode",
+    "href": "gemini_cli.html#centaur-mode",
+    "title": "Gemini CLI",
     "section": "Centaur Mode",
-    "text": "Centaur Mode\nThe codex_cli() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes Codex CLI available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the codex_cli() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import codex_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=codex_cli(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/codex_cli -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=codex_cli(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
+    "text": "Centaur Mode\nThe gemini_cli() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes Gemini CLI available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the gemini_cli() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import gemini_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=gemini_cli(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/gemini_cli -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=gemini_cli(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
     "crumbs": [
       "Home",
       "Agents",
-      "Codex CLI"
+      "Gemini CLI"
     ]
   },
   {
-    "objectID": "codex_cli.html#troubleshooting",
-    "href": "codex_cli.html#troubleshooting",
-    "title": "Codex CLI",
+    "objectID": "gemini_cli.html#troubleshooting",
+    "href": "gemini_cli.html#troubleshooting",
+    "title": "Gemini CLI",
     "section": "Troubleshooting",
-    "text": "Troubleshooting\nIf Codex CLI doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Codex CLI debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"Codex CLI\"",
+    "text": "Troubleshooting\nIf Gemini CLI doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Gemini CLI debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"Gemini CLI\"",
     "crumbs": [
       "Home",
       "Agents",
-      "Codex CLI"
+      "Gemini CLI"
     ]
   },
   {
-    "objectID": "index.html",
-    "href": "index.html",
-    "title": "Inspect SWE",
+    "objectID": "opencode.html",
+    "href": "opencode.html",
+    "title": "OpenCode",
     "section": "",
-    "text": "The inspect_swe package makes software engineering agents like Claude Code, Codex CLI, Gemini CLI, OpenCode, and Mini SWE Agent. available as standard Inspect agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge().\nAgents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents, and that features like token or time limits and log transcripts work as normal with the agents.",
-    "crumbs": [
-      "Home",
-      "Getting Started"
-    ]
-  },
-  {
-    "objectID": "index.html#overview",
-    "href": "index.html#overview",
-    "title": "Inspect SWE",
-    "section": "",
-    "text": "The inspect_swe package makes software engineering agents like Claude Code, Codex CLI, Gemini CLI, OpenCode, and Mini SWE Agent. available as standard Inspect agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge().\nAgents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents, and that features like token or time limits and log transcripts work as normal with the agents.",
-    "crumbs": [
-      "Home",
-      "Getting Started"
-    ]
-  },
-  {
-    "objectID": "index.html#getting-started",
-    "href": "index.html#getting-started",
-    "title": "Inspect SWE",
-    "section": "Getting Started",
-    "text": "Getting Started\nInstall Inspect SWE from PyPI with:\npip install inspect-swe\nThen, try out one or more of the available agents:\n\n\n\n\n\n\n\nAgent\nDescription\n\n\n\n\nclaude_code()\nAnthropic’s agentic coding tool Claude Code\n\n\ncodex_cli()\nOpenAI’s terminal-based coding agent Codex CLI\n\n\ngemini_cli()\nGoogle’s open-source AI agent Gemini CLI\n\n\nopencode()\nProvider-independent terminal-based coding agent.\n\n\nmini_swe_agent()\nSWE-agent’s minimal 100-line agent.",
-    "crumbs": [
-      "Home",
-      "Getting Started"
-    ]
-  },
-  {
-    "objectID": "claude_code.html",
-    "href": "claude_code.html",
-    "title": "Claude Code",
-    "section": "",
-    "text": "The claude_code() agent uses the unattended mode of Anthropic Claude Code to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.",
+    "text": "The opencode() agent uses the unattended mode of Anomaly OpenCode to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteOpenCode Installation\n\n\n\nBy default, the agent will download the current stable version of OpenCode and copy it to the sandbox. You can also exercise more explicit control over which version of OpenCode is used—see the Installation section below for details.",
     "crumbs": [
       "Home",
       "Agents",
-      "Claude Code"
+      "OpenCode"
     ]
   },
   {
-    "objectID": "claude_code.html#overview",
-    "href": "claude_code.html#overview",
-    "title": "Claude Code",
+    "objectID": "opencode.html#overview",
+    "href": "opencode.html#overview",
+    "title": "OpenCode",
     "section": "",
-    "text": "The claude_code() agent uses the unattended mode of Anthropic Claude Code to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.",
+    "text": "The opencode() agent uses the unattended mode of Anomaly OpenCode to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteOpenCode Installation\n\n\n\nBy default, the agent will download the current stable version of OpenCode and copy it to the sandbox. You can also exercise more explicit control over which version of OpenCode is used—see the Installation section below for details.",
     "crumbs": [
       "Home",
       "Agents",
-      "Claude Code"
+      "OpenCode"
     ]
   },
   {
-    "objectID": "claude_code.html#basic-usage",
-    "href": "claude_code.html#basic-usage",
-    "title": "Claude Code",
+    "objectID": "opencode.html#basic-usage",
+    "href": "opencode.html#basic-usage",
+    "title": "OpenCode",
     "section": "Basic Usage",
-    "text": "Basic Usage\nUse the claude_code() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/claude_code\nIf you want to try this out locally, see the system_explorer example.",
+    "text": "Basic Usage\nUse the opencode() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import opencode\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=opencode(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/opencode\nIf you want to try this out locally, see the system_explorer example.",
     "crumbs": [
       "Home",
       "Agents",
-      "Claude Code"
+      "OpenCode"
     ]
   },
   {
-    "objectID": "claude_code.html#options",
-    "href": "claude_code.html#options",
-    "title": "Claude Code",
+    "objectID": "opencode.html#options",
+    "href": "opencode.html#options",
+    "title": "OpenCode",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"WebSearch\")\n\n\ncentaur\nRun in Centaur Mode, which makes Claude Code available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nopus_model\nThe model to use for opus, or for opusplan when Plan Mode is active. Defaults to model.\n\n\nsonnet_model\nThe model to use for sonnet, or for opusplan when Plan Mode is not active. Defaults to model.\n\n\nhaiku_model\nThe model to use for haiku, or background functionality. Defaults to model.\n\n\nsubagent_model\nThe model to use for subagents. Defaults to model.\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? Defaults to 3.\n\n\nretry_uncaught_errors\nShould uncaught errors (unexpected crashes of Claude Code) be retried? Defaults to 3.\n\n\ncwd\nWorking directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebSearch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebSearch\"]\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ncentaur\nRun in Centaur Mode, which makes OpenCode available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nopencode_model\nOpenCode model identifier (provider/model) passed to the CLI. Default: \"anthropic/claude-sonnet-4-5\". The actual model calls still go through the Inspect bridge; this just selects which provider client OpenCode uses to format the request.\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorking directory for OpenCode session.\n\n\nenv\nEnvironment variables to set for OpenCode.\n\n\nversion\nVersion of OpenCode to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt:\nopencode(\n    system_prompt=\"You are an ace system researcher.\"\n)",
     "crumbs": [
       "Home",
       "Agents",
-      "Claude Code"
+      "OpenCode"
     ]
   },
   {
-    "objectID": "claude_code.html#mcp-servers",
-    "href": "claude_code.html#mcp-servers",
-    "title": "Claude Code",
+    "objectID": "opencode.html#mcp-servers",
+    "href": "opencode.html#mcp-servers",
+    "title": "OpenCode",
     "section": "MCP Servers",
-    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Claude Code. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MCP server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import claude_code\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=claude_code(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
+    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to OpenCode. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MCP server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import opencode\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=opencode(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
     "crumbs": [
       "Home",
       "Agents",
-      "Claude Code"
+      "OpenCode"
     ]
   },
   {
-    "objectID": "claude_code.html#bridged-tools",
-    "href": "claude_code.html#bridged-tools",
-    "title": "Claude Code",
+    "objectID": "opencode.html#bridged-tools",
+    "href": "opencode.html#bridged-tools",
+    "title": "OpenCode",
     "section": "Bridged Tools",
-    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import claude_code\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=claude_code(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
+    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import opencode\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=opencode(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
     "crumbs": [
       "Home",
       "Agents",
-      "Claude Code"
+      "OpenCode"
     ]
   },
   {
-    "objectID": "claude_code.html#installation",
-    "href": "claude_code.html#installation",
-    "title": "Claude Code",
+    "objectID": "opencode.html#installation",
+    "href": "opencode.html#installation",
+    "title": "OpenCode",
     "section": "Installation",
-    "text": "Installation\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Claude Code in the sandbox, otherwise download the current stable version.\n\n\n\"sandbox\"\nUse the version of Claude Code in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"stable\"\nDownload and use the current stable version.\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Claude Code (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Claude Code you want to use in the sandbox, then use version=\"sandbox\":\nclaude_code(version=\"sandbox\")\nDownload the version of Claude Code you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"claude_code\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\nclaude_code(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
+    "text": "Installation\nBy default, the agent will download the current latest version of OpenCode and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of OpenCode in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of OpenCode in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of OpenCode (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of OpenCode you want to use in the sandbox, then use version=\"sandbox\":\nopencode(version=\"sandbox\")\nDownload the version of OpenCode you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"opencode\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\nopencode(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
     "crumbs": [
       "Home",
       "Agents",
-      "Claude Code"
+      "OpenCode"
     ]
   },
   {
-    "objectID": "claude_code.html#centaur-mode",
-    "href": "claude_code.html#centaur-mode",
-    "title": "Claude Code",
+    "objectID": "opencode.html#centaur-mode",
+    "href": "opencode.html#centaur-mode",
+    "title": "OpenCode",
     "section": "Centaur Mode",
-    "text": "Centaur Mode\nThe claude_code() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes Claude Code available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the claude_code() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/claude_code -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=claude_code(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
+    "text": "Centaur Mode\nThe opencode() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes OpenCode available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the opencode() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import opencode\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=opencode(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/opencode -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=opencode(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
     "crumbs": [
       "Home",
       "Agents",
-      "Claude Code"
+      "OpenCode"
     ]
   },
   {
-    "objectID": "claude_code.html#troubleshooting",
-    "href": "claude_code.html#troubleshooting",
-    "title": "Claude Code",
+    "objectID": "opencode.html#troubleshooting",
+    "href": "opencode.html#troubleshooting",
+    "title": "OpenCode",
     "section": "Troubleshooting",
-    "text": "Troubleshooting\nIf Claude Code doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Claude Code debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"Claude Code\"",
+    "text": "Troubleshooting\nIf OpenCode doesn’t appear to be working or working as expected, you can troubleshoot by dumping the OpenCode debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"OpenCode\"",
     "crumbs": [
       "Home",
       "Agents",
-      "Claude Code"
+      "OpenCode"
     ]
   },
   {
@@ -337,18 +264,53 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "OpenCode: New agent backend wrapping OpenCode.\nCodex CLI: Disable telemetry by default.\nGemini CLI: Disable telemetry by default."
+    "text": "Codex CLI: Align the system prompt and tool set with the real bridged model. model_config now defaults to None, deriving Codex’s --model slug from the actual model. Pass an explicit model_config to override.\nCodex CLI: Add options for enabling/disabling web_search and goals tools (both default to enabled).\nCodex CLI: Improve MCP tests to check for correct tool names and assert results.\nGemini CLI: Explicity set auth type to “gemini-api-key” (required for recent versions of the CLI)."
   },
   {
     "objectID": "CHANGELOG.html#may-2026",
     "href": "CHANGELOG.html#may-2026",
     "title": "Inspect SWE",
     "section": "",
-    "text": "OpenCode: New agent backend wrapping OpenCode.\nCodex CLI: Disable telemetry by default.\nGemini CLI: Disable telemetry by default."
+    "text": "Codex CLI: Align the system prompt and tool set with the real bridged model. model_config now defaults to None, deriving Codex’s --model slug from the actual model. Pass an explicit model_config to override.\nCodex CLI: Add options for enabling/disabling web_search and goals tools (both default to enabled).\nCodex CLI: Improve MCP tests to check for correct tool names and assert results.\nGemini CLI: Explicity set auth type to “gemini-api-key” (required for recent versions of the CLI)."
   },
   {
     "objectID": "CHANGELOG.html#may-2026-1",
     "href": "CHANGELOG.html#may-2026-1",
+    "title": "Inspect SWE",
+    "section": "0.2.56 (25 May 2026)",
+    "text": "0.2.56 (25 May 2026)\n\nOpenCode: Install ripgrep for access to native skills.\nClaude Code: Improved live event capture (no longer requires injection of spans into transcript).\nClaude Code: Support for importing transcripts with new JSONL sub-agent file layout.\nClaude Code (ACP): Use officially supported ACP client (@agentclientprotocol/claude-agent-acp)"
+  },
+  {
+    "objectID": "CHANGELOG.html#may-2026-2",
+    "href": "CHANGELOG.html#may-2026-2",
+    "title": "Inspect SWE",
+    "section": "0.2.55 (16 May 2026)",
+    "text": "0.2.55 (16 May 2026)\n\nWorkaround for agent_client_protocol v0.10.0 connection bug."
+  },
+  {
+    "objectID": "CHANGELOG.html#may-2026-3",
+    "href": "CHANGELOG.html#may-2026-3",
+    "title": "Inspect SWE",
+    "section": "0.2.54 (13 May 2026)",
+    "text": "0.2.54 (13 May 2026)\n\nClaude Code (ACP): Allocate per-invocation bridge port."
+  },
+  {
+    "objectID": "CHANGELOG.html#may-2026-4",
+    "href": "CHANGELOG.html#may-2026-4",
+    "title": "Inspect SWE",
+    "section": "0.2.53 (13 May 2026)",
+    "text": "0.2.53 (13 May 2026)\n\nPin agent-client-protocol&gt;=0.9.0,&lt;0.10 until init ordering bug is fixed."
+  },
+  {
+    "objectID": "CHANGELOG.html#may-2026-5",
+    "href": "CHANGELOG.html#may-2026-5",
+    "title": "Inspect SWE",
+    "section": "0.2.52 (09 May 2026)",
+    "text": "0.2.52 (09 May 2026)\n\nOpenCode: New agent backend wrapping OpenCode.\nCodex CLI: Disable telemetry by default.\nGemini CLI: Disable telemetry by default."
+  },
+  {
+    "objectID": "CHANGELOG.html#may-2026-6",
+    "href": "CHANGELOG.html#may-2026-6",
     "title": "Inspect SWE",
     "section": "0.2.51 (07 May 2026)",
     "text": "0.2.51 (07 May 2026)\n\nGemini CLI: Fix MCP registration via GEMINI_CLI_TRUST_WORKSPACE.\nMini SWE Agent: Ensure that pip is available before attempting installation."
@@ -641,219 +603,333 @@
     "text": "v0.2.5 (01 September 2025)\nInitial release."
   },
   {
-    "objectID": "opencode.html",
-    "href": "opencode.html",
-    "title": "OpenCode",
+    "objectID": "claude_code.html",
+    "href": "claude_code.html",
+    "title": "Claude Code",
     "section": "",
-    "text": "The opencode() agent uses the unattended mode of Anomaly OpenCode to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteOpenCode Installation\n\n\n\nBy default, the agent will download the current stable version of OpenCode and copy it to the sandbox. You can also exercise more explicit control over which version of OpenCode is used—see the Installation section below for details.",
+    "text": "The claude_code() agent uses the unattended mode of Anthropic Claude Code to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.",
     "crumbs": [
       "Home",
       "Agents",
-      "OpenCode"
+      "Claude Code"
     ]
   },
   {
-    "objectID": "opencode.html#overview",
-    "href": "opencode.html#overview",
-    "title": "OpenCode",
+    "objectID": "claude_code.html#overview",
+    "href": "claude_code.html#overview",
+    "title": "Claude Code",
     "section": "",
-    "text": "The opencode() agent uses the unattended mode of Anomaly OpenCode to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteOpenCode Installation\n\n\n\nBy default, the agent will download the current stable version of OpenCode and copy it to the sandbox. You can also exercise more explicit control over which version of OpenCode is used—see the Installation section below for details.",
+    "text": "The claude_code() agent uses the unattended mode of Anthropic Claude Code to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteClaude Code Installation\n\n\n\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can also exercise more explicit control over which version of Claude Code is used—see the Installation section below for details.",
     "crumbs": [
       "Home",
       "Agents",
-      "OpenCode"
+      "Claude Code"
     ]
   },
   {
-    "objectID": "opencode.html#basic-usage",
-    "href": "opencode.html#basic-usage",
-    "title": "OpenCode",
+    "objectID": "claude_code.html#basic-usage",
+    "href": "claude_code.html#basic-usage",
+    "title": "Claude Code",
     "section": "Basic Usage",
-    "text": "Basic Usage\nUse the opencode() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import opencode\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=opencode(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/opencode\nIf you want to try this out locally, see the system_explorer example.",
+    "text": "Basic Usage\nUse the claude_code() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/claude_code\nIf you want to try this out locally, see the system_explorer example.",
     "crumbs": [
       "Home",
       "Agents",
-      "OpenCode"
+      "Claude Code"
     ]
   },
   {
-    "objectID": "opencode.html#options",
-    "href": "opencode.html#options",
-    "title": "OpenCode",
+    "objectID": "claude_code.html#options",
+    "href": "claude_code.html#options",
+    "title": "Claude Code",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ncentaur\nRun in Centaur Mode, which makes OpenCode available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nopencode_model\nOpenCode model identifier (provider/model) passed to the CLI. Default: \"anthropic/claude-sonnet-4-5\". The actual model calls still go through the Inspect bridge; this just selects which provider client OpenCode uses to format the request.\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorking directory for OpenCode session.\n\n\nenv\nEnvironment variables to set for OpenCode.\n\n\nversion\nVersion of OpenCode to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt:\nopencode(\n    system_prompt=\"You are an ace system researcher.\"\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ndisallowed_tools\nOptionally disallow tools (e.g. \"WebSearch\")\n\n\ncentaur\nRun in Centaur Mode, which makes Claude Code available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nopus_model\nThe model to use for opus, or for opusplan when Plan Mode is active. Defaults to model.\n\n\nsonnet_model\nThe model to use for sonnet, or for opusplan when Plan Mode is not active. Defaults to model.\n\n\nhaiku_model\nThe model to use for haiku, or background functionality. Defaults to model.\n\n\nsubagent_model\nThe model to use for subagents. Defaults to model.\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? Defaults to 3.\n\n\nretry_uncaught_errors\nShould uncaught errors (unexpected crashes of Claude Code) be retried? Defaults to 3.\n\n\ncwd\nWorking directory for Claude Code session.\n\n\nenv\nEnvironment variables to set for Claude Code.\n\n\nversion\nVersion of Claude Code to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt and disallow the WebSearch tool:\nclaude_code(\n    system_prompt=\"You are an ace system researcher.\",\n    disallowed_tools=[\"WebSearch\"]\n)",
     "crumbs": [
       "Home",
       "Agents",
-      "OpenCode"
+      "Claude Code"
     ]
   },
   {
-    "objectID": "opencode.html#mcp-servers",
-    "href": "opencode.html#mcp-servers",
-    "title": "OpenCode",
+    "objectID": "claude_code.html#mcp-servers",
+    "href": "claude_code.html#mcp-servers",
+    "title": "Claude Code",
     "section": "MCP Servers",
-    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to OpenCode. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MCP server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import opencode\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=opencode(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
+    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Claude Code. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MCP server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import claude_code\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=claude_code(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
     "crumbs": [
       "Home",
       "Agents",
-      "OpenCode"
+      "Claude Code"
     ]
   },
   {
-    "objectID": "opencode.html#bridged-tools",
-    "href": "opencode.html#bridged-tools",
-    "title": "OpenCode",
+    "objectID": "claude_code.html#bridged-tools",
+    "href": "claude_code.html#bridged-tools",
+    "title": "Claude Code",
     "section": "Bridged Tools",
-    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import opencode\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=opencode(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
+    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import claude_code\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=claude_code(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
     "crumbs": [
       "Home",
       "Agents",
-      "OpenCode"
+      "Claude Code"
     ]
   },
   {
-    "objectID": "opencode.html#installation",
-    "href": "opencode.html#installation",
-    "title": "OpenCode",
+    "objectID": "claude_code.html#installation",
+    "href": "claude_code.html#installation",
+    "title": "Claude Code",
     "section": "Installation",
-    "text": "Installation\nBy default, the agent will download the current latest version of OpenCode and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of OpenCode in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of OpenCode in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of OpenCode (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of OpenCode you want to use in the sandbox, then use version=\"sandbox\":\nopencode(version=\"sandbox\")\nDownload the version of OpenCode you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"opencode\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\nopencode(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
+    "text": "Installation\nBy default, the agent will download the current stable version of Claude Code and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Claude Code in the sandbox, otherwise download the current stable version.\n\n\n\"sandbox\"\nUse the version of Claude Code in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"stable\"\nDownload and use the current stable version.\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Claude Code (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Claude Code you want to use in the sandbox, then use version=\"sandbox\":\nclaude_code(version=\"sandbox\")\nDownload the version of Claude Code you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"claude_code\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\nclaude_code(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
     "crumbs": [
       "Home",
       "Agents",
-      "OpenCode"
+      "Claude Code"
     ]
   },
   {
-    "objectID": "opencode.html#centaur-mode",
-    "href": "opencode.html#centaur-mode",
-    "title": "OpenCode",
+    "objectID": "claude_code.html#centaur-mode",
+    "href": "claude_code.html#centaur-mode",
+    "title": "Claude Code",
     "section": "Centaur Mode",
-    "text": "Centaur Mode\nThe opencode() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes OpenCode available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the opencode() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import opencode\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=opencode(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/opencode -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=opencode(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
+    "text": "Centaur Mode\nThe claude_code() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes Claude Code available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the claude_code() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/claude_code -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=claude_code(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
     "crumbs": [
       "Home",
       "Agents",
-      "OpenCode"
+      "Claude Code"
     ]
   },
   {
-    "objectID": "opencode.html#troubleshooting",
-    "href": "opencode.html#troubleshooting",
-    "title": "OpenCode",
+    "objectID": "claude_code.html#troubleshooting",
+    "href": "claude_code.html#troubleshooting",
+    "title": "Claude Code",
     "section": "Troubleshooting",
-    "text": "Troubleshooting\nIf OpenCode doesn’t appear to be working or working as expected, you can troubleshoot by dumping the OpenCode debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"OpenCode\"",
+    "text": "Troubleshooting\nIf Claude Code doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Claude Code debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"Claude Code\"",
     "crumbs": [
       "Home",
       "Agents",
-      "OpenCode"
+      "Claude Code"
     ]
   },
   {
-    "objectID": "gemini_cli.html",
-    "href": "gemini_cli.html",
-    "title": "Gemini CLI",
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "Inspect SWE",
     "section": "",
-    "text": "The gemini_cli() agent uses the unattended mode of Google Gemini CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteGemini CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Gemini CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Gemini CLI is used—see the Installation section below for details.",
+    "text": "The inspect_swe package makes software engineering agents like Claude Code, Codex CLI, Gemini CLI, OpenCode, and Mini SWE Agent. available as standard Inspect agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge().\nAgents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents, and that features like token or time limits and log transcripts work as normal with the agents.",
     "crumbs": [
-      "Home",
-      "Agents",
-      "Gemini CLI"
+      "Home"
     ]
   },
   {
-    "objectID": "gemini_cli.html#overview",
-    "href": "gemini_cli.html#overview",
-    "title": "Gemini CLI",
+    "objectID": "index.html#overview",
+    "href": "index.html#overview",
+    "title": "Inspect SWE",
     "section": "",
-    "text": "The gemini_cli() agent uses the unattended mode of Google Gemini CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteGemini CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Gemini CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Gemini CLI is used—see the Installation section below for details.",
+    "text": "The inspect_swe package makes software engineering agents like Claude Code, Codex CLI, Gemini CLI, OpenCode, and Mini SWE Agent. available as standard Inspect agents. For example, here we use the claude_code() agent as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import claude_code\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=claude_code(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nInspect SWE agents are implemented using the Inspect sandbox_agent_bridge().\nAgents run inside the sample sandbox and their model API calls are proxied back to Inspect. This means that you can use any model with Inspect SWE agents, and that features like token or time limits and log transcripts work as normal with the agents.",
     "crumbs": [
-      "Home",
-      "Agents",
-      "Gemini CLI"
+      "Home"
     ]
   },
   {
-    "objectID": "gemini_cli.html#basic-usage",
-    "href": "gemini_cli.html#basic-usage",
-    "title": "Gemini CLI",
+    "objectID": "index.html#getting-started",
+    "href": "index.html#getting-started",
+    "title": "Inspect SWE",
+    "section": "Getting Started",
+    "text": "Getting Started\nInstall Inspect SWE from PyPI with:\npip install inspect-swe\nThen, try out one or more of the available agents:\n\n\n\n\n\n\n\nAgent\nDescription\n\n\n\n\nclaude_code()\nAnthropic’s agentic coding tool Claude Code\n\n\ncodex_cli()\nOpenAI’s terminal-based coding agent Codex CLI\n\n\ngemini_cli()\nGoogle’s open-source AI agent Gemini CLI\n\n\nopencode()\nProvider-independent terminal-based coding agent.\n\n\nmini_swe_agent()\nSWE-agent’s minimal 100-line agent.",
+    "crumbs": [
+      "Home"
+    ]
+  },
+  {
+    "objectID": "codex_cli.html",
+    "href": "codex_cli.html",
+    "title": "Codex CLI",
+    "section": "",
+    "text": "The codex_cli() agent uses the unattended mode of OpenAI Codex CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteCodex CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "codex_cli.html#overview",
+    "href": "codex_cli.html#overview",
+    "title": "Codex CLI",
+    "section": "",
+    "text": "The codex_cli() agent uses the unattended mode of OpenAI Codex CLI to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNoteCodex CLI Installation\n\n\n\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can also exercise more explicit control over which version of Codex CLI is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "codex_cli.html#basic-usage",
+    "href": "codex_cli.html#basic-usage",
+    "title": "Codex CLI",
     "section": "Basic Usage",
-    "text": "Basic Usage\nUse the gemini_cli() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import gemini_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=gemini_cli(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/gemini_cli\nIf you want to try this out locally, see the system_explorer example.",
+    "text": "Basic Usage\nUse the codex_cli() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import codex_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=codex_cli(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/codex_cli\nIf you want to try this out locally, see the system_explorer example.",
     "crumbs": [
       "Home",
       "Agents",
-      "Gemini CLI"
+      "Codex CLI"
     ]
   },
   {
-    "objectID": "gemini_cli.html#options",
-    "href": "gemini_cli.html#options",
-    "title": "Gemini CLI",
+    "objectID": "codex_cli.html#options",
+    "href": "codex_cli.html#options",
+    "title": "Codex CLI",
     "section": "Options",
-    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\ncentaur\nRun in Centaur Mode, which makes Gemini CLI available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\ngemini_model\nGemini model name to pass to CLI. This bypasses the auto-router. Use \"gemini-2.5-pro\" (default) or \"gemini-2.5-flash\".\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncwd\nWorking directory for Gemini CLI session.\n\n\nenv\nEnvironment variables to set for Gemini CLI.\n\n\nversion\nVersion of Gemini CLI to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt:\ngemini_cli(\n    system_prompt=\"You are an ace system researcher.\"\n)",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\nmodel_config\nCodex model slug used to select the system prompt and tool set. Defaults to None, which derives the slug from the model used by the agent.\n\n\nskills\nAdditional skills to make available to the agent.\n\n\nmcp_servers\nMCP servers (see MCP Servers below for details).\n\n\nbridged_tools\nHost-side Inspect tools to expose via MCP (see Bridged Tools below for details).\n\n\nweb_search\nWeb search mode. Use \"live\" for live web search, \"cached\" for cached web search, or \"disabled\" to disable web search. Defaults to \"live\".\n\n\ngoals\nEnable Codex goal tools. Defaults to True.\n\n\ncentaur\nRun in Centaur Mode, which makes Codex CLI available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\nhome_dir\nHome directory to use for codex cli. When set, AGENTS.md and the MCP configuration will be written here rather than to .codex\n\n\ncwd\nWorking directory for Codex CLI session.\n\n\nenv\nEnvironment variables to set for Codex CLI.\n\n\nversion\nVersion of Codex CLI to use (see Installation below for details)\n\n\nconfig_overrides\nAdditional Codex CLI configuration overrides.\n\n\n\nFor example, here we specify a custom system prompt and disable the web search and goals tools:\ncodex_cli(\n    system_prompt=\"You are an ace system researcher.\",\n    web_search=\"disabled\",\n    goals=False,\n)",
     "crumbs": [
       "Home",
       "Agents",
-      "Gemini CLI"
+      "Codex CLI"
     ]
   },
   {
-    "objectID": "gemini_cli.html#mcp-servers",
-    "href": "gemini_cli.html#mcp-servers",
-    "title": "Gemini CLI",
+    "objectID": "codex_cli.html#mcp-servers",
+    "href": "codex_cli.html#mcp-servers",
+    "title": "Codex CLI",
     "section": "MCP Servers",
-    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Gemini CLI. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MCP server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import gemini_cli\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=gemini_cli(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
+    "text": "MCP Servers\nYou can specify one or more Model Context Protocol (MCP) servers to provide additional tools to Codex CLI. Servers are specified via the MCPServerConfig class and its Stdio and HTTP variants.\nFor example, here is a Dockerfile that makes the server-memory MCP server available in the sandbox container:\nFROM python:3.12-bookworm\n\n# nodejs (required by mcp server)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# memory mcp server\nRUN npx --yes @modelcontextprotocol/server-memory --version\n\n# run forever\nCMD [\"tail\", \"-f\", \"/dev/null\"]\nNote that we run the npx server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the --offline option).\nWe can then use this MCP server in a task as follows:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import MCPServerConfigStdio\nfrom inspect_swe import codex_cli\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(\n                input=\"What transport protocols are supported in \"\n                + \" the 2025-03-26 version of the MCP spec?\"\n            )\n        ],\n        solver=codex_cli(\n            system_prompt=\"Please use the web search tool to \"\n            + \"research this question and the memory tools \"\n            + \"to keep track of your research.\",\n            mcp_servers=[\n                MCPServerConfigStdio(\n                    name=\"memory\",\n                    command=\"npx\",\n                    args=[\n                        \"--offline\",\n                        \"@modelcontextprotocol/server-memory\"\n                    ],\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nNote that we run the MCP server using the --offline option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).",
     "crumbs": [
       "Home",
       "Agents",
-      "Gemini CLI"
+      "Codex CLI"
     ]
   },
   {
-    "objectID": "gemini_cli.html#bridged-tools",
-    "href": "gemini_cli.html#bridged-tools",
-    "title": "Gemini CLI",
+    "objectID": "codex_cli.html#bridged-tools",
+    "href": "codex_cli.html#bridged-tools",
+    "title": "Codex CLI",
     "section": "Bridged Tools",
-    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import gemini_cli\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=gemini_cli(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
+    "text": "Bridged Tools\nYou can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the bridged_tools parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.\nTools are specified via BridgedToolsSpec which wraps a list of Inspect tools:\nfrom inspect_ai import Task, task\nfrom inspect_ai.agent import BridgedToolsSpec\nfrom inspect_ai.dataset import Sample\nfrom inspect_ai.tool import tool\nfrom inspect_swe import codex_cli\n\n@tool\ndef search_database():\n    async def execute(query: str) -&gt; str:\n        \"\"\"Search the internal database.\n\n        Args:\n            query: The search query.\n        \"\"\"\n        # This runs on the host, not in the sandbox\n        return f\"Results for: {query}\"\n    return execute\n\n@task\ndef investigator() -&gt; Task:\n    return Task(\n        dataset=[\n            Sample(input=\"Search for information about MCP protocols.\")\n        ],\n        solver=codex_cli(\n            system_prompt=\"Use the search tool to research.\",\n            bridged_tools=[\n                BridgedToolsSpec(\n                    name=\"host_tools\",\n                    tools=[search_database()]\n                )\n            ]\n        ),\n        sandbox=(\"docker\", \"Dockerfile\"),\n    )\nThe name field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple BridgedToolsSpec instances to create separate MCP servers for different tool groups.\nSee the Bridged Tools documentation for more details on the architecture and how tool execution flows between host and sandbox.",
     "crumbs": [
       "Home",
       "Agents",
-      "Gemini CLI"
+      "Codex CLI"
     ]
   },
   {
-    "objectID": "gemini_cli.html#installation",
-    "href": "gemini_cli.html#installation",
-    "title": "Gemini CLI",
+    "objectID": "codex_cli.html#installation",
+    "href": "codex_cli.html#installation",
+    "title": "Codex CLI",
     "section": "Installation",
-    "text": "Installation\nBy default, the agent will download the current stable version of Gemini CLI and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Gemini CLI in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of Gemini CLI in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x-preview.y\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Gemini CLI (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Gemini CLI you want to use in the sandbox, then use version=\"sandbox\":\ngemini_cli(version=\"sandbox\")\nDownload the version of Gemini CLI you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"gemini_cli\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\ngemini_cli(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
+    "text": "Installation\nBy default, the agent will download the current stable version of Codex CLI and copy it to the sandbox. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"auto\"\nUse any available version of Codex CLI in the sandbox, otherwise download the latest version.\n\n\n\"sandbox\"\nUse the version of Codex CLI in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nDownload and use the very latest version.\n\n\n\"x.x.x\"\nDownload and use a specific version number.\n\n\n\nIf you don’t ever want to rely on automatic downloads of Codex CLI (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of Codex CLI you want to use in the sandbox, then use version=\"sandbox\":\ncodex_cli(version=\"sandbox\")\nDownload the version of Codex CLI you want to use into the cache, then specify that version explicitly:\n# download the agent binary during installation/configuration\ndownload_agent_binary(\"codex_cli\", \"0.29.0\", \"linux-x64\")\n\n# reference that version in your task (no download will occur)\ncodex_cli(version=\"0.29.0\")\nNote that the 5 most recently downloaded versions are retained in the cache. Use the cached_agent_binaries() function to list the contents of the cache.",
     "crumbs": [
       "Home",
       "Agents",
-      "Gemini CLI"
+      "Codex CLI"
     ]
   },
   {
-    "objectID": "gemini_cli.html#centaur-mode",
-    "href": "gemini_cli.html#centaur-mode",
-    "title": "Gemini CLI",
+    "objectID": "codex_cli.html#centaur-mode",
+    "href": "codex_cli.html#centaur-mode",
+    "title": "Codex CLI",
     "section": "Centaur Mode",
-    "text": "Centaur Mode\nThe gemini_cli() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes Gemini CLI available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the gemini_cli() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import gemini_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=gemini_cli(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/gemini_cli -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=gemini_cli(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
+    "text": "Centaur Mode\nThe codex_cli() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes Codex CLI available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the codex_cli() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import codex_cli\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=codex_cli(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/codex_cli -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=codex_cli(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
     "crumbs": [
       "Home",
       "Agents",
-      "Gemini CLI"
+      "Codex CLI"
     ]
   },
   {
-    "objectID": "gemini_cli.html#troubleshooting",
-    "href": "gemini_cli.html#troubleshooting",
-    "title": "Gemini CLI",
+    "objectID": "codex_cli.html#troubleshooting",
+    "href": "codex_cli.html#troubleshooting",
+    "title": "Codex CLI",
     "section": "Troubleshooting",
-    "text": "Troubleshooting\nIf Gemini CLI doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Gemini CLI debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"Gemini CLI\"",
+    "text": "Troubleshooting\nIf Codex CLI doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Codex CLI debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"Codex CLI\"",
     "crumbs": [
       "Home",
       "Agents",
-      "Gemini CLI"
+      "Codex CLI"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html",
+    "href": "mini_swe_agent.html",
+    "title": "Mini SWE Agent",
+    "section": "",
+    "text": "The mini_swe_agent() agent uses the unattended mode of SWE-agent mini-swe-agent to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNotemini-swe-agent Installation\n\n\n\nBy default, the agent will download the current stable version of mini-swe-agent and copy it to the sandbox. You can also exercise more explicit control over which version of mini-swe-agent is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#overview",
+    "href": "mini_swe_agent.html#overview",
+    "title": "Mini SWE Agent",
+    "section": "",
+    "text": "The mini_swe_agent() agent uses the unattended mode of SWE-agent mini-swe-agent to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.\n\n\n\n\n\n\nNotemini-swe-agent Installation\n\n\n\nBy default, the agent will download the current stable version of mini-swe-agent and copy it to the sandbox. You can also exercise more explicit control over which version of mini-swe-agent is used—see the Installation section below for details.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#basic-usage",
+    "href": "mini_swe_agent.html#basic-usage",
+    "title": "Mini SWE Agent",
+    "section": "Basic Usage",
+    "text": "Basic Usage\nUse the mini_swe_agent() agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import mini_swe_agent\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=mini_swe_agent(),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also pass the agent as a --solver on the command line:\ninspect eval ctf.py --solver inspect_swe/mini_swe_agent\nIf you want to try this out locally, see the system_explorer example.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#options",
+    "href": "mini_swe_agent.html#options",
+    "title": "Mini SWE Agent",
+    "section": "Options",
+    "text": "Options\nThe following options are supported for customizing the behavior of the agent:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\nsystem_prompt\nAdditional system prompt to append to default system prompt.\n\n\ncentaur\nRun in Centaur Mode, which makes mini-swe-agent available to an Inspect human_cli() agent rather than running it unattended.\n\n\nattempts\nAllow the agent to have multiple scored attempts at solving the task.\n\n\nmodel\nModel name to use for agent (defaults to main model for task).\n\n\nfilter\nFilter for intercepting bridged model requests.\n\n\nretry_refusals\nShould refusals be retried? (pass number of times to retry)\n\n\ncompaction\nCompaction strategy for managing context window overflow.\n\n\ncwd\nWorking directory for mini-swe-agent session.\n\n\nenv\nEnvironment variables to set for mini-swe-agent.\n\n\nuser\nUser to execute mini-swe-agent as in the sandbox.\n\n\nsandbox\nSandbox environment name.\n\n\nversion\nVersion of mini-swe-agent to use (see Installation below for details)\n\n\n\nFor example, here we specify a custom system prompt:\nmini_swe_agent(\n    system_prompt=\"You are an ace system researcher.\",\n)",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#installation",
+    "href": "mini_swe_agent.html#installation",
+    "title": "Mini SWE Agent",
+    "section": "Installation",
+    "text": "Installation\nBy default, the agent will install the current stable version of mini-swe-agent in the sandbox via Python wheels. You can override this behaviour using the version option:\n\n\n\n\n\n\n\nOption\nDescription\n\n\n\n\n\"stable\"\nInstall and use the default pinned stable version.\n\n\n\"sandbox\"\nUse the version of mini-swe-agent in the sandbox (raises RuntimeError if not available in the sandbox)\n\n\n\"latest\"\nInstall and use the latest version from PyPI.\n\n\n\"x.x.x\"\nInstall and use a specific version number.\n\n\n\nUnlike the other agents which use standalone binaries, mini-swe-agent is installed via Python wheels using uv. If you don’t ever want to rely on automatic installation of mini-swe-agent (e.g. if you run your evaluations offline), you can use one of two approaches:\n\nPre-install the version of mini-swe-agent you want to use in the sandbox, then use version=\"sandbox\":\nmini_swe_agent(version=\"sandbox\")\nPre-install mini-swe-agent in your sandbox Dockerfile:\nRUN pip install mini-swe-agent==2.2.3\nThen reference it with version=\"sandbox\" in your task.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#centaur-mode",
+    "href": "mini_swe_agent.html#centaur-mode",
+    "title": "Mini SWE Agent",
+    "section": "Centaur Mode",
+    "text": "Centaur Mode\nThe mini_swe_agent() agent can also be run in “centaur” mode which uses the Inspect AI Human Agent as the solver and makes mini-swe-agent available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.\nEnable centaur mode by passing centaur=True to the mini_swe_agent() agent:\nfrom inspect_ai import Task, task\nfrom inspect_ai.dataset import json_dataset\nfrom inspect_ai.scorer import model_graded_qa\n\nfrom inspect_swe import mini_swe_agent\n\n@task\ndef system_explorer() -&gt; Task:\n    return Task(\n        dataset=json_dataset(\"dataset.json\"),\n        solver=mini_swe_agent(centaur=True),\n        scorer=model_graded_qa(),\n        sandbox=\"docker\",\n    )\nYou can also enable centaur mode from the CLI using a solver arg (-S):\ninspect eval ctf.py --solver inspect_swe/mini_swe_agent -S centaur=true\nYou can also pass CentaurOptions to further customize the behavior of the human agent. For example:\nfrom inspect_swe import CentaurOptions\n\nTask(\n    dataset=json_dataset(\"dataset.json\"),\n    solver=mini_swe_agent(centaur=CentaurOptions(answer=False)),\n    scorer=model_graded_qa(),\n    sandbox=\"docker\",\n)\nSee the human_cli() documentation for details on available options.",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
+    ]
+  },
+  {
+    "objectID": "mini_swe_agent.html#troubleshooting",
+    "href": "mini_swe_agent.html#troubleshooting",
+    "title": "Mini SWE Agent",
+    "section": "Troubleshooting",
+    "text": "Troubleshooting\nIf mini-swe-agent doesn’t appear to be working or working as expected, you can troubleshoot by dumping the mini-swe-agent debug log after an evaluation task is complete. You can do this with:\ninspect trace dump --filter \"mini-swe-agent\"",
+    "crumbs": [
+      "Home",
+      "Agents",
+      "Mini SWE Agent"
     ]
   }
 ]

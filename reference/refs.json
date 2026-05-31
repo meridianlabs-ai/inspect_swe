@@ -1,0 +1,19 @@
+{
+  "claude_code": "index.qmd#claude_code",
+  "codex_cli": "index.qmd#codex_cli",
+  "gemini_cli": "index.qmd#gemini_cli",
+  "opencode": "index.qmd#opencode",
+  "mini_swe_agent": "index.qmd#mini_swe_agent",
+  "download_agent_binary": "index.qmd#download_agent_binary",
+  "cached_agent_binaries": "index.qmd#cached_agent_binaries",
+  "download_wheels_tarball": "index.qmd#download_wheels_tarball",
+  "AgentBinary": "index.qmd#agentbinary",
+  "SandboxPlatform": "index.qmd#sandboxplatform",
+  "interactive_claude_code": "index.qmd#interactive_claude_code",
+  "interactive_codex_cli": "index.qmd#interactive_codex_cli",
+  "interactive_gemini_cli": "index.qmd#interactive_gemini_cli",
+  "bridge_mcp_to_acp": "index.qmd#bridge_mcp_to_acp",
+  "ACPAgent": "index.qmd#acpagent",
+  "ACPAgentParams": "index.qmd#acpagentparams",
+  "acp_connection": "index.qmd#acp_connection"
+}

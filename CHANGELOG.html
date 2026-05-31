@@ -2,7 +2,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
 
 <meta charset="utf-8">
-<meta name="generator" content="quarto-1.9.36">
+<meta name="generator" content="quarto-1.9.38">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
@@ -39,10 +39,10 @@ ul.task-list li input[type="checkbox"] {
 <script src="site_libs/quarto-html/tippy.umd.min.js"></script>
 <script src="site_libs/quarto-html/anchor.min.js"></script>
 <link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
-<link href="site_libs/quarto-html/quarto-syntax-highlighting-845c23b38eaddc0f92fda52bfe77a8c8.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting-15634bcf2e68342d4ad2dfa704d543f6.css" rel="stylesheet" id="quarto-text-highlighting-styles">
 <script src="site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="site_libs/bootstrap/bootstrap-158031087360bce0ff56dc785ce39e06.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<link href="site_libs/bootstrap/bootstrap-60b6846f58d02926bc6ca5ecd6f15c48.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
 <script id="quarto-search-options" type="application/json">{
   "location": "navbar",
   "copy-button": false,
@@ -70,12 +70,20 @@ ul.task-list li input[type="checkbox"] {
     "search-label": "Search"
   }
 }</script>
+<link rel="alternate" type="text/markdown" title="LLM-readable docs index" href="./llms.txt">
+<link rel="alternate" type="text/markdown" title="LLM-readable docs (full)" href="./llms-full.txt">
+<link rel="alternate" type="text/markdown" title="LLM-readable docs (user guide)" href="./llms-guide.txt">
 
 
-<link rel="stylesheet" href="styles.css">
+<meta property="og:title" content="Inspect SWE">
+<meta property="og:description" content="Software engineering agents for Inspect AI.">
+<meta property="og:site_name" content="Inspect SWE">
+<meta name="twitter:title" content="Inspect SWE">
+<meta name="twitter:description" content="Software engineering agents for Inspect AI.">
+<meta name="twitter:card" content="summary">
 </head>
 
-<body class="nav-sidebar floating nav-fixed quarto-light">
+<body class="nav-fixed quarto-light">
 
 <div id="quarto-search-results"></div>
   <header id="quarto-header" class="headroom fixed-top">
@@ -93,7 +101,7 @@ ul.task-list li input[type="checkbox"] {
           <div class="collapse navbar-collapse" id="navbarCollapse">
             <ul class="navbar-nav navbar-nav-scroll me-auto">
   <li class="nav-item">
-    <a class="nav-link active" href="./index.html" aria-current="page"> 
+    <a class="nav-link" href="./index.html"> 
 <span class="menu-text">Home</span></a>
   </li>  
   <li class="nav-item dropdown ">
@@ -123,14 +131,18 @@ ul.task-list li input[type="checkbox"] {
   </li>  
     </ul>
   </li>
+  <li class="nav-item">
+    <a class="nav-link" href="./reference/index.html"> 
+<span class="menu-text">Reference</span></a>
+  </li>  
 </ul>
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
-    <a class="nav-link" href="./CHANGELOG.html"> 
+    <a class="nav-link active" href="./CHANGELOG.html" aria-current="page"> 
 <span class="menu-text">Changelog</span></a>
   </li>  
   <li class="nav-item compact">
-    <a class="nav-link" href="https://github.com/meridianlabs-ai/inspect_swe"> <i class="bi bi-github" role="img" aria-label="GitHub">
+    <a class="nav-link" href="https://github.com/meridianlabs-ai/inspect_swe"> <i class="bi bi-github" role="img">
 </i> 
 <span class="menu-text"></span></a>
   </li>  
@@ -140,82 +152,23 @@ ul.task-list li input[type="checkbox"] {
 </div>
       </div> <!-- /container-fluid -->
     </nav>
-  <nav class="quarto-secondary-nav">
-    <div class="container-fluid d-flex">
-      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
-        <i class="bi bi-layout-text-sidebar-reverse"></i>
-      </button>
-        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"></ol></nav>
-        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
-        </a>
-    </div>
-  </nav>
 </header>
 <!-- content -->
 <div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
 <!-- sidebar -->
-  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
-    <div class="sidebar-menu-container"> 
-    <ul class="list-unstyled mt-1">
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="./index.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Getting Started</span></a>
-  </div>
-</li>
-        <li class="sidebar-item sidebar-item-section">
-      <div class="sidebar-item-container"> 
-            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true">
- <span class="menu-text">Agents</span></a>
-          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true" aria-label="Toggle section">
-            <i class="bi bi-chevron-right ms-2"></i>
-          </a> 
-      </div>
-      <ul id="quarto-sidebar-section-1" class="collapse list-unstyled sidebar-section depth1 show">  
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="./claude_code.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Claude Code</span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="./codex_cli.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Codex CLI</span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="./gemini_cli.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Gemini CLI</span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="./opencode.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">OpenCode</span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="./mini_swe_agent.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Mini SWE Agent</span></a>
-  </div>
-</li>
-      </ul>
-  </li>
-    </ul>
-    </div>
-</nav>
-<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
 <!-- margin-sidebar -->
     <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
-        <nav id="TOC" role="doc-toc" class="toc-active">
+        <nav id="TOC" role="doc-toc" class="toc-active" data-toc-expanded="1">
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#may-2026" id="toc-may-2026" class="nav-link active" data-scroll-target="#may-2026">0.2.52 (09 May 2026)</a></li>
-  <li><a href="#may-2026-1" id="toc-may-2026-1" class="nav-link" data-scroll-target="#may-2026-1">0.2.51 (07 May 2026)</a></li>
+  <li><a href="#may-2026" id="toc-may-2026" class="nav-link active" data-scroll-target="#may-2026">0.2.57 (30 May 2026)</a></li>
+  <li><a href="#may-2026-1" id="toc-may-2026-1" class="nav-link" data-scroll-target="#may-2026-1">0.2.56 (25 May 2026)</a></li>
+  <li><a href="#may-2026-2" id="toc-may-2026-2" class="nav-link" data-scroll-target="#may-2026-2">0.2.55 (16 May 2026)</a></li>
+  <li><a href="#may-2026-3" id="toc-may-2026-3" class="nav-link" data-scroll-target="#may-2026-3">0.2.54 (13 May 2026)</a></li>
+  <li><a href="#may-2026-4" id="toc-may-2026-4" class="nav-link" data-scroll-target="#may-2026-4">0.2.53 (13 May 2026)</a></li>
+  <li><a href="#may-2026-5" id="toc-may-2026-5" class="nav-link" data-scroll-target="#may-2026-5">0.2.52 (09 May 2026)</a></li>
+  <li><a href="#may-2026-6" id="toc-may-2026-6" class="nav-link" data-scroll-target="#may-2026-6">0.2.51 (07 May 2026)</a></li>
   <li><a href="#april-2026" id="toc-april-2026" class="nav-link" data-scroll-target="#april-2026">0.2.50 (29 April 2026)</a></li>
   <li><a href="#april-2026-1" id="toc-april-2026-1" class="nav-link" data-scroll-target="#april-2026-1">0.2.48 (26 April 2026)</a></li>
   <li><a href="#april-2026-2" id="toc-april-2026-2" class="nav-link" data-scroll-target="#april-2026-2">0.2.47 (13 April 2026)</a></li>
@@ -267,15 +220,51 @@ ul.task-list li input[type="checkbox"] {
 
 
 <section id="may-2026" class="level2">
-<h2 class="anchored" data-anchor-id="may-2026">0.2.52 (09 May 2026)</h2>
+<h2 class="anchored" data-anchor-id="may-2026">0.2.57 (30 May 2026)</h2>
+<ul>
+<li>Codex CLI: Align the system prompt and tool set with the real bridged model. <code>model_config</code> now defaults to <code>None</code>, deriving Codex’s <code>--model</code> slug from the actual model. Pass an explicit <code>model_config</code> to override.</li>
+<li>Codex CLI: Add options for enabling/disabling <code>web_search</code> and <code>goals</code> tools (both default to enabled).</li>
+<li>Codex CLI: Improve MCP tests to check for correct tool names and assert results.</li>
+<li>Gemini CLI: Explicity set auth type to “gemini-api-key” (required for recent versions of the CLI).</li>
+</ul>
+</section>
+<section id="may-2026-1" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-1">0.2.56 (25 May 2026)</h2>
+<ul>
+<li>OpenCode: Install ripgrep for access to native skills.</li>
+<li>Claude Code: Improved live event capture (no longer requires injection of spans into transcript).</li>
+<li>Claude Code: Support for importing transcripts with new JSONL sub-agent file layout.</li>
+<li>Claude Code (ACP): Use officially supported ACP client (<span class="citation" data-cites="agentclientprotocol/claude-agent-acp">@agentclientprotocol/claude-agent-acp</span>)</li>
+</ul>
+</section>
+<section id="may-2026-2" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-2">0.2.55 (16 May 2026)</h2>
+<ul>
+<li>Workaround for <code>agent_client_protocol</code> v0.10.0 connection bug.</li>
+</ul>
+</section>
+<section id="may-2026-3" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-3">0.2.54 (13 May 2026)</h2>
+<ul>
+<li>Claude Code (ACP): Allocate per-invocation bridge port.</li>
+</ul>
+</section>
+<section id="may-2026-4" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-4">0.2.53 (13 May 2026)</h2>
+<ul>
+<li>Pin <code>agent-client-protocol&gt;=0.9.0,&lt;0.10</code> until <a href="https://github.com/agentclientprotocol/python-sdk/issues/97">init ordering bug</a> is fixed.</li>
+</ul>
+</section>
+<section id="may-2026-5" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-5">0.2.52 (09 May 2026)</h2>
 <ul>
 <li>OpenCode: New agent backend wrapping <a href="https://github.com/anomalyco/opencode">OpenCode</a>.</li>
 <li>Codex CLI: Disable telemetry by default.</li>
 <li>Gemini CLI: Disable telemetry by default.</li>
 </ul>
 </section>
-<section id="may-2026-1" class="level2">
-<h2 class="anchored" data-anchor-id="may-2026-1">0.2.51 (07 May 2026)</h2>
+<section id="may-2026-6" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-6">0.2.51 (07 May 2026)</h2>
 <ul>
 <li>Gemini CLI: Fix MCP registration via GEMINI_CLI_TRUST_WORKSPACE.</li>
 <li>Mini SWE Agent: Ensure that pip is available before attempting installation.</li>
@@ -359,7 +348,7 @@ ul.task-list li input[type="checkbox"] {
 <section id="february-2026" class="level2">
 <h2 class="anchored" data-anchor-id="february-2026">0.2.38 (28 February 2026)</h2>
 <ul>
-<li>Mini SWE Agent: New <code>mini_swe_agent()</code> agent implementation.</li>
+<li>Mini SWE Agent: New <span class="element-type-name ref-interlink"><a href="./reference/index.html#mini_swe_agent">mini_swe_agent()</a></span> agent implementation.</li>
 <li>Agent Binaries: Make only a single request for the latest agent binary versions (vs.&nbsp;a request per sample).</li>
 <li>Model aliases: Enable passing <code>model_aliases</code> to all agents (passed through to <code>sandbox_agent_bridge()</code>).</li>
 </ul>
@@ -373,7 +362,7 @@ ul.task-list li input[type="checkbox"] {
 <section id="february-2026-2" class="level2">
 <h2 class="anchored" data-anchor-id="february-2026-2">0.2.36 (23 February 2026)</h2>
 <ul>
-<li>Gemini CLI: New <code>gemini_cli()</code> agent for Google Gemini.</li>
+<li>Gemini CLI: New <span class="element-type-name ref-interlink"><a href="./reference/index.html#gemini_cli">gemini_cli()</a></span> agent for Google Gemini.</li>
 <li>Sandbox: Use <code>exec_remote()</code> interface for impoved robustness of long running processes.</li>
 <li>Claude Code: Remove <code>retry_timeouts</code> options (not longer necessary due to use of <code>exec_remote()</code>).</li>
 <li>Claude Code: Add <code>debug</code> option to enable <code>--debug</code> and <code>--verbose</code> CLI flags.</li>
@@ -450,7 +439,7 @@ ul.task-list li input[type="checkbox"] {
 <section id="november-2025-2" class="level2">
 <h2 class="anchored" data-anchor-id="november-2025-2">0.2.25 (07 November 2025)</h2>
 <ul>
-<li>Codex CLI: Execute <code>codex</code> using the <code>user</code> passed to <code>codex_cli()</code>.</li>
+<li>Codex CLI: Execute <code>codex</code> using the <code>user</code> passed to <span class="element-type-name ref-interlink"><a href="./reference/index.html#codex_cli">codex_cli()</a></span>.</li>
 </ul>
 </section>
 <section id="november-2025-3" class="level2">
@@ -483,7 +472,7 @@ ul.task-list li input[type="checkbox"] {
 <h2 class="anchored" data-anchor-id="october-2025-3">0.2.19 (05 October 2025)</h2>
 <ul>
 <li>Automatically use a new port for each unique agent bridge invocation within a sample.</li>
-<li>Added <code>cached_agent_binaries()</code> function to list previously downloaded and cached agent binaries.</li>
+<li>Added <span class="element-type-name ref-interlink"><a href="./reference/index.html#cached_agent_binaries">cached_agent_binaries()</a></span> function to list previously downloaded and cached agent binaries.</li>
 </ul>
 </section>
 <section id="september-2025" class="level2">
@@ -534,7 +523,7 @@ ul.task-list li input[type="checkbox"] {
 <section id="september-2025-7" class="level2">
 <h2 class="anchored" data-anchor-id="september-2025-7">0.2.11 (06 September 2025)</h2>
 <ul>
-<li>Codex CLI: New <code>codex_cli()</code> agent for OpenAI Codex.</li>
+<li>Codex CLI: New <span class="element-type-name ref-interlink"><a href="./reference/index.html#codex_cli">codex_cli()</a></span> agent for OpenAI Codex.</li>
 <li>Added <code>filter</code> parameter to agents for intercepting model generations.</li>
 </ul>
 </section>
@@ -564,6 +553,77 @@ ul.task-list li input[type="checkbox"] {
 </section>
 
 </main> <!-- /main -->
+<div id="copy-page-btn" class="btn-group" style="display:none;">
+  <button type="button" class="btn btn-sm btn-light" id="copy-page-action" title="Copy page as Markdown">
+    <i class="bi bi-clipboard"></i> Copy page
+  </button>
+  <button type="button" class="btn btn-sm btn-light dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+    <span class="visually-hidden">Toggle Dropdown</span>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><a class="dropdown-item" href="#" id="copy-page-md">
+      <i class="bi bi-clipboard"></i> Copy page as Markdown
+    </a></li>
+    <li><a class="dropdown-item" href="#" id="open-page-md">
+      <i class="bi bi-box-arrow-up-right"></i> Open Markdown
+    </a></li>
+  </ul>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  var path = window.location.pathname;
+  var mdUrl = path.endsWith("/")
+    ? path + "index.html.md"
+    : path.replace(/\.html$/, ".html.md");
+  var btn = document.getElementById("copy-page-btn");
+  var cachedMarkdown = null;
+
+  // Pre-fetch the .html.md content
+  fetch(mdUrl)
+    .then(function (res) {
+      if (!res.ok) throw new Error(res.status);
+      return res.text();
+    })
+    .then(function (text) {
+      cachedMarkdown = text;
+
+      // Relocate button into the .quarto-title div
+      var titleDiv = document.querySelector(".quarto-title");
+      if (titleDiv) {
+        titleDiv.appendChild(btn);
+        btn.style.display = "";
+      }
+    })
+    .catch(function () {
+      // No .html.md available — remove button entirely
+      btn.remove();
+    });
+
+  function copyMarkdown(e) {
+    e.preventDefault();
+    if (!cachedMarkdown) return;
+    navigator.clipboard.writeText(cachedMarkdown).then(function () {
+      // Brief visual feedback — lock width to prevent layout shift
+      var actionBtn = document.getElementById("copy-page-action");
+      var original = actionBtn.innerHTML;
+      actionBtn.style.minWidth = actionBtn.offsetWidth + "px";
+      actionBtn.innerHTML = '<i class="bi bi-check2"></i> Copied!';
+      setTimeout(function () {
+        actionBtn.innerHTML = original;
+        actionBtn.style.minWidth = "";
+      }, 1500);
+    });
+  }
+
+  document.getElementById("copy-page-action").addEventListener("click", copyMarkdown);
+  document.getElementById("copy-page-md").addEventListener("click", copyMarkdown);
+  document.getElementById("open-page-md").addEventListener("click", function (e) {
+    e.preventDefault();
+    window.open(mdUrl, "_blank");
+  });
+});
+</script>
 <script id="quarto-html-after-body" type="application/javascript">
   window.document.addEventListener("DOMContentLoaded", function (event) {
     const icon = "";
@@ -637,7 +697,7 @@ ul.task-list li input[type="checkbox"] {
     }
       var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
       var mailtoRegex = new RegExp(/^mailto:/);
-        var filterRegex = new RegExp("https:\/\/meridianlabs-ai\.github\.io\/inspect_swe\/");
+        var filterRegex = new RegExp("https:\/\/meridianlabs-ai\.github\.io\/inspect_swe");
       var isInternal = (href) => {
           return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
       }
@@ -905,25 +965,66 @@ ul.task-list li input[type="checkbox"] {
           }
         };
       }
-        // Attach click handler to the DT
-        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
-        for (const annoteDlNode of annoteDls) {
-          annoteDlNode.addEventListener('click', (event) => {
-            const clickedEl = event.target;
-            if (clickedEl !== selectedAnnoteEl) {
-              unselectCodeLines();
-              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
-              if (activeEl) {
-                activeEl.classList.remove('code-annotation-active');
-              }
-              selectCodeLines(clickedEl);
-              clickedEl.classList.add('code-annotation-active');
-            } else {
-              // Unselect the line
-              unselectCodeLines();
-              clickedEl.classList.remove('code-annotation-active');
+        const annoteTargets = window.document.querySelectorAll('.code-annotation-anchor');
+        for (let i=0; i<annoteTargets.length; i++) {
+          const annoteTarget = annoteTargets[i];
+          const targetCell = annoteTarget.getAttribute("data-target-cell");
+          const targetAnnotation = annoteTarget.getAttribute("data-target-annotation");
+          const contentFn = () => {
+            const content = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+            if (content) {
+              const tipContent = content.cloneNode(true);
+              tipContent.classList.add("code-annotation-tip-content");
+              return tipContent.outerHTML;
             }
-          });
+          }
+          const config = {
+            allowHTML: true,
+            content: contentFn,
+            onShow: (instance) => {
+              selectCodeLines(instance.reference);
+              instance.reference.classList.add('code-annotation-active');
+              window.tippy.hideAll();
+            },
+            onHide: (instance) => {
+              unselectCodeLines();
+              instance.reference.classList.remove('code-annotation-active');
+            },
+            maxWidth: 300,
+            delay: [50, 0],
+            duration: [200, 0],
+            offset: [5, 10],
+            arrow: true,
+            trigger: 'click',
+            appendTo: function(el) {
+              return el.parentElement.parentElement.parentElement;
+            },
+            interactive: true,
+            interactiveBorder: 10,
+            theme: 'quarto',
+            placement: 'right',
+            positionFixed: true,
+            popperOptions: {
+              modifiers: [
+              {
+                name: 'flip',
+                options: {
+                  flipVariations: false, // true by default
+                  allowedAutoPlacements: ['right'],
+                  fallbackPlacements: ['right', 'top', 'top-start', 'top-end', 'bottom', 'bottom-start', 'bottom-end', 'left'],
+                },
+              },
+              {
+                name: 'preventOverflow',
+                options: {
+                  mainAxis: false,
+                  altAxis: false
+                }
+              }
+              ]        
+            }      
+          };
+          window.tippy(annoteTarget, config); 
         }
     const findCites = (el) => {
       const parentEl = el.parentElement;
@@ -965,6 +1066,53 @@ ul.task-list li input[type="checkbox"] {
   });
   </script>
 </div> <!-- /content -->
+<footer class="footer">
+  <div class="nav-footer">
+    <div class="nav-footer-left">
+      <ul class="footer-items list-unstyled">
+    <li class="nav-item">
+    <a class="nav-link" href="https://github.com/meridianlabs-ai">
+<p>Meridian Labs</p>
+</a>
+  </li>  
+</ul>
+    </div>   
+    <div class="nav-footer-center">
+      <ul class="footer-items list-unstyled">
+    <li class="nav-item">
+    <a class="nav-link" href="https://github.com/meridianlabs-ai/inspect_swe">
+<p>Code</p>
+</a>
+  </li>  
+    <li class="nav-item">
+    <a class="nav-link" href="https://github.com/meridianlabs-ai/inspect_swe/blob/main/CHANGELOG.md">
+<p>Changelog</p>
+</a>
+  </li>  
+    <li class="nav-item">
+    <a class="nav-link" href="https://github.com/meridianlabs-ai/inspect_swe/blob/main/LICENSE">
+<p>License</p>
+</a>
+  </li>  
+    <li class="nav-item">
+    <a class="nav-link" href="https://github.com/meridianlabs-ai/inspect_swe/issues">
+<p>Issues</p>
+</a>
+  </li>  
+</ul>
+    </div>
+    <div class="nav-footer-right">
+      <ul class="footer-items list-unstyled">
+    <li class="nav-item compact">
+    <a class="nav-link" href="https://github.com/meridianlabs-ai/inspect_swe/">
+      <i class="bi bi-github" role="img" aria-label="Inspect SWE on GitHub">
+</i> 
+    </a>
+  </li>  
+</ul>
+    </div>
+  </div>
+</footer>
 
 
 
