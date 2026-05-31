@@ -25,6 +25,7 @@ from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import SandboxEnvironment, store
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
+from inspect_ai.util._span import current_span_id
 from typing_extensions import Unpack
 
 from inspect_swe._util._async import is_callable_coroutine
@@ -36,6 +37,7 @@ from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
+from ._events.consumer import CodexConsumer
 from .agentbinary import (
     codex_binary_version,
     codex_cli_binary_source,
@@ -155,6 +157,13 @@ def codex_cli(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
+        # Bridge ModelEventSink: the bridge hands us every ModelEvent instead of
+        # emitting it to the transcript, and we attribute each to the correct
+        # (sub-)agent span. Captures this @agent's span as the outer span so
+        # sub-agent spans we discover are parented correctly. Reconstructs spans
+        # bridge-only (no Codex --json parsing); see consumer.py.
+        consumer = CodexConsumer(outer_span_id=current_span_id())
+
         async with sandbox_agent_bridge(
             state,
             model=bridge_model,
@@ -164,6 +173,7 @@ def codex_cli(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
+            model_event_sink=consumer,
         ) as bridge:
             # ensure codex is installed and get binary location
             codex_binary = await ensure_agent_binary_installed(
@@ -339,6 +349,11 @@ def codex_cli(
                     # record output for debug
                     debug_output.append(result.stdout)
                     debug_output.append(result.stderr)
+
+                    # close any sub-agent spans left open by this attempt so the
+                    # span tree stays balanced across restarts and on error
+                    # (Codex doesn't carry sub-agent spans across resumes)
+                    consumer.reset()
 
                     # raise for error
                     if not result.success:
