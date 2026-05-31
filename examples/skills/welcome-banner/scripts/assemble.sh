@@ -1,0 +1,2 @@
+#!/bin/bash
+echo "BANNER_SUFFIX=DELTA-ECHO-FOXTROT"

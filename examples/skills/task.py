@@ -18,11 +18,11 @@ def agent_skills(
 ) -> Task:
     # setup agent
     system_prompt = dedent("""
-        You have access to a skill that will tell you how to find the secret code.
+        You have access to a skill that explains how to assemble the welcome banner.
         Use the skill tool first to get instructions, then follow them exactly.
         You must read the asset file AND run the script as instructed.
         """)
-    skills = [Path(__file__).parent / "secret-code"]
+    skills = [Path(__file__).parent / "welcome-banner"]
     match agent:
         case "claude_code":
             solver = claude_code(system_prompt=system_prompt, skills=skills, attempts=2)
@@ -38,8 +38,9 @@ def agent_skills(
         dataset=[
             Sample(
                 input=(
-                    "What is the secret code? You MUST first read the asset file "
-                    "and tell me what it contains, then run the script to get the answer."
+                    "What is the full welcome banner? You MUST first read the asset "
+                    "file and tell me what it contains, then run the script to get the "
+                    "rest."
                 ),
                 target=["ALPHA-BRAVO-CHARLIE", "DELTA-ECHO-FOXTROT"],
             ),

@@ -5,7 +5,11 @@ a ``GenerateFilter``. The bridge hands the filter Codex's chosen instructions as
 the leading system message and the tool set Codex offered, so we can assert that
 the catalog-driven mapping took effect:
 
-- an OpenAI model maps to a native catalog entry -> ``apply_patch`` is offered;
+- an OpenAI model in Codex's catalog maps to its native entry -> ``apply_patch``
+  and ``tool_search`` are offered;
+- an OpenAI model *not* in the catalog and not a frontier version (e.g. an older
+  ``gpt-5``) passes through to Codex's generic prompt -> no ``apply_patch`` and,
+  importantly, no ``tool_search`` (which such models reject);
 - a non-OpenAI model falls back to Codex's generic prompt -> no ``apply_patch``.
 
 Slow: requires Docker + a live model API (mirrors ``tests/test_mcp.py``).
@@ -75,13 +79,35 @@ def _offers_apply_patch(tool_names: list[str]) -> bool:
     return any("apply_patch" in name for name in tool_names)
 
 
+def _offers_tool_search(tool_names: list[str]) -> bool:
+    return any("tool_search" in name for name in tool_names)
+
+
 @skip_if_no_openai
 @skip_if_no_docker
-def test_codex_align_openai_gets_native_tools() -> None:
-    capture = _run_codex("openai/gpt-5")
+def test_codex_align_catalog_openai_gets_native_tools() -> None:
+    # gpt-5.5 is in Codex's catalog -> native prompt + tools (apply_patch).
+    capture = _run_codex("openai/gpt-5.5")
     assert capture.system_prompt, "expected a non-empty system prompt"
     assert _offers_apply_patch(capture.tool_names or []), (
-        f"expected apply_patch for an OpenAI model, got tools: {capture.tool_names}"
+        f"expected apply_patch for a catalog OpenAI model, got: {capture.tool_names}"
+    )
+
+
+@skip_if_no_openai
+@skip_if_no_docker
+def test_codex_align_older_openai_passes_through() -> None:
+    # gpt-5 is recognized by Inspect but no longer in Codex's catalog and not a
+    # frontier version -> generic fallback: no apply_patch and, critically, no
+    # tool_search (which the real gpt-5 rejects with a 400). Guards the fix that
+    # stopped older models from being aliased up to the latest catalog slug.
+    capture = _run_codex("openai/gpt-5")
+    assert capture.system_prompt, "expected a non-empty system prompt"
+    assert not _offers_tool_search(capture.tool_names or []), (
+        f"gpt-5 must not be offered tool_search, got: {capture.tool_names}"
+    )
+    assert not _offers_apply_patch(capture.tool_names or []), (
+        f"expected generic fallback (no apply_patch) for gpt-5, got: {capture.tool_names}"
     )
 
 

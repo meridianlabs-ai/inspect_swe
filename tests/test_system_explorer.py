@@ -23,7 +23,7 @@ def test_claude_code_system_explorer(sandbox: str) -> None:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_codex_cli_system_explorer(sandbox: str) -> None:
-    check_system_explorer_example("codex_cli", "openai/gpt-5", sandbox)
+    check_system_explorer_example("codex_cli", "openai/gpt-5.4", sandbox)
 
 
 @skip_if_no_google
