@@ -1,4 +1,4 @@
-## 0.2.58 (31 May 2026)
+## 0.2.59 (31 May 2026)
 
 - Codex CLI: Detect and apply agent spans automatically from Codex event stream.
 
