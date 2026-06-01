@@ -44,7 +44,7 @@ The following options are supported for customizing the behavior of the agent:
 | Option | Description |
 |----|----|
 | `system_prompt` | Additional system prompt to append to default system prompt. |
-| `model_config` | Codex model slug used to select the system prompt and tool set. Defaults to `None`, which derives the slug from the model used by the agent. |
+| `model_config` | Codex model slug used to select the system prompt and tool set. Defaults to `None`, which derives the slug from the model used by the agent so Codex’s prompt/tooling aligns with what’s actually running. |
 | `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
 | `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |

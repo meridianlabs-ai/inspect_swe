@@ -162,13 +162,14 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#may-2026" id="toc-may-2026" class="nav-link active" data-scroll-target="#may-2026">0.2.57 (30 May 2026)</a></li>
-  <li><a href="#may-2026-1" id="toc-may-2026-1" class="nav-link" data-scroll-target="#may-2026-1">0.2.56 (25 May 2026)</a></li>
-  <li><a href="#may-2026-2" id="toc-may-2026-2" class="nav-link" data-scroll-target="#may-2026-2">0.2.55 (16 May 2026)</a></li>
-  <li><a href="#may-2026-3" id="toc-may-2026-3" class="nav-link" data-scroll-target="#may-2026-3">0.2.54 (13 May 2026)</a></li>
-  <li><a href="#may-2026-4" id="toc-may-2026-4" class="nav-link" data-scroll-target="#may-2026-4">0.2.53 (13 May 2026)</a></li>
-  <li><a href="#may-2026-5" id="toc-may-2026-5" class="nav-link" data-scroll-target="#may-2026-5">0.2.52 (09 May 2026)</a></li>
-  <li><a href="#may-2026-6" id="toc-may-2026-6" class="nav-link" data-scroll-target="#may-2026-6">0.2.51 (07 May 2026)</a></li>
+  <li><a href="#may-2026" id="toc-may-2026" class="nav-link active" data-scroll-target="#may-2026">0.2.59 (31 May 2026)</a></li>
+  <li><a href="#may-2026-1" id="toc-may-2026-1" class="nav-link" data-scroll-target="#may-2026-1">0.2.57 (30 May 2026)</a></li>
+  <li><a href="#may-2026-2" id="toc-may-2026-2" class="nav-link" data-scroll-target="#may-2026-2">0.2.56 (25 May 2026)</a></li>
+  <li><a href="#may-2026-3" id="toc-may-2026-3" class="nav-link" data-scroll-target="#may-2026-3">0.2.55 (16 May 2026)</a></li>
+  <li><a href="#may-2026-4" id="toc-may-2026-4" class="nav-link" data-scroll-target="#may-2026-4">0.2.54 (13 May 2026)</a></li>
+  <li><a href="#may-2026-5" id="toc-may-2026-5" class="nav-link" data-scroll-target="#may-2026-5">0.2.53 (13 May 2026)</a></li>
+  <li><a href="#may-2026-6" id="toc-may-2026-6" class="nav-link" data-scroll-target="#may-2026-6">0.2.52 (09 May 2026)</a></li>
+  <li><a href="#may-2026-7" id="toc-may-2026-7" class="nav-link" data-scroll-target="#may-2026-7">0.2.51 (07 May 2026)</a></li>
   <li><a href="#april-2026" id="toc-april-2026" class="nav-link" data-scroll-target="#april-2026">0.2.50 (29 April 2026)</a></li>
   <li><a href="#april-2026-1" id="toc-april-2026-1" class="nav-link" data-scroll-target="#april-2026-1">0.2.48 (26 April 2026)</a></li>
   <li><a href="#april-2026-2" id="toc-april-2026-2" class="nav-link" data-scroll-target="#april-2026-2">0.2.47 (13 April 2026)</a></li>
@@ -220,7 +221,13 @@ ul.task-list li input[type="checkbox"] {
 
 
 <section id="may-2026" class="level2">
-<h2 class="anchored" data-anchor-id="may-2026">0.2.57 (30 May 2026)</h2>
+<h2 class="anchored" data-anchor-id="may-2026">0.2.59 (31 May 2026)</h2>
+<ul>
+<li>Codex CLI: Detect and apply agent spans automatically from Codex event stream.</li>
+</ul>
+</section>
+<section id="may-2026-1" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-1">0.2.57 (30 May 2026)</h2>
 <ul>
 <li>Codex CLI: Align the system prompt and tool set with the real bridged model. <code>model_config</code> now defaults to <code>None</code>, deriving Codex’s <code>--model</code> slug from the actual model. Pass an explicit <code>model_config</code> to override.</li>
 <li>Codex CLI: Add options for enabling/disabling <code>web_search</code> and <code>goals</code> tools (both default to enabled).</li>
@@ -228,8 +235,8 @@ ul.task-list li input[type="checkbox"] {
 <li>Gemini CLI: Explicity set auth type to “gemini-api-key” (required for recent versions of the CLI).</li>
 </ul>
 </section>
-<section id="may-2026-1" class="level2">
-<h2 class="anchored" data-anchor-id="may-2026-1">0.2.56 (25 May 2026)</h2>
+<section id="may-2026-2" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-2">0.2.56 (25 May 2026)</h2>
 <ul>
 <li>OpenCode: Install ripgrep for access to native skills.</li>
 <li>Claude Code: Improved live event capture (no longer requires injection of spans into transcript).</li>
@@ -237,34 +244,34 @@ ul.task-list li input[type="checkbox"] {
 <li>Claude Code (ACP): Use officially supported ACP client (<span class="citation" data-cites="agentclientprotocol/claude-agent-acp">@agentclientprotocol/claude-agent-acp</span>)</li>
 </ul>
 </section>
-<section id="may-2026-2" class="level2">
-<h2 class="anchored" data-anchor-id="may-2026-2">0.2.55 (16 May 2026)</h2>
+<section id="may-2026-3" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-3">0.2.55 (16 May 2026)</h2>
 <ul>
 <li>Workaround for <code>agent_client_protocol</code> v0.10.0 connection bug.</li>
 </ul>
 </section>
-<section id="may-2026-3" class="level2">
-<h2 class="anchored" data-anchor-id="may-2026-3">0.2.54 (13 May 2026)</h2>
+<section id="may-2026-4" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-4">0.2.54 (13 May 2026)</h2>
 <ul>
 <li>Claude Code (ACP): Allocate per-invocation bridge port.</li>
 </ul>
 </section>
-<section id="may-2026-4" class="level2">
-<h2 class="anchored" data-anchor-id="may-2026-4">0.2.53 (13 May 2026)</h2>
+<section id="may-2026-5" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-5">0.2.53 (13 May 2026)</h2>
 <ul>
 <li>Pin <code>agent-client-protocol&gt;=0.9.0,&lt;0.10</code> until <a href="https://github.com/agentclientprotocol/python-sdk/issues/97">init ordering bug</a> is fixed.</li>
 </ul>
 </section>
-<section id="may-2026-5" class="level2">
-<h2 class="anchored" data-anchor-id="may-2026-5">0.2.52 (09 May 2026)</h2>
+<section id="may-2026-6" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-6">0.2.52 (09 May 2026)</h2>
 <ul>
 <li>OpenCode: New agent backend wrapping <a href="https://github.com/anomalyco/opencode">OpenCode</a>.</li>
 <li>Codex CLI: Disable telemetry by default.</li>
 <li>Gemini CLI: Disable telemetry by default.</li>
 </ul>
 </section>
-<section id="may-2026-6" class="level2">
-<h2 class="anchored" data-anchor-id="may-2026-6">0.2.51 (07 May 2026)</h2>
+<section id="may-2026-7" class="level2">
+<h2 class="anchored" data-anchor-id="may-2026-7">0.2.51 (07 May 2026)</h2>
 <ul>
 <li>Gemini CLI: Fix MCP registration via GEMINI_CLI_TRUST_WORKSPACE.</li>
 <li>Mini SWE Agent: Ensure that pip is available before attempting installation.</li>
