@@ -1,3 +1,7 @@
+## 0.2.60 (02 June 2026)
+
+- Update Inspect AI dependency to 0.3.234
+
 ## 0.2.59 (31 May 2026)
 
 - Codex CLI: Detect and apply agent spans automatically from Codex event stream.
