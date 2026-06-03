@@ -1,3 +1,8 @@
+## Unreleased
+
+- Claude Code: Report the **real served model** (e.g. `claude-sonnet-4-5`) instead of the bridge sentinel — the agent's environment prompt previously read "You are powered by the model inspect". Bridge routing is unchanged. Added a `presented_model` parameter to override the reported model name (defaults to the served model).
+- Claude Code: `opus_model` / `sonnet_model` / `haiku_model` / `subagent_model` are now actually honored — previously the bridge fallback collapsed them onto a single model.
+
 ## 0.2.60 (02 June 2026)
 
 - Update Inspect AI dependency to 0.3.234

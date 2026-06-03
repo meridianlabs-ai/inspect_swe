@@ -13,7 +13,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
+from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, get_model
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import (
@@ -43,7 +43,6 @@ from inspect_swe._util.path import join_path
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.messages import build_user_prompt
-from .._util.model import inspect_model
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 
@@ -63,6 +62,7 @@ def claude_code(
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    presented_model: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
     opus_model: str | None = None,
     sonnet_model: str | None = None,
@@ -103,6 +103,10 @@ def claude_code(
         centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
+        presented_model: Model name the agent should report as its own (e.g. in its
+            "You are powered by the model ..." environment prompt). Defaults to the
+            real served model name. This is purely the displayed identity; model calls
+            are still bridged to the served Inspect model regardless of this value.
         model_aliases: Optional mapping of model names to Model instances or model name strings.
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
@@ -129,13 +133,6 @@ def claude_code(
     # resolve centaur
     if centaur is True:
         centaur = CentaurOptions()
-
-    # resolve models
-    model = f"inspect/{model}" if model is not None else "inspect"
-    opus_model = inspect_model(opus_model)
-    sonnet_model = inspect_model(sonnet_model)
-    haiku_model = inspect_model(haiku_model)
-    subagent_model = inspect_model(subagent_model)
 
     # resolve skills
     resolved_skills = read_skills(skills) if skills is not None else None
@@ -164,10 +161,45 @@ def claude_code(
         # See live_consumer.py for full mechanism.
         consumer = LiveConsumer(outer_span_id=current_span_id())
 
+        served_model = get_model(model)
+        presented = (
+            presented_model if presented_model is not None else served_model.name
+        )
+        resolved_aliases: dict[str, str | Model] = {presented: served_model}
+
+        # Per-slot model name + alias entry for the opus/sonnet/haiku/subagent
+        # roles. Unlike `presented`, these are NOT shown to the model — Claude
+        # Code consumes them only via the ANTHROPIC_DEFAULT_*/CLAUDE_CODE_SUBAGENT
+        # env vars to pick which model to use for each role (they would surface
+        # only in a launched subagent's own prompt). An unset role inherits the
+        # primary presented name and routes via the primary alias; a set role
+        # gets its own real name AND its own alias, so it actually routes to its
+        # intended model (the sentinel fallback would otherwise collapse them).
+        def _role_model_name(role_model: str | None) -> str:
+            if role_model is None:
+                return presented
+            role = get_model(role_model)
+            name = role.name
+            resolved_aliases[name] = role
+            return name
+
+        opus_name = _role_model_name(opus_model)
+        sonnet_name = _role_model_name(sonnet_model)
+        haiku_name = _role_model_name(haiku_model)
+        subagent_name = _role_model_name(subagent_model)
+
+        # Caller-supplied model_aliases take precedence over the names we derived.
+        if model_aliases:
+            resolved_aliases.update(model_aliases)
+
+        # Bridge sentinel — unchanged routing for any model id the inner
+        # agent emits that isn't one of the presented names above.
+        bridge_model = f"inspect/{model}" if model is not None else "inspect"
+
         async with sandbox_agent_bridge(
             state,
-            model=model,
-            model_aliases=model_aliases,
+            model=bridge_model,
+            model_aliases=resolved_aliases,
             filter=filter,
             sandbox=sandbox,
             retry_refusals=retry_refusals,
@@ -190,7 +222,7 @@ def claude_code(
             cmd = [
                 *permission_flag,
                 "--model",
-                model,
+                presented,
             ]
 
             # add interactive options if not running as centaur
@@ -243,12 +275,12 @@ def claude_code(
             agent_env = {
                 "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
                 "ANTHROPIC_AUTH_TOKEN": "sk-ant-api03-DOq5tyLPrk9M4hPE",
-                "ANTHROPIC_MODEL": model,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": opus_model or model,
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet_model or model,
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku_model or model,
-                "CLAUDE_CODE_SUBAGENT_MODEL": subagent_model or model,
-                "ANTHROPIC_SMALL_FAST_MODEL": haiku_model or model,
+                "ANTHROPIC_MODEL": presented,
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": opus_name,
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet_name,
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku_name,
+                "CLAUDE_CODE_SUBAGENT_MODEL": subagent_name,
+                "ANTHROPIC_SMALL_FAST_MODEL": haiku_name,
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                 "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
                 "IS_SANDBOX": "1",
