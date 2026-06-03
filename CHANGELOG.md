@@ -1,4 +1,4 @@
-## Unreleased
+## 0.2.61 (03 June 2026)
 
 - Claude Code: Fix system prompt being re-sent on resumed turns.
 - Codex CLI: Align `OpenAIAPI`-derived custom providers by their declared `service_model_name()`.
