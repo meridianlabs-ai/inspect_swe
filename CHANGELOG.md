@@ -1,3 +1,7 @@
+## Unreleased
+
+- Claude Code: Fix system prompt being re-sent on resumed turns. The sandbox bridge captures Claude Code's own system prompt back into `state.messages` as a `ChatMessageSystem`; this was re-forwarded via `--append-system-prompt` on every continuation turn (and every retried attempt), concatenating the entire system prompt onto itself (2x on turn 2, 3x on turn 3, ...). The system prompt (caller `ChatMessageSystem`s and the `system_prompt` argument) is now sent only when creating the session — never on resume, where the session already contains it.
+
 ## 0.2.60 (02 June 2026)
 
 - Update Inspect AI dependency to 0.3.234
