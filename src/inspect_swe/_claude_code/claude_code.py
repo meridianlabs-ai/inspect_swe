@@ -214,15 +214,6 @@ def claude_code(
                 if debug:
                     cmd.append("--debug")
 
-            # system prompt
-            system_messages = [
-                m.text for m in state.messages if isinstance(m, ChatMessageSystem)
-            ]
-            if system_prompt is not None:
-                system_messages.append(system_prompt)
-            if system_messages:
-                cmd.extend(["--append-system-prompt", "\n\n".join(system_messages)])
-
             # mcp servers (combine static configs with bridged tools)
             cmd_allowed_tools: list[str] = []
             all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
@@ -293,21 +284,48 @@ def claude_code(
                 uncaught_error_count = 0
                 try:
                     while True:
-                        # resume previous conversation
-                        if (
+                        is_resume = (
                             has_assistant_response
                             or attempt_count > 0
                             or uncaught_error_count > 0
-                        ):
+                        )
+
+                        # System prompt is sent only when creating the session.
+                        # On resume the session already contains system messages, so send
+                        # nothing: the bridge round-trips Claude Code's own
+                        # system prompt back into state.messages as a
+                        # ChatMessageSystem, and re-passing it via
+                        # --append-system-prompt would duplicate the entire
+                        # system prompt on every resumed turn (the flag is
+                        # applied per-invocation, not persisted anyway).
+                        system_args: list[str] = []
+                        if not is_resume:
+                            system_texts = [
+                                m.text
+                                for m in state.messages
+                                if isinstance(m, ChatMessageSystem)
+                            ]
+                            if system_prompt is not None:
+                                system_texts.append(system_prompt)
+                            if system_texts:
+                                system_args = [
+                                    "--append-system-prompt",
+                                    "\n\n".join(system_texts),
+                                ]
+
+                        # resume previous conversation
+                        if is_resume:
                             agent_cmd = (
                                 [claude_binary, "--resume", session_id]
                                 + cmd
+                                + system_args
                                 + ["--", agent_prompt]
                             )
                         else:
                             agent_cmd = (
                                 [claude_binary, "--session-id", session_id]
                                 + cmd
+                                + system_args
                                 + ["--", agent_prompt]
                             )
 

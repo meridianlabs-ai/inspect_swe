@@ -19,7 +19,6 @@ from inspect_ai.model import (
     Model,
     ModelName,
     get_model,
-    get_model_info,
 )
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
@@ -52,7 +51,12 @@ from .config import (
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
-from .model_catalog import resolve_codex_model_slug
+from .model_catalog import (
+    is_latest_openai_model,
+    is_openai_derived_api,
+    openai_service_model_name,
+    resolve_codex_model_slug,
+)
 
 logger = getLogger(__file__)
 
@@ -188,23 +192,9 @@ def codex_cli(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
-            # align Codex's prompt/tooling to the real bridged model by deriving
-            # the `--model` slug from it (overridden by an explicit model_config).
-            resolved_model = get_model(model)
-            real_model = ModelName(resolved_model)
-            codex_version = await codex_binary_version(sbox, codex_binary, user)
-            codex_catalog = await codex_models_catalog(codex_version)
-            resolution = resolve_codex_model_slug(
-                real_model.name,
-                api=real_model.api,
-                catalog=codex_catalog,
-                override=model_config,
-                known_to_inspect=get_model_info(resolved_model) is not None,
-            )
-            codex_model = resolution.slug
-            trace(
-                f"Codex model alignment: real model '{real_model}' "
-                f"→ --model '{resolution.slug}' ({resolution.reason})"
+            # align Codex's `--model` slug to the real bridged model
+            codex_model = await resolve_codex_model(
+                model, model_config, sbox, codex_binary, user
             )
 
             # determine CODEX_HOME (default to whatever sandbox working dir is)
@@ -399,6 +389,48 @@ def codex_cli(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+async def resolve_codex_model(
+    model: str | None,
+    model_config: str | None,
+    sandbox: SandboxEnvironment,
+    codex_binary: str,
+    user: str | None,
+) -> str:
+    """Resolve the Codex `--model` slug aligned to the real bridged model.
+
+    Derives the slug from the real model so Codex's system prompt and tool set
+    match what's actually running; an explicit `model_config` overrides. Providers
+    that are `OpenAIAPI`-derived (e.g. a pre-deployment stand-in registered under a
+    custom provider name) are treated as OpenAI and resolved by their declared
+    `service_model_name()` rather than the registry name — so a custom `otter`
+    provider reporting `gpt-5.5` aligns to that catalog entry. "latest"/codename
+    models (per the provider's `is_latest()`) align to the latest catalog profile
+    rather than Codex's generic fallback.
+    """
+    resolved_model = get_model(model)
+    real_model = ModelName(resolved_model)
+    api = resolved_model.api
+    real_api = "openai" if is_openai_derived_api(api) else real_model.api
+    # an OpenAI-derived provider reports its true model identity via
+    # service_model_name() (e.g. a custom 'otter' provider -> 'gpt-5.5'); align to
+    # that, not the registry name ('otter'), which Codex wouldn't recognize.
+    model_name = openai_service_model_name(api, real_model.name)
+    codex_version = await codex_binary_version(sandbox, codex_binary, user)
+    codex_catalog = await codex_models_catalog(codex_version)
+    resolution = resolve_codex_model_slug(
+        model_name,
+        api=real_api,
+        catalog=codex_catalog,
+        override=model_config,
+        is_latest=is_latest_openai_model(api),
+    )
+    trace(
+        f"Codex model alignment: real model '{real_model}' (as '{model_name}') "
+        f"→ --model '{resolution.slug}' ({resolution.reason})"
+    )
+    return resolution.slug
 
 
 async def _run_codex_cli_centaur(

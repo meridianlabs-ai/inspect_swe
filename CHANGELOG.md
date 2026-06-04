@@ -3,6 +3,12 @@
 - Claude Code: Present the **real served model** as the agent's own identity (e.g. its "You are powered by the model …" system prompt) instead of the bridge sentinel, which previously read "You are powered by the model inspect" — an eval-awareness artifact. Bridge routing is unchanged. Added a `model_config` parameter to override the presented identity (defaults to the served model); Claude Code renders the genuine name/cutoff for recognized Anthropic models and shows other ids verbatim.
 - Claude Code: `opus_model` / `sonnet_model` / `haiku_model` / `subagent_model` are now actually honored — previously the bridge fallback collapsed them onto a single model.
 
+## 0.2.61 (03 June 2026)
+
+- Claude Code: Fix system prompt being re-sent on resumed turns.
+- Codex CLI: Align `OpenAIAPI`-derived custom providers by their declared `service_model_name()`.
+- Codex CLI: Fall back to a bundled model catalog when the version-matched `models.json` can't be fetched.
+
 ## 0.2.60 (02 June 2026)
 
 - Update Inspect AI dependency to 0.3.234

@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from inspect_ai.util import SandboxEnvironment
+from inspect_ai.util import SandboxEnvironment, concurrency
 from typing_extensions import Literal
 
 from .._util.agentbinary import AgentBinarySource, AgentBinaryVersion
@@ -12,6 +12,7 @@ from .._util.appdirs import package_cache_dir
 from .._util.download import download_text_file
 from .._util.sandbox import SandboxPlatform, sandbox_exec
 from .._util.tarball import extract_tarball
+from ._bundled_catalog import BUNDLED_CODEX_CATALOG
 
 logger = logging.getLogger(__name__)
 
@@ -147,25 +148,53 @@ def _cached_catalog_path(version: str) -> Path:
     return package_cache_dir("codex-cli-downloads") / f"codex-{version}-models.json"
 
 
-async def codex_models_catalog(version: str | None) -> dict[str, Any] | None:
-    """Fetch (and cache) the native Codex model catalog for a specific version.
+async def codex_models_catalog(version: str | None) -> dict[str, Any]:
+    """Resolve the native Codex model catalog for a specific version.
 
-    The catalog is the version-matched ``models.json`` from the corresponding
+    Prefers the version-matched ``models.json`` from the corresponding
     ``rust-v{version}`` release tag, cached alongside the binary so the offline
-    guarantee matches the binary's. Returns the parsed catalog, or ``None`` if
-    unavailable (e.g. pre-``models-manager`` releases or a network/parse error),
-    in which case callers should defer to Codex's own bundled catalog.
+    guarantee matches the binary's. When the version is unknown or the fetch
+    fails (offline, rate-limited, or a pre-``models-manager`` release), falls back
+    to the bundled snapshot (``BUNDLED_CODEX_CATALOG``) so model alignment stays
+    deterministic rather than degrading to Codex's generic fallback.
+
+    The fetch is serialized with a single-slot concurrency lock so parallel
+    samples don't stampede ``raw.githubusercontent.com`` (the first writes the
+    cache; the rest read it).
     """
+    cached = _read_cached_catalog(version)
+    if cached is not None:
+        return cached
+
+    if version:
+        async with concurrency("codex-models-catalog", 1, visible=False):
+            # re-check the cache now that we hold the lock (another sample may
+            # have fetched and written it while we were waiting).
+            cached = _read_cached_catalog(version)
+            if cached is not None:
+                return cached
+            fetched = await _fetch_models_catalog(version)
+            if fetched is not None:
+                return fetched
+
+    return BUNDLED_CODEX_CATALOG
+
+
+def _read_cached_catalog(version: str | None) -> dict[str, Any] | None:
+    """Return the cached catalog for ``version`` if present and parseable."""
     if not version:
         return None
-
     cache_path = _cached_catalog_path(version)
-    if cache_path.exists():
-        try:
-            return cast_catalog(json.loads(cache_path.read_text()))
-        except (OSError, json.JSONDecodeError):
-            pass
+    if not cache_path.exists():
+        return None
+    try:
+        return cast_catalog(json.loads(cache_path.read_text()))
+    except (OSError, json.JSONDecodeError):
+        return None
 
+
+async def _fetch_models_catalog(version: str) -> dict[str, Any] | None:
+    """Fetch and cache the version-matched catalog, or ``None`` on failure."""
     url = (
         "https://raw.githubusercontent.com/openai/codex/"
         f"rust-v{version}/codex-rs/models-manager/models.json"
@@ -181,7 +210,7 @@ async def codex_models_catalog(version: str | None) -> dict[str, Any] | None:
         return None
 
     try:
-        cache_path.write_text(text)
+        _cached_catalog_path(version).write_text(text)
     except OSError:
         pass
     return catalog

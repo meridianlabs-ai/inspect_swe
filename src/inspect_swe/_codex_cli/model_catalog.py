@@ -30,6 +30,15 @@ _GPT_VERSION_RE = re.compile(r"^gpt-(\d+)(?:\.(\d+))?")
 # below this boundary gets Codex's generic fallback (neither tool).
 _MIN_TOOL_SEARCH_GPT = (5, 4)
 
+# Sentinel ``--model`` slug used to force Codex's generic fallback (no apply_patch,
+# no tool_search) for a real model that IS present in the catalog but predates the
+# public-API tool_search boundary. Passing the real slug would make Codex bind the
+# catalog's ``supports_search_tool`` (true for sub-5.4 entries like ``gpt-5.2``),
+# emitting a ``tool_search`` the public API rejects. An unknown slug → Codex's
+# ``model_info_from_slug`` fallback (warn, not error; apply_patch/tool_search off).
+# Chosen so no catalog slug is a prefix of it (Codex matches by longest prefix).
+_GENERIC_FALLBACK_SLUG = "inspect-generic"
+
 
 @dataclass(frozen=True)
 class CodexModelResolution:
@@ -41,6 +50,57 @@ class CodexModelResolution:
 
     slug: str
     reason: str
+
+
+def is_openai_derived_api(model_api: object) -> bool:
+    """Whether a model's ``ModelAPI`` is (a subclass of) Inspect's ``OpenAIAPI``.
+
+    This identifies models that are *really* OpenAI — including custom providers
+    (e.g. a pre-deployment stand-in) that subclass ``OpenAIAPI`` under a different
+    registry name. It deliberately does NOT match ``OpenAICompatibleAPI`` (the
+    sibling base used by Ollama/OpenRouter/etc. to serve non-OpenAI models over
+    the OpenAI wire format).
+
+    Matched by class name across the MRO so we don't couple to the private
+    ``inspect_ai.model._providers.openai`` import path.
+    """
+    return any(cls.__name__ == "OpenAIAPI" for cls in type(model_api).__mro__)
+
+
+def is_latest_openai_model(model_api: object) -> bool:
+    """Whether an OpenAI-derived provider flags this as a "latest"/codename model.
+
+    Delegates to ``OpenAIAPI.is_latest()``, which treats a name matching none of
+    OpenAI's known conventions (not gpt/o-series/codex/deep-research, excluding
+    azure/bedrock) as the current frontier — i.e. a pre-deployment or codename
+    model (e.g. ``otter``, ``foo-bar-22``). Inherited by custom subclasses, so it
+    covers both the real OpenAI provider pointed at a pre-release name and a
+    custom provider stand-in.
+
+    Returns False for non-OpenAI-derived providers (and is robust if the method
+    is ever absent). Unlike inspecting the model database (``get_model_info``),
+    this is immune to ``set_model_info``: describing a pre-deployment model's
+    context window doesn't make it look like an established release.
+    """
+    if not is_openai_derived_api(model_api):
+        return False
+    is_latest = getattr(model_api, "is_latest", None)
+    return bool(is_latest()) if callable(is_latest) else False
+
+
+def openai_service_model_name(model_api: object, fallback: str) -> str:
+    """The model identity an OpenAI-derived provider declares, else ``fallback``.
+
+    OpenAI-derived providers report their true model via ``service_model_name()``
+    (e.g. a custom ``otter`` provider that returns ``gpt-5.5``); align to that
+    rather than the registry name (``otter``), which Codex wouldn't recognize.
+    Returns ``fallback`` for providers that aren't OpenAI-derived or lack the
+    method. This mirrors the identity ``is_latest_openai_model`` reads internally.
+    """
+    if not is_openai_derived_api(model_api):
+        return fallback
+    service_model_name = getattr(model_api, "service_model_name", None)
+    return service_model_name() if callable(service_model_name) else fallback
 
 
 def _catalog_models(catalog: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -68,13 +128,18 @@ def latest_openai_slug(catalog: dict[str, Any] | None) -> str | None:
     return str(preferred[0]["slug"])
 
 
-def _matches_catalog(model_name: str, models: list[dict[str, Any]]) -> bool:
-    """Whether Codex would resolve ``model_name`` to a catalog entry.
+def _matched_entry(
+    model_name: str, models: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """The catalog entry Codex would resolve ``model_name`` to, or ``None``.
 
-    Mirrors Codex's longest-prefix matching: a catalog slug is a prefix of the
-    requested model name.
+    Mirrors Codex's longest-prefix matching: a catalog slug must be a prefix of the
+    requested model name; the longest such slug wins.
     """
-    return any(model_name.startswith(m["slug"]) for m in models)
+    matches = [m for m in models if model_name.startswith(m["slug"])]
+    if not matches:
+        return None
+    return max(matches, key=lambda m: len(m["slug"]))
 
 
 def _gpt_version(name: str) -> tuple[int, int] | None:
@@ -102,7 +167,7 @@ def _supports_tool_search(model_name: str) -> bool:
 
 def _slug_capabilities(slug: str, models: list[dict[str, Any]]) -> str:
     """Human-readable capabilities Codex binds for ``slug`` (for the trace)."""
-    entry = next((m for m in models if slug.startswith(m["slug"])), None)
+    entry = _matched_entry(slug, models)
     if entry is None:
         return "generic fallback (no apply_patch, no tool_search)"
     apply_patch = entry.get("apply_patch_tool_type") or "none"
@@ -116,7 +181,7 @@ def resolve_codex_model_slug(
     api: str | None,
     catalog: dict[str, Any] | None,
     override: str | None,
-    known_to_inspect: bool,
+    is_latest: bool,
 ) -> CodexModelResolution:
     """Resolve the Codex ``--model`` slug for the real bridged model.
 
@@ -124,15 +189,19 @@ def resolve_codex_model_slug(
 
     - ``override`` (an explicit ``model_config``) is returned verbatim.
     - An OpenAI model whose name matches a catalog entry returns the model name
-      (Codex resolves it to the native prompt + tools).
+      (Codex resolves it to the native prompt + tools) — *unless* that entry would
+      bind ``tool_search`` while the real model predates the public-API boundary
+      (gpt-5.4+), in which case it returns ``_GENERIC_FALLBACK_SLUG`` to force
+      Codex's generic prompt (no ``apply_patch``, no ``tool_search``) and avoid a
+      ``tool_search`` 400. (Catalog ``supports_search_tool`` reflects Codex's own
+      backend, not the public Responses API the bridge uses.)
     - An OpenAI model *not* in the catalog returns the latest catalog slug —
       getting the full coding prompt + ``apply_patch`` + ``tool_search`` — when it
       supports ``tool_search`` (gpt-5.4+, see ``_supports_tool_search``) or is a
-      name Inspect doesn't recognize at all (likely a pre-deployment frontier
-      model). Otherwise (an established model that predates ``tool_search``, such
-      as ``gpt-5`` or ``gpt-5.1-codex``) it passes through to Codex's generic
-      fallback, which omits ``tool_search`` (and ``apply_patch``) — every catalog
-      slug bundles the two and such models reject ``tool_search``.
+      "latest"/codename model (``is_latest``, a pre-deployment frontier model).
+      Otherwise (an established model that predates ``tool_search``, such as
+      ``gpt-5``, ``gpt-5.1-codex``, or ``o3``) it passes through to Codex's
+      generic fallback, which omits ``tool_search`` (and ``apply_patch``).
     - A non-OpenAI model returns the model name as-is; Codex won't recognize it
       and falls back to its generic prompt (``apply_patch`` disabled), matching
       stock Codex behavior.
@@ -143,9 +212,11 @@ def resolve_codex_model_slug(
         catalog: The version-matched Codex model catalog, or ``None`` if
             unavailable (in which case we defer to Codex's own bundled catalog).
         override: Explicit ``model_config`` value, or ``None`` to derive.
-        known_to_inspect: Whether Inspect's model database recognizes the model
-            (``get_model_info(...) is not None``). A recognized model is an
-            established release; an unrecognized one is likely pre-deployment.
+        is_latest: Whether the provider flags this as a "latest"/codename model
+            (see ``is_latest_openai_model``) — a pre-deployment frontier model, so
+            an otherwise-unrecognized name aliases to latest instead of degrading
+            to the generic fallback. This signal is immune to ``set_model_info``
+            (unlike model-database membership).
 
     Returns:
         A ``CodexModelResolution`` with the chosen ``slug`` and a ``reason``
@@ -167,8 +238,26 @@ def resolve_codex_model_slug(
         )
 
     models = _catalog_models(catalog)
+    # tool_search is exposed by every catalog slug; on the public Responses API
+    # (which the bridge uses) only gpt-5.4+ — or a codename treated as the current
+    # frontier — accept it. A model below this boundary must never be given a
+    # tool_search-bearing slug, or the request 400s.
+    tool_search_ok = _supports_tool_search(model_name) or is_latest
 
-    if _matches_catalog(model_name, models):
+    matched = _matched_entry(model_name, models)
+    if matched is not None:
+        if matched.get("supports_search_tool") and not tool_search_ok:
+            # catalog would bind tool_search, but this real model predates the
+            # public-API boundary → force generic fallback to avoid a 400.
+            return CodexModelResolution(
+                slug=_GENERIC_FALLBACK_SLUG,
+                reason=(
+                    f"openai '{model_name}' is in the Codex catalog but predates "
+                    "tool_search support (gpt-5.4+) → forcing generic prompt via "
+                    f"'{_GENERIC_FALLBACK_SLUG}' (no apply_patch, no tool_search) to "
+                    "avoid a tool_search 400"
+                ),
+            )
         return CodexModelResolution(
             slug=model_name,
             reason=(
@@ -189,23 +278,16 @@ def resolve_codex_model_slug(
             ),
         )
 
-    if _supports_tool_search(model_name):
+    if tool_search_ok:
+        if _supports_tool_search(model_name):
+            why = "supports tool_search (gpt-5.4+)"
+        else:
+            why = "is a latest/codename model (likely pre-deployment)"
         return CodexModelResolution(
             slug=latest,
             reason=(
-                f"openai '{model_name}' absent from catalog but supports tool_search "
-                f"(gpt-5.4+) → aliased to latest '{latest}' "
-                f"({_slug_capabilities(latest, models)})"
-            ),
-        )
-
-    if not known_to_inspect:
-        return CodexModelResolution(
-            slug=latest,
-            reason=(
-                f"openai '{model_name}' unrecognized by Inspect (likely "
-                f"pre-deployment) → aliased to latest '{latest}' "
-                f"({_slug_capabilities(latest, models)})"
+                f"openai '{model_name}' absent from catalog but {why} → aliased to "
+                f"latest '{latest}' ({_slug_capabilities(latest, models)})"
             ),
         )
 
