@@ -43,9 +43,9 @@ from inspect_swe._util.path import join_path
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.messages import build_user_prompt
-from .._util.model import inspect_model
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
+from .model import resolve_claude_code_models
 
 
 @agent
@@ -63,6 +63,7 @@ def claude_code(
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    model_config: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
     opus_model: str | None = None,
     sonnet_model: str | None = None,
@@ -103,6 +104,14 @@ def claude_code(
         centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
+        model_config: Model id used to select the identity Claude Code presents
+            to itself (its "You are powered by the model ..." system prompt) and
+            any model-gated client behavior. Defaults to `None`, which derives it
+            from the real served model so the presented identity matches what's
+            actually running. Purely the displayed identity — calls are still
+            bridged to the served Inspect model regardless. (Claude Code renders
+            the genuine name/cutoff for recognized Anthropic ids and shows other
+            ids verbatim.)
         model_aliases: Optional mapping of model names to Model instances or model name strings.
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
@@ -129,13 +138,6 @@ def claude_code(
     # resolve centaur
     if centaur is True:
         centaur = CentaurOptions()
-
-    # resolve models
-    model = f"inspect/{model}" if model is not None else "inspect"
-    opus_model = inspect_model(opus_model)
-    sonnet_model = inspect_model(sonnet_model)
-    haiku_model = inspect_model(haiku_model)
-    subagent_model = inspect_model(subagent_model)
 
     # resolve skills
     resolved_skills = read_skills(skills) if skills is not None else None
@@ -164,10 +166,23 @@ def claude_code(
         # See live_consumer.py for full mechanism.
         consumer = LiveConsumer(outer_span_id=current_span_id())
 
+        # Resolve the (cosmetic) model identities Claude Code presents to itself
+        # and the bridge aliases that route them to the real served model. The
+        # per-role env vars below carry the opus/sonnet/haiku/subagent names.
+        models = resolve_claude_code_models(
+            model,
+            model_config,
+            opus_model=opus_model,
+            sonnet_model=sonnet_model,
+            haiku_model=haiku_model,
+            subagent_model=subagent_model,
+            model_aliases=model_aliases,
+        )
+
         async with sandbox_agent_bridge(
             state,
-            model=model,
-            model_aliases=model_aliases,
+            model=models.bridge_model,
+            model_aliases=models.aliases,
             filter=filter,
             sandbox=sandbox,
             retry_refusals=retry_refusals,
@@ -190,7 +205,7 @@ def claude_code(
             cmd = [
                 *permission_flag,
                 "--model",
-                model,
+                models.presented,
             ]
 
             # add interactive options if not running as centaur
@@ -234,12 +249,12 @@ def claude_code(
             agent_env = {
                 "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
                 "ANTHROPIC_AUTH_TOKEN": "sk-ant-api03-DOq5tyLPrk9M4hPE",
-                "ANTHROPIC_MODEL": model,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": opus_model or model,
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet_model or model,
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku_model or model,
-                "CLAUDE_CODE_SUBAGENT_MODEL": subagent_model or model,
-                "ANTHROPIC_SMALL_FAST_MODEL": haiku_model or model,
+                "ANTHROPIC_MODEL": models.presented,
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": models.opus,
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": models.sonnet,
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": models.haiku,
+                "CLAUDE_CODE_SUBAGENT_MODEL": models.subagent,
+                "ANTHROPIC_SMALL_FAST_MODEL": models.haiku,
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                 "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
                 "IS_SANDBOX": "1",
