@@ -23,7 +23,7 @@ The following options are supported for customizing the behavior of the agent:
 | `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended. | 
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
-| `presented_model` | Model name the agent reports as its own (e.g. its "You are powered by the model ..." prompt). Defaults to the real served model. |
+| `model_config` | Model id used for the identity the agent presents to itself (its "You are powered by the model ..." system prompt). Defaults to the real served model. |
 | `opus_model` |  The model to use for `opus`, or for `opusplan` when Plan Mode is active. Defaults to `model`. |
 | `sonnet_model` | The model to use for `sonnet`, or for `opusplan` when Plan Mode is not active. Defaults to `model`. |
 | `haiku_model` | The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`. |

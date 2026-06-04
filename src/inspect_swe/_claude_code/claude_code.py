@@ -62,7 +62,7 @@ def claude_code(
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
-    presented_model: str | None = None,
+    model_config: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
     opus_model: str | None = None,
     sonnet_model: str | None = None,
@@ -103,10 +103,14 @@ def claude_code(
         centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
-        presented_model: Model name the agent should report as its own (e.g. in its
-            "You are powered by the model ..." environment prompt). Defaults to the
-            real served model name. This is purely the displayed identity; model calls
-            are still bridged to the served Inspect model regardless of this value.
+        model_config: Model id used to select the identity Claude Code presents
+            to itself (its "You are powered by the model ..." system prompt) and
+            any model-gated client behavior. Defaults to `None`, which derives it
+            from the real served model so the presented identity matches what's
+            actually running. Purely the displayed identity — calls are still
+            bridged to the served Inspect model regardless. (Claude Code renders
+            the genuine name/cutoff for recognized Anthropic ids and shows other
+            ids verbatim.)
         model_aliases: Optional mapping of model names to Model instances or model name strings.
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
@@ -162,9 +166,7 @@ def claude_code(
         consumer = LiveConsumer(outer_span_id=current_span_id())
 
         served_model = get_model(model)
-        presented = (
-            presented_model if presented_model is not None else served_model.name
-        )
+        presented = model_config if model_config is not None else served_model.name
         resolved_aliases: dict[str, str | Model] = {presented: served_model}
 
         # Per-slot model name + alias entry for the opus/sonnet/haiku/subagent
