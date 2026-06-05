@@ -162,7 +162,10 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#may-2026" id="toc-may-2026" class="nav-link active" data-scroll-target="#may-2026">0.2.59 (31 May 2026)</a></li>
+  <li><a href="#june-2026" id="toc-june-2026" class="nav-link active" data-scroll-target="#june-2026">0.2.62 (05 June 2026)</a></li>
+  <li><a href="#june-2026-1" id="toc-june-2026-1" class="nav-link" data-scroll-target="#june-2026-1">0.2.61 (03 June 2026)</a></li>
+  <li><a href="#june-2026-2" id="toc-june-2026-2" class="nav-link" data-scroll-target="#june-2026-2">0.2.60 (02 June 2026)</a></li>
+  <li><a href="#may-2026" id="toc-may-2026" class="nav-link" data-scroll-target="#may-2026">0.2.59 (31 May 2026)</a></li>
   <li><a href="#may-2026-1" id="toc-may-2026-1" class="nav-link" data-scroll-target="#may-2026-1">0.2.57 (30 May 2026)</a></li>
   <li><a href="#may-2026-2" id="toc-may-2026-2" class="nav-link" data-scroll-target="#may-2026-2">0.2.56 (25 May 2026)</a></li>
   <li><a href="#may-2026-3" id="toc-may-2026-3" class="nav-link" data-scroll-target="#may-2026-3">0.2.55 (16 May 2026)</a></li>
@@ -220,6 +223,28 @@ ul.task-list li input[type="checkbox"] {
 
 
 
+<section id="june-2026" class="level2">
+<h2 class="anchored" data-anchor-id="june-2026">0.2.62 (05 June 2026)</h2>
+<ul>
+<li>Claude Code: Present the real served model as the agent’s own identity (e.g.&nbsp;its “You are powered by the model …” system prompt) instead of the bridge sentinel. Added a <code>model_config</code> parameter to override the presented identity.</li>
+<li>Claude Code: <code>opus_model</code> / <code>sonnet_model</code> / <code>haiku_model</code> / <code>subagent_model</code> are now actually honored — previously the bridge fallback collapsed them onto a single model.</li>
+<li>Tracing: Only trace full session output when <code>debug</code> option is passed.</li>
+</ul>
+</section>
+<section id="june-2026-1" class="level2">
+<h2 class="anchored" data-anchor-id="june-2026-1">0.2.61 (03 June 2026)</h2>
+<ul>
+<li>Claude Code: Fix system prompt being re-sent on resumed turns.</li>
+<li>Codex CLI: Align <code>OpenAIAPI</code>-derived custom providers by their declared <code>service_model_name()</code>.</li>
+<li>Codex CLI: Fall back to a bundled model catalog when the version-matched <code>models.json</code> can’t be fetched.</li>
+</ul>
+</section>
+<section id="june-2026-2" class="level2">
+<h2 class="anchored" data-anchor-id="june-2026-2">0.2.60 (02 June 2026)</h2>
+<ul>
+<li>Update Inspect AI dependency to 0.3.234</li>
+</ul>
+</section>
 <section id="may-2026" class="level2">
 <h2 class="anchored" data-anchor-id="may-2026">0.2.59 (31 May 2026)</h2>
 <ul>

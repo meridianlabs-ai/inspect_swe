@@ -335,7 +335,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Use <code>disallowed_tools</code> to control access to tools. See <a href="https://docs.anthropic.com/en/docs/claude-code/settings#tools-available-to-claude">Tools available to Claude</a> for the list of built-in tools which can be disallowed.</p>
 <p>Use the <code>attempts</code> option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/_claude_code/claude_code.py#L51">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/_claude_code/claude_code.py#L51">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="at">@agent</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> claude_code(</span>
@@ -352,22 +352,23 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    centaur: <span class="bu">bool</span> <span class="op">|</span> CentaurOptions <span class="op">=</span> <span class="va">False</span>,</span>
 <span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    attempts: <span class="bu">int</span> <span class="op">|</span> AgentAttempts <span class="op">=</span> <span class="dv">1</span>,</span>
 <span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    model: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
-<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    model_aliases: <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">str</span> <span class="op">|</span> Model] <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
-<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    opus_model: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
-<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    sonnet_model: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
-<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    haiku_model: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
-<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>    subagent_model: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
-<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>    <span class="bu">filter</span>: GenerateFilter <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
-<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>    auto_mode: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>,</span>
-<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>    retry_refusals: <span class="bu">int</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="dv">3</span>,</span>
-<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>    retry_uncaught_errors: <span class="bu">int</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="dv">3</span>,</span>
-<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    cwd: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
-<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>    env: <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">str</span>] <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
-<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>    user: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
-<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>    debug: <span class="bu">bool</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    model_config: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    model_aliases: <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">str</span> <span class="op">|</span> Model] <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    opus_model: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    sonnet_model: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>    haiku_model: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>    subagent_model: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>    <span class="bu">filter</span>: GenerateFilter <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>    auto_mode: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>,</span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>    retry_refusals: <span class="bu">int</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="dv">3</span>,</span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    retry_uncaught_errors: <span class="bu">int</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="dv">3</span>,</span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>    cwd: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>    env: <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">str</span>] <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>    user: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
 <span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>    sandbox: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
 <span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>    version: Literal[<span class="st">"auto"</span>, <span class="st">"sandbox"</span>, <span class="st">"stable"</span>, <span class="st">"latest"</span>] <span class="op">|</span> <span class="bu">str</span> <span class="op">=</span> <span class="st">"auto"</span>,</span>
-<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> Agent</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>    debug: <span class="bu">bool</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> Agent</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <dl>
 <dt><code class="ref-definition">name</code> <span class="element-type"><span class="element-type-name">str</span></span></dt>
 <dd>
@@ -408,6 +409,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <dt><code class="ref-definition">model</code> <span class="element-type"><span class="element-type-name">str</span> | <span class="element-type-name">None</span></span></dt>
 <dd>
 <p>Model name to use for Opus and Sonnet calls (defaults to main model for task).</p>
+</dd>
+<dt><code class="ref-definition">model_config</code> <span class="element-type"><span class="element-type-name">str</span> | <span class="element-type-name">None</span></span></dt>
+<dd>
+<p>Model id used to select the identity Claude Code presents to itself (its “You are powered by the model …” system prompt) and any model-gated client behavior. Defaults to <code>None</code>, which derives it from the real served model so the presented identity matches what’s actually running. Purely the displayed identity — calls are still bridged to the served Inspect model regardless. (Claude Code renders the genuine name/cutoff for recognized Anthropic ids and shows other ids verbatim.)</p>
 </dd>
 <dt><code class="ref-definition">model_aliases</code> <span class="element-type">dict[<span class="element-type-name">str</span>, <span class="element-type-name">str</span> | <span class="element-type-name">Model</span>] | <span class="element-type-name">None</span></span></dt>
 <dd>
@@ -457,10 +462,6 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <dd>
 <p>User to execute claude code with.</p>
 </dd>
-<dt><code class="ref-definition">debug</code> <span class="element-type"><span class="element-type-name">bool</span> | <span class="element-type-name">None</span></span></dt>
-<dd>
-<p>Add <code>--debug</code> cli flag. Verbose logging is always enabled.</p>
-</dd>
 <dt><code class="ref-definition">sandbox</code> <span class="element-type"><span class="element-type-name">str</span> | <span class="element-type-name">None</span></span></dt>
 <dd>
 <p>Optional sandbox environment name.</p>
@@ -468,6 +469,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <dt><code class="ref-definition">version</code> <span class="element-type"><span class="element-type-name">Literal</span>['auto', 'sandbox', 'stable', 'latest'] | <span class="element-type-name">str</span></span></dt>
 <dd>
 <p>Version of claude code to use. One of: - “auto”: Use any available version of claude code in the sandbox, otherwise download the current stable version. - “sandbox”: Use the version of claude code in the sandbox (raises <code>RuntimeError</code> if claude is not available in the sandbox) - “stable”: Download and use the current stable version of claude code. - “latest”: Download and use the very latest version of claude code. - “x.x.x”: Download and use a specific version of claude code.</p>
+</dd>
+<dt><code class="ref-definition">debug</code> <span class="element-type"><span class="element-type-name">bool</span> | <span class="element-type-name">None</span></span></dt>
+<dd>
+<p>Add <code>--debug</code> cli flag and trace all debug output.</p>
 </dd>
 </dl>
 </section>
@@ -477,7 +482,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Agent that uses OpenAI <a href="https://github.com/openai/codex">Codex CLI</a> running in a sandbox.</p>
 <p>Use the <code>attempts</code> option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/_codex_cli/codex_cli.py#L60">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/_codex_cli/codex_cli.py#L64">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> codex_cli(</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    name: <span class="bu">str</span> <span class="op">=</span> ...,</span>
@@ -502,9 +507,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a>    sandbox: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> ...,</span>
 <span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a>    version: Literal[<span class="st">'auto'</span>, <span class="st">'sandbox'</span>, <span class="st">'latest'</span>] <span class="op">|</span> <span class="bu">str</span> <span class="op">=</span> ...,</span>
 <span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a>    config_overrides: <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">str</span>] <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> ...,</span>
-<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a>    <span class="op">*</span>,</span>
-<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>    disallowed_tools: <span class="bu">list</span>[Literal[<span class="st">'web_search'</span>]] <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> ...,</span>
-<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> Agent</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a>    debug: <span class="bu">bool</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> ...,</span>
+<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>    <span class="op">*</span>,</span>
+<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a>    disallowed_tools: <span class="bu">list</span>[Literal[<span class="st">'web_search'</span>]] <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> ...,</span>
+<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> Agent</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <dl>
 <dt><code class="ref-definition">name</code> <span class="element-type"><span class="element-type-name">str</span></span></dt>
 <dd>
@@ -594,6 +600,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <dd>
 <p>Additional Codex CLI configuration overrides. Each key-value pair is passed as <code>-c key=value</code> to the CLI.</p>
 </dd>
+<dt><code class="ref-definition">debug</code> <span class="element-type"><span class="element-type-name">bool</span> | <span class="element-type-name">None</span></span></dt>
+<dd>
+<p>Trace all debug output.</p>
+</dd>
 <dt><code class="ref-definition">disallowed_tools</code> <span class="element-type">list[<span class="element-type-name">Literal</span>['web_search']] | <span class="element-type-name">None</span></span></dt>
 <dd>
 
@@ -606,7 +616,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Agent that uses Google <a href="https://github.com/google-gemini/gemini-cli">Gemini CLI</a> running in a sandbox with Inspect model bridging.</p>
 <p>Use the <code>attempts</code> option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/_gemini_cli/gemini_cli.py#L33">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/_gemini_cli/gemini_cli.py#L33">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="at">@agent</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> gemini_cli(</span>
@@ -631,7 +641,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb3-21"><a href="#cb3-21" aria-hidden="true" tabindex="-1"></a>    user: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
 <span id="cb3-22"><a href="#cb3-22" aria-hidden="true" tabindex="-1"></a>    sandbox: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
 <span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a>    version: Literal[<span class="st">"auto"</span>, <span class="st">"sandbox"</span>, <span class="st">"stable"</span>, <span class="st">"latest"</span>] <span class="op">|</span> <span class="bu">str</span> <span class="op">=</span> <span class="st">"auto"</span>,</span>
-<span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> Agent</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a>    debug: <span class="bu">bool</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb3-25"><a href="#cb3-25" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> Agent</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <dl>
 <dt><code class="ref-definition">name</code> <span class="element-type"><span class="element-type-name">str</span></span></dt>
 <dd>
@@ -705,6 +716,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <dd>
 <p>Version of gemini cli to use. One of: - “auto”: Use any available version in sandbox, otherwise download latest - “sandbox”: Use sandbox version (raises RuntimeError if not available) - “stable”/“latest”: Download and use the latest version - “x.x.x”: Download and use a specific version</p>
 </dd>
+<dt><code class="ref-definition">debug</code> <span class="element-type"><span class="element-type-name">bool</span> | <span class="element-type-name">None</span></span></dt>
+<dd>
+<p>Trace all debug output.</p>
+</dd>
 </dl>
 </section>
 <section id="opencode" class="level3">
@@ -713,7 +728,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Agent that uses <a href="https://github.com/anomalyco/opencode">OpenCode</a> running in a sandbox with Inspect model bridging.</p>
 <p>Use the <code>attempts</code> option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/_opencode/opencode.py#L32">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/_opencode/opencode.py#L32">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="at">@agent</span></span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> opencode(</span>
@@ -739,7 +754,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a>    user: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
 <span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a>    sandbox: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
 <span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a>    version: Literal[<span class="st">"auto"</span>, <span class="st">"sandbox"</span>, <span class="st">"stable"</span>, <span class="st">"latest"</span>] <span class="op">|</span> <span class="bu">str</span> <span class="op">=</span> <span class="st">"auto"</span>,</span>
-<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> Agent</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a>    debug: <span class="bu">bool</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> Agent</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <dl>
 <dt><code class="ref-definition">name</code> <span class="element-type"><span class="element-type-name">str</span></span></dt>
 <dd>
@@ -813,6 +829,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <dd>
 <p>Version of opencode to use. One of: - “auto”: Use any available version in sandbox, otherwise download latest - “sandbox”: Use sandbox version (raises RuntimeError if not available) - “stable”/“latest”: Download and use the latest version - “x.x.x”: Download and use a specific version</p>
 </dd>
+<dt><code class="ref-definition">debug</code> <span class="element-type"><span class="element-type-name">bool</span> | <span class="element-type-name">None</span></span></dt>
+<dd>
+<p>Trace all debug output.</p>
+</dd>
 </dl>
 </section>
 <section id="mini_swe_agent" class="level3">
@@ -823,7 +843,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Use <code>attempts</code> to enable additional submissions if initial submission(s) are incorrect (by default, no additional attempts are permitted).</p>
 <p>This agent does not handle compaction natively. Use <code>compaction</code> to specify a compaction strategy.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/_mini_swe_agent/mini_swe_agent.py#L48">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/_mini_swe_agent/mini_swe_agent.py#L48">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="at">@agent</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> mini_swe_agent(</span>
@@ -845,7 +865,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>    user: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
 <span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>    sandbox: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
 <span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>    version: Literal[<span class="st">"stable"</span>, <span class="st">"sandbox"</span>, <span class="st">"latest"</span>] <span class="op">|</span> <span class="bu">str</span> <span class="op">=</span> <span class="st">"stable"</span>,</span>
-<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> Agent</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>    debug: <span class="bu">bool</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> Agent</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <dl>
 <dt><code class="ref-definition">name</code> <span class="element-type"><span class="element-type-name">str</span></span></dt>
 <dd>
@@ -907,6 +928,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <dd>
 <p>Version of mini-swe-agent to use. One of: - “stable”: Download and install the default pinned version. - “sandbox”: Use version in sandbox (raises RuntimeError if not available) - “latest”: Download and install latest version from PyPI. - “x.x.x”: Install and use a specific version.</p>
 </dd>
+<dt><code class="ref-definition">debug</code> <span class="element-type"><span class="element-type-name">bool</span> | <span class="element-type-name">None</span></span></dt>
+<dd>
+<p>Trace all debug output.</p>
+</dd>
 </dl>
 </section>
 </section>
@@ -918,7 +943,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Download an agent binary. This version will be added to the cache of downloaded versions (which retains the 5 most recently downloaded versions).</p>
 <p>Use this if you need to ensure that a specific version of an agent binary is downloaded in advance (e.g.&nbsp;if you are going to run your evaluations offline). After downloading, explicit requests for the downloaded version (e.g.&nbsp;<code>claude_code(version="1.0.98")</code>) will not require network access.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/_tools/download.py#L53">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/_tools/download.py#L53">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> download_agent_binary(</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    binary: Literal[<span class="st">"claude_code"</span>, <span class="st">"codex_cli"</span>],</span>
@@ -944,7 +969,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <h3 class="anchored" data-anchor-id="cached_agent_binaries">cached_agent_binaries</h3>
 <p>List the agent binaries which have been cached on this system.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/_tools/download.py#L80">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/_tools/download.py#L80">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cached_agent_binaries(</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    binary: Literal[<span class="st">"claude_code"</span>, <span class="st">"codex_cli"</span>] <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, quiet: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span></span>
@@ -965,7 +990,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Download all wheels for a package and its dependencies.</p>
 <p>Downloads wheels from PyPI for the specified platform and Python version, then bundles them into a tarball for offline installation in sandbox. Downloaded wheels are cached locally (retaining 5 most recent versions).</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/_util/agentwheel.py#L304">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/_util/agentwheel.py#L304">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> download_wheels_tarball(</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>    package_name: <span class="bu">str</span>,</span>
@@ -996,7 +1021,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <h3 class="anchored" data-anchor-id="agentbinary">AgentBinary</h3>
 <p>Agent binary.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/_tools/download.py#L15">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/_tools/download.py#L15">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> AgentBinary(NamedTuple)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <section class="level4">
@@ -1021,7 +1046,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <h3 class="anchored" data-anchor-id="sandboxplatform">SandboxPlatform</h3>
 <p>Target platform identifier for sandbox binary and wheel downloads.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/_util/sandbox.py#L5">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/_util/sandbox.py#L5">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>SandboxPlatform: TypeAlias <span class="op">=</span> Literal[</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"linux-x64"</span>, <span class="st">"linux-arm64"</span>, <span class="st">"linux-x64-musl"</span>, <span class="st">"linux-arm64-musl"</span></span>
@@ -1035,7 +1060,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Claude Code agent via ACP.</p>
 <p>Uses the <code>claude-agent-acp</code> adapter in a sandbox. Supports multi-turn sessions and mid-turn interrupts.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/acp/_agents/claude_code/claude_code.py#L167">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/acp/_agents/claude_code/claude_code.py#L167">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> interactive_claude_code(</span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>    <span class="op">*</span>,</span>
@@ -1133,7 +1158,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Codex CLI agent via ACP.</p>
 <p>Uses the <code>codex-acp</code> adapter in a sandbox. Supports multi-turn sessions and mid-turn interrupts.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/acp/_agents/codex_cli/codex_cli.py#L197">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/acp/_agents/codex_cli/codex_cli.py#L197">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> interactive_codex_cli(</span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>    <span class="op">*</span>,</span>
@@ -1176,7 +1201,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Gemini CLI agent via ACP.</p>
 <p>Uses gemini’s native <code>--experimental-acp</code> flag in a sandbox. Supports multi-turn sessions and mid-turn interrupts.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/acp/_agents/gemini_cli/gemini_cli.py#L152">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/acp/_agents/gemini_cli/gemini_cli.py#L152">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb13"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> interactive_gemini_cli(</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>    <span class="op">*</span>,</span>
@@ -1258,7 +1283,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <h3 class="anchored" data-anchor-id="bridge_mcp_to_acp">bridge_mcp_to_acp</h3>
 <p>Convert bridge <code>MCPServerConfigHTTP</code> objects to ACP <code>HttpMcpServer</code>.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/acp/agent.py#L29">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/acp/agent.py#L29">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb14"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bridge_mcp_to_acp(configs: <span class="bu">list</span>[MCPServerConfigHTTP]) <span class="op">-&gt;</span> <span class="bu">list</span>[HttpMcpServer]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <dl>
@@ -1274,7 +1299,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Manages the ACP lifecycle (connection, session, MCP announcement, cleanup). Subclasses implement :meth:<code>_start_agent</code> for agent-specific setup.</p>
 <p>Sets up the ACP lifecycle, exposes <code>.conn</code> and <code>.session_id</code>, signals <code>.ready</code>, then blocks until the task is cancelled. The caller drives all prompts via <code>conn.prompt()</code> / <code>conn.cancel()</code>.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/acp/agent.py#L76">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/acp/agent.py#L76">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb15"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ACPAgent(Agent)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </section>
@@ -1282,7 +1307,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <h3 class="anchored" data-anchor-id="acpagentparams">ACPAgentParams</h3>
 <p>Keyword arguments accepted by :class:<span class="element-type-name ref-interlink"><a href="../reference/index.html#acpagent">ACPAgent</a></span>.</p>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/acp/agent.py#L45">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/acp/agent.py#L45">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb16"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ACPAgentParams(TypedDict, total<span class="op">=</span><span class="va">False</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </section>
@@ -1298,7 +1323,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     session = await conn.new_session(...)
     await conn.prompt(...)</code></pre>
 <div class="source-link">
-<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/f5a8e8b11ef15cc2abed916a9c59979005e3f6f2/src/inspect_swe/acp/client.py#L255">Source</a>
+<a href="https://github.com/meridianlabs-ai/inspect_swe/blob/2b57b8f68cc5fca8958d2dad05ede9f6ddf65a2f/src/inspect_swe/acp/client.py#L255">Source</a>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb18"><pre class="sourceCode python doc-declaration code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="at">@contextlib.asynccontextmanager</span></span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="cf">async</span> <span class="kw">def</span> acp_connection(</span>
