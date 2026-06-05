@@ -65,6 +65,7 @@ def mini_swe_agent(
     user: str | None = None,
     sandbox: str | None = None,
     version: Literal["stable", "sandbox", "latest"] | str = "stable",
+    debug: bool | None = None,
 ) -> Agent:
     """mini-swe-agent agent.
 
@@ -104,6 +105,7 @@ def mini_swe_agent(
             - "sandbox": Use version in sandbox (raises RuntimeError if not available)
             - "latest": Download and install latest version from PyPI.
             - "x.x.x": Install and use a specific version.
+        debug: Trace all debug output.
     """
     # validate version before anything else
     validate_version(version)
@@ -229,8 +231,9 @@ def mini_swe_agent(
                     )
 
                     # track debug output
-                    debug_output.append(f"[stdout]\n{result.stdout}")
-                    debug_output.append(f"[stderr]\n{result.stderr}")
+                    if debug:
+                        debug_output.append(f"[stdout]\n{result.stdout}")
+                        debug_output.append(f"[stderr]\n{result.stderr}")
 
                     # raise for error
                     if not result.success:
@@ -266,8 +269,9 @@ def mini_swe_agent(
                             agent_prompt = attempts.incorrect_message
 
                 # trace debug info
-                debug_output.insert(0, "mini-swe-agent Debug Output:")
-                trace("\n".join(debug_output))
+                if debug:
+                    debug_output.insert(0, "mini-swe-agent Debug Output:")
+                    trace("\n".join(debug_output))
 
         return bridge.state
 

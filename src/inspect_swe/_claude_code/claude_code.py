@@ -76,9 +76,9 @@ def claude_code(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
-    debug: bool | None = None,
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
+    debug: bool | None = None,
 ) -> Agent:
     """Claude Code agent.
 
@@ -126,7 +126,6 @@ def claude_code(
         cwd: Working directory to run claude code within.
         env: Environment variables to set for claude code.
         user: User to execute claude code with.
-        debug: Add `--debug` cli flag. Verbose logging is always enabled.
         sandbox: Optional sandbox environment name.
         version: Version of claude code to use. One of:
             - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
@@ -134,6 +133,7 @@ def claude_code(
             - "stable": Download and use the current stable version of claude code.
             - "latest": Download and use the very latest version of claude code.
             - "x.x.x": Download and use a specific version of claude code.
+        debug: Add `--debug` cli flag and trace all debug output.
     """
     # resolve centaur
     if centaur is True:
@@ -361,9 +361,10 @@ def claude_code(
                                 if cc_debug is not None:
                                     cc_debug.stdout.append(cc_event.line)
                             elif isinstance(cc_event, JsonlParseError):
-                                debug_output.append(
-                                    f"JSONL parse error: {cc_event.line}"
-                                )
+                                if debug:
+                                    debug_output.append(
+                                        f"JSONL parse error: {cc_event.line}"
+                                    )
                             elif isinstance(cc_event, StderrEvent):
                                 stderr_data += cc_event.data
                                 if cc_debug is not None:
@@ -371,7 +372,8 @@ def claude_code(
                             elif isinstance(cc_event, ExitEvent):
                                 exit_code = cc_event.code
 
-                        debug_output.append(stderr_data)
+                        if debug:
+                            debug_output.append(stderr_data)
 
                         # raise for error
                         if exit_code != 0:
@@ -433,8 +435,9 @@ def claude_code(
                     consumer.reset()
 
                 # trace debug info
-                debug_output.insert(0, "Claude Code Debug Output:")
-                trace("\n".join(debug_output))
+                if debug:
+                    debug_output.insert(0, "Claude Code Debug Output:")
+                    trace("\n".join(debug_output))
 
         return bridge.state
 

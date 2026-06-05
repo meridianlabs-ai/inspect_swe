@@ -1,7 +1,8 @@
 ## Unreleased
 
-- Claude Code: Present the **real served model** as the agent's own identity (e.g. its "You are powered by the model …" system prompt) instead of the bridge sentinel, which previously read "You are powered by the model inspect" — an eval-awareness artifact. Bridge routing is unchanged. Added a `model_config` parameter to override the presented identity (defaults to the served model); Claude Code renders the genuine name/cutoff for recognized Anthropic models and shows other ids verbatim.
+- Claude Code: Present the real served model as the agent's own identity (e.g. its "You are powered by the model …" system prompt) instead of the bridge sentinel. Added a `model_config` parameter to override the presented identity.
 - Claude Code: `opus_model` / `sonnet_model` / `haiku_model` / `subagent_model` are now actually honored — previously the bridge fallback collapsed them onto a single model.
+- Tracing: Only trace full session output when `debug` option is passed.
 
 ## 0.2.61 (03 June 2026)
 

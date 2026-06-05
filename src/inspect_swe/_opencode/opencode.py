@@ -53,6 +53,7 @@ def opencode(
     user: str | None = None,
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
+    debug: bool | None = None,
 ) -> Agent:
     """OpenCode agent.
 
@@ -90,6 +91,7 @@ def opencode(
             - "sandbox": Use sandbox version (raises RuntimeError if not available)
             - "stable"/"latest": Download and use the latest version
             - "x.x.x": Download and use a specific version
+        debug: Trace all debug output.
     """
     # resolve centaur
     if centaur is True:
@@ -258,8 +260,9 @@ def opencode(
                         stream=False,
                     )
 
-                    debug_output.append(result.stdout)
-                    debug_output.append(result.stderr)
+                    if debug:
+                        debug_output.append(result.stdout)
+                        debug_output.append(result.stderr)
 
                     if not result.success:
                         cli_error_msg = _clean_opencode_error(
@@ -288,8 +291,9 @@ def opencode(
                     else:
                         agent_prompt = attempts.incorrect_message
 
-                debug_output.insert(0, "OpenCode Debug Output:")
-                trace("\n".join(debug_output))
+                if debug:
+                    debug_output.insert(0, "OpenCode Debug Output:")
+                    trace("\n".join(debug_output))
 
         return bridge.state
 

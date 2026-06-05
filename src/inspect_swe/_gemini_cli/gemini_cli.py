@@ -53,6 +53,7 @@ def gemini_cli(
     user: str | None = None,
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
+    debug: bool | None = None,
 ) -> Agent:
     """Gemini CLI agent.
 
@@ -89,6 +90,7 @@ def gemini_cli(
             - "sandbox": Use sandbox version (raises RuntimeError if not available)
             - "stable"/"latest": Download and use the latest version
             - "x.x.x": Download and use a specific version
+        debug: Trace all debug output.
     """
     # resolve centaur
     if centaur is True:
@@ -236,8 +238,9 @@ def gemini_cli(
                     )
 
                     # track debug output
-                    debug_output.append(result.stdout)
-                    debug_output.append(result.stderr)
+                    if debug:
+                        debug_output.append(result.stdout)
+                        debug_output.append(result.stderr)
 
                     # raise for error
                     if not result.success:
@@ -272,8 +275,9 @@ def gemini_cli(
                         agent_prompt = attempts.incorrect_message
 
                 # trace debug output
-                debug_output.insert(0, "Gemini CLI Debug Output:")
-                trace("\n".join(debug_output))
+                if debug:
+                    debug_output.insert(0, "Gemini CLI Debug Output:")
+                    trace("\n".join(debug_output))
 
         return bridge.state
 

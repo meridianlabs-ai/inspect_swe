@@ -88,6 +88,7 @@ def codex_cli(
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "latest"] | str = "auto",
     config_overrides: dict[str, str] | None = None,
+    debug: bool | None = None,
     **deprecated_args: Unpack[CodexDeprecatedArgs],
 ) -> Agent:
     """Codex CLI.
@@ -132,6 +133,7 @@ def codex_cli(
             - "x.x.x": Download and use a specific version of codex cli.
         config_overrides: Additional Codex CLI configuration overrides.
             Each key-value pair is passed as `-c key=value` to the CLI.
+        debug: Trace all debug output.
         **deprecated_args: Deprecated compatibility arguments.
     """
     # resolve centaur
@@ -342,8 +344,9 @@ def codex_cli(
                     )
 
                     # record output for debug
-                    debug_output.append(result.stdout)
-                    debug_output.append(result.stderr)
+                    if debug:
+                        debug_output.append(result.stdout)
+                        debug_output.append(result.stderr)
 
                     # close any sub-agent spans left open by this attempt so the
                     # span tree stays balanced across restarts and on error
@@ -382,8 +385,9 @@ def codex_cli(
                             agent_prompt = attempts.incorrect_message
 
                 # trace debug info
-                debug_output.insert(0, "Codex CLI Debug Output:")
-                trace("\n".join(debug_output))
+                if debug:
+                    debug_output.insert(0, "Codex CLI Debug Output:")
+                    trace("\n".join(debug_output))
 
         # return success
         return bridge.state
