@@ -1340,7 +1340,7 @@ doc = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-client-protocol", specifier = ">=0.10.0" },
+    { name = "agent-client-protocol", specifier = ">=0.10.1" },
     { name = "anthropic", marker = "extra == 'dev'" },
     { name = "anyio" },
     { name = "griffe", marker = "extra == 'dev'", specifier = ">=2" },
