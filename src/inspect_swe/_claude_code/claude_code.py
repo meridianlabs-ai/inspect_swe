@@ -17,6 +17,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
+from inspect_ai.agent._types import DEFAULT_CONTINUE_PROMPT_NO_SUBMIT
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageSystem,
@@ -299,15 +300,19 @@ def claude_code(
 
                     async def consume(
                         proc: ExecRemoteProcess,
-                    ) -> tuple[int, str, str | None]:
+                    ) -> tuple[int, str, str | None, bool]:
                         # Drain Claude Code's JSONL stream. In live mode, at the
                         # next safe delivery seam (`_operator_delivery_gate`) a
                         # queued operator message kills the process and is
                         # returned as the redirect for a --resume relaunch.
-                        # Returns (exit_code, stderr, redirect|None).
+                        # `any_tool_uses` reports whether this run made any
+                        # top-level tool call (used to nudge a conversational-only
+                        # operator interjection back to work).
+                        # Returns (exit_code, stderr, redirect|None, any_tool_uses).
                         cc_debug = store_as(ClaudeCodeDebug) if debug else None
                         stderr_data = ""
                         exit_code = 0
+                        any_tool_uses = False
                         is_delivery_seam = _operator_delivery_gate()
 
                         async for cc_event in claude_code_event_stream(proc):
@@ -327,15 +332,23 @@ def claude_code(
                             elif isinstance(cc_event, ExitEvent):
                                 exit_code = cc_event.code
 
+                            if not any_tool_uses and _top_level_tool_use_ids(cc_event):
+                                any_tool_uses = True
+
                             if live and is_delivery_seam(cc_event):
                                 pending = _user_text(
                                     await ch.before_turn(state.messages)
                                 )
                                 if pending is not None:
                                     await proc.kill()
-                                    return exit_code, stderr_data, pending
+                                    return (
+                                        exit_code,
+                                        stderr_data,
+                                        pending,
+                                        any_tool_uses,
+                                    )
 
-                        return exit_code, stderr_data, None
+                        return exit_code, stderr_data, None, any_tool_uses
 
                     async def run_prompt(
                         resume: bool, agent_prompt: str
@@ -344,6 +357,10 @@ def claude_code(
                         # interrupts and queued operator messages relaunch Claude
                         # Code via --resume with the operator text. Non-live mode
                         # launches once and returns.
+                        # Tracks whether the current launch delivered an operator
+                        # message, so a conversational-only reply can be nudged
+                        # back to work (once per interjection).
+                        launched_for_operator = False
                         while True:
                             agent_cmd = _build_agent_cmd(
                                 claude_binary=claude_binary,
@@ -377,9 +394,12 @@ def claude_code(
 
                             try:
                                 with ch.turn_scope() if live else nullcontext():
-                                    exit_code, stderr_data, redirect = await consume(
-                                        proc
-                                    )
+                                    (
+                                        exit_code,
+                                        stderr_data,
+                                        redirect,
+                                        any_tool_uses,
+                                    ) = await consume(proc)
                             except AgentInterrupted:
                                 # Esc. The scope cancel may land away from
                                 # exec_remote's kill handler, so kill explicitly
@@ -393,12 +413,14 @@ def claude_code(
                                     await ch.after_cancel(state.messages)
                                 )
                                 resume, agent_prompt = True, follow or agent_prompt
+                                launched_for_operator = True
                                 continue
 
                             if redirect is not None:
                                 # Plain message delivered at a seam; relaunch via
                                 # --resume.
                                 resume, agent_prompt = True, redirect
+                                launched_for_operator = True
                                 continue
 
                             if live:
@@ -409,7 +431,27 @@ def claude_code(
                                 )
                                 if pending is not None:
                                     resume, agent_prompt = True, pending
+                                    launched_for_operator = True
                                     continue
+
+                            if (
+                                live
+                                and launched_for_operator
+                                and not any_tool_uses
+                                and exit_code == 0
+                            ):
+                                # An operator interjection the model answered
+                                # conversationally (no tools) would otherwise end
+                                # the run. Nudge it once to resume work via
+                                # --resume. Clearing launched_for_operator bounds
+                                # this to once per interjection (only a real
+                                # operator message sets it True again).
+                                resume, agent_prompt = (
+                                    True,
+                                    DEFAULT_CONTINUE_PROMPT_NO_SUBMIT.strip(),
+                                )
+                                launched_for_operator = False
+                                continue
 
                             return exit_code, stderr_data
 
