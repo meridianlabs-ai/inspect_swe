@@ -22,7 +22,7 @@ from inspect_ai.model import (
 )
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
-from inspect_ai.util import SandboxEnvironment, store
+from inspect_ai.util import SandboxEnvironment, checkpointer, store
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 from inspect_ai.util._span import current_span_id
@@ -168,17 +168,24 @@ def codex_cli(
         # bridge-only (no Codex --json parsing); see consumer.py.
         consumer = CodexConsumer(outer_span_id=current_span_id())
 
-        async with sandbox_agent_bridge(
-            state,
-            model=bridge_model,
-            model_aliases=model_aliases,
-            filter=filter,
-            sandbox=sandbox,
-            retry_refusals=retry_refusals,
-            port=port,
-            bridged_tools=bridged_tools,
-            model_event_sink=consumer,
-        ) as bridge:
+        async with (
+            checkpointer() as cp,
+            sandbox_agent_bridge(
+                state,
+                model=bridge_model,
+                model_aliases=model_aliases,
+                filter=filter,
+                sandbox=sandbox,
+                retry_refusals=retry_refusals,
+                port=port,
+                bridged_tools=bridged_tools,
+                model_event_sink=consumer,
+                checkpointer=cp,
+            ) as bridge,
+        ):
+            if cp.attempt == "resume_for_scoring":
+                return bridge.state
+
             # ensure codex is installed and get binary location
             codex_binary = await ensure_agent_binary_installed(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)
@@ -323,14 +330,20 @@ def codex_cli(
                 # execute the agent (track debug output)
                 debug_output: list[str] = []
                 agent_prompt = prompt
-                attempt_count = 0
+                attempt_count = cp.track(
+                    "codex_attempt_count", lambda: attempt_count, 0
+                )
                 while True:
                     # append prompt
                     agent_cmd = cmd.copy()
                     agent_cmd.append(agent_prompt)
 
                     # resume previous conversation
-                    if has_assistant_response or attempt_count > 0:
+                    if (
+                        has_assistant_response
+                        or attempt_count > 0
+                        or cp.attempt == "resume"
+                    ):
                         agent_cmd.extend(["resume", "--last"])
 
                     # run agent
