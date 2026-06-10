@@ -264,25 +264,32 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Claude Code: Present the real served model as the agent’s own identity (e.g. its “You are powered by the model …” system prompt) instead of the bridge sentinel. Added a model_config parameter to override the presented identity.\nClaude Code: opus_model / sonnet_model / haiku_model / subagent_model are now actually honored — previously the bridge fallback collapsed them onto a single model.\nTracing: Only trace full session output when debug option is passed."
+    "text": "Remove ACP patch for connection initialization order issue (resolved in ACP 0.10.1).\nCodex CLI: Resolve “stable”/“latest” via the GitHub releases/latest endpoint — the full releases listing for openai/codex frequently 504s."
   },
   {
     "objectID": "CHANGELOG.html#june-2026",
     "href": "CHANGELOG.html#june-2026",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Claude Code: Present the real served model as the agent’s own identity (e.g. its “You are powered by the model …” system prompt) instead of the bridge sentinel. Added a model_config parameter to override the presented identity.\nClaude Code: opus_model / sonnet_model / haiku_model / subagent_model are now actually honored — previously the bridge fallback collapsed them onto a single model.\nTracing: Only trace full session output when debug option is passed."
+    "text": "Remove ACP patch for connection initialization order issue (resolved in ACP 0.10.1).\nCodex CLI: Resolve “stable”/“latest” via the GitHub releases/latest endpoint — the full releases listing for openai/codex frequently 504s."
   },
   {
     "objectID": "CHANGELOG.html#june-2026-1",
     "href": "CHANGELOG.html#june-2026-1",
     "title": "Inspect SWE",
-    "section": "0.2.61 (03 June 2026)",
-    "text": "0.2.61 (03 June 2026)\n\nClaude Code: Fix system prompt being re-sent on resumed turns.\nCodex CLI: Align OpenAIAPI-derived custom providers by their declared service_model_name().\nCodex CLI: Fall back to a bundled model catalog when the version-matched models.json can’t be fetched."
+    "section": "0.2.62 (05 June 2026)",
+    "text": "0.2.62 (05 June 2026)\n\nClaude Code: Present the real served model as the agent’s own identity (e.g. its “You are powered by the model …” system prompt) instead of the bridge sentinel. Added a model_config parameter to override the presented identity.\nClaude Code: opus_model / sonnet_model / haiku_model / subagent_model are now actually honored — previously the bridge fallback collapsed them onto a single model.\nTracing: Only trace full session output when debug option is passed."
   },
   {
     "objectID": "CHANGELOG.html#june-2026-2",
     "href": "CHANGELOG.html#june-2026-2",
+    "title": "Inspect SWE",
+    "section": "0.2.61 (03 June 2026)",
+    "text": "0.2.61 (03 June 2026)\n\nClaude Code: Fix system prompt being re-sent on resumed turns.\nCodex CLI: Align OpenAIAPI-derived custom providers by their declared service_model_name().\nCodex CLI: Fall back to a bundled model catalog when the version-matched models.json can’t be fetched."
+  },
+  {
+    "objectID": "CHANGELOG.html#june-2026-3",
+    "href": "CHANGELOG.html#june-2026-3",
     "title": "Inspect SWE",
     "section": "0.2.60 (02 June 2026)",
     "text": "0.2.60 (02 June 2026)\n\nUpdate Inspect AI dependency to 0.3.234"

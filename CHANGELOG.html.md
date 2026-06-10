@@ -1,5 +1,10 @@
 # changelog – Inspect SWE
 
+## 0.2.63 (10 June 2026)
+
+- Remove ACP patch for connection initialization order issue (resolved in ACP 0.10.1).
+- Codex CLI: Resolve “stable”/“latest” via the GitHub `releases/latest` endpoint — the full releases listing for openai/codex frequently 504s.
+
 ## 0.2.62 (05 June 2026)
 
 - Claude Code: Present the real served model as the agent’s own identity (e.g. its “You are powered by the model …” system prompt) instead of the bridge sentinel. Added a `model_config` parameter to override the presented identity.
