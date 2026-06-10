@@ -1,15 +1,12 @@
 import shlex
 import uuid
-from contextlib import nullcontext
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Callable, Literal, Sequence
+from typing import Any, Literal, Sequence
 
-import anyio
 from inspect_ai.agent import (
     Agent,
     AgentAttempts,
-    AgentInterrupted,
     AgentState,
     BridgedToolsSpec,
     agent,
@@ -17,20 +14,15 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.agent._types import DEFAULT_CONTINUE_PROMPT_NO_SUBMIT
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageSystem,
-    ChatMessageUser,
     GenerateFilter,
     Model,
 )
-from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import (
-    ExecRemoteProcess,
     ExecRemoteStreamingOptions,
-    StoreModel,
     store,
     store_as,
 )
@@ -38,26 +30,29 @@ from inspect_ai.util import (
     sandbox as sandbox_env,
 )
 from inspect_ai.util._span import current_span_id
-from pydantic import Field
 from pydantic_core import to_json
 
 from inspect_swe._claude_code._events.live_consumer import LiveConsumer
-from inspect_swe._claude_code._events.stream import (
-    ClaudeCodeStreamEvent,
-    ExitEvent,
-    JsonlEvent,
-    JsonlParseError,
-    StderrEvent,
-    claude_code_event_stream,
-)
+from inspect_swe._claude_code._events.stream import claude_code_event_stream
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.path import join_path
 
-from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.messages import build_user_prompt
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
+from .loop import (
+    ClaudeCodeDebug,
+    Completed,
+    Policy,
+    RunOutcome,
+    _user_text,
+    attempts_policy,
+    consume_outcome,
+    error_retry_policy,
+    operator_policies,
+    run_agent_loop,
+)
 from .model import resolve_claude_code_models
 
 
@@ -295,242 +290,92 @@ def claude_code(
                 async with agent_channel() as ch:
                     live = ch.is_live
 
-                    # track debug output across all launches in this execution
+                    # debug capture across all launches in this execution
                     debug_output: list[str] = []
+                    cc_debug = store_as(ClaudeCodeDebug) if debug else None
 
-                    async def consume(
-                        proc: ExecRemoteProcess,
-                    ) -> tuple[int, str, str | None, bool]:
-                        # Drain Claude Code's JSONL stream. In live mode, at the
-                        # next safe delivery seam (`_operator_delivery_gate`) a
-                        # queued operator message kills the process and is
-                        # returned as the redirect for a --resume relaunch.
-                        # `any_tool_uses` reports whether this run made any
-                        # top-level tool call (used to nudge a conversational-only
-                        # operator interjection back to work).
-                        # Returns (exit_code, stderr, redirect|None, any_tool_uses).
-                        cc_debug = store_as(ClaudeCodeDebug) if debug else None
-                        stderr_data = ""
-                        exit_code = 0
-                        any_tool_uses = False
-                        is_delivery_seam = _operator_delivery_gate()
+                    async def pending_operator_message() -> str | None:
+                        return _user_text(await ch.before_turn(state.messages))
 
-                        async for cc_event in claude_code_event_stream(proc):
-                            if isinstance(cc_event, JsonlEvent):
-                                consumer.process_jsonl_line(cc_event.raw)
-                                if cc_debug is not None:
-                                    cc_debug.stdout.append(cc_event.line)
-                            elif isinstance(cc_event, JsonlParseError):
-                                if debug:
-                                    debug_output.append(
-                                        f"JSONL parse error: {cc_event.line}"
-                                    )
-                            elif isinstance(cc_event, StderrEvent):
-                                stderr_data += cc_event.data
-                                if cc_debug is not None:
-                                    cc_debug.stderr.append(cc_event.data)
-                            elif isinstance(cc_event, ExitEvent):
-                                exit_code = cc_event.code
+                    async def interrupt_redirect() -> str | None:
+                        # Drop after_cancel's repair messages (Claude Code
+                        # repairs its own conversation on --resume).
+                        return _user_text(await ch.after_cancel(state.messages))
 
-                            if not any_tool_uses and _top_level_tool_use_ids(cc_event):
-                                any_tool_uses = True
+                    async def launch(resume: bool, agent_prompt: str) -> RunOutcome:
+                        agent_cmd = _build_agent_cmd(
+                            claude_binary=claude_binary,
+                            session_id=session_id,
+                            cmd=cmd,
+                            messages=state.messages,
+                            system_prompt=system_prompt,
+                            resume=resume,
+                            prompt=agent_prompt,
+                        )
 
-                            if live and is_delivery_seam(cc_event):
-                                pending = _user_text(
-                                    await ch.before_turn(state.messages)
-                                )
-                                if pending is not None:
-                                    await proc.kill()
-                                    return (
-                                        exit_code,
-                                        stderr_data,
-                                        pending,
-                                        any_tool_uses,
-                                    )
+                        # Fresh consumer state per launch: agent-tree maps
+                        # don't survive a subprocess restart, and reset()
+                        # closes any spans the prior launch left open (keeping
+                        # SpanBegin/End balanced).
+                        consumer.reset()
 
-                        return exit_code, stderr_data, None, any_tool_uses
+                        # Stream so the consumer emits spans and the bridge
+                        # sees Task prompts in real time.
+                        proc = await sbox.exec_remote(
+                            cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
+                            + agent_cmd,
+                            options=ExecRemoteStreamingOptions(
+                                cwd=cwd,
+                                env=agent_env,
+                                user=user,
+                                concurrency=False,
+                            ),
+                            stream=True,
+                        )
 
-                    async def run_prompt(
-                        resume: bool, agent_prompt: str
-                    ) -> tuple[int, str]:
-                        # Run one prompt to completion. In live mode, Esc
-                        # interrupts and queued operator messages relaunch Claude
-                        # Code via --resume with the operator text. Non-live mode
-                        # launches once and returns.
-                        # Tracks whether the current launch delivered an operator
-                        # message, so a conversational-only reply can be nudged
-                        # back to work (once per interjection).
-                        launched_for_operator = False
-                        while True:
-                            agent_cmd = _build_agent_cmd(
-                                claude_binary=claude_binary,
-                                session_id=session_id,
-                                cmd=cmd,
-                                messages=state.messages,
-                                system_prompt=system_prompt,
-                                resume=resume,
-                                prompt=agent_prompt,
+                        outcome = await consume_outcome(
+                            claude_code_event_stream(proc),
+                            proc.kill,
+                            on_jsonl=consumer.process_jsonl_line,
+                            turn_scope=ch.turn_scope if live else None,
+                            pending_message=pending_operator_message if live else None,
+                            cc_debug=cc_debug,
+                            debug_output=debug_output if debug else None,
+                        )
+                        if debug and isinstance(outcome, Completed):
+                            debug_output.append(outcome.stderr)
+                        return outcome
+
+                    # ORDER IS LOAD-BEARING: operator continuation (same
+                    # attempt) beats error retry, which beats attempt scoring.
+                    policies: list[Policy] = [
+                        *(
+                            operator_policies(
+                                pending=pending_operator_message,
+                                interrupted=interrupt_redirect,
+                                continue_prompt="Please proceed to the next step using your best judgement. If you believe you have completed the task, please print the results of the task in your next message",
                             )
+                            if live
+                            else []
+                        ),
+                        error_retry_policy(retry_uncaught_errors),
+                        attempts_policy(attempts, state),
+                    ]
 
-                            # Fresh consumer state per launch: agent-tree maps
-                            # don't survive a subprocess restart, and reset()
-                            # closes any spans the prior launch left open (keeping
-                            # SpanBegin/End balanced).
-                            consumer.reset()
-
-                            # Stream so the consumer emits spans and the bridge
-                            # sees Task prompts in real time.
-                            proc = await sbox.exec_remote(
-                                cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
-                                + agent_cmd,
-                                options=ExecRemoteStreamingOptions(
-                                    cwd=cwd,
-                                    env=agent_env,
-                                    user=user,
-                                    concurrency=False,
-                                ),
-                                stream=True,
-                            )
-
-                            try:
-                                with ch.turn_scope() if live else nullcontext():
-                                    (
-                                        exit_code,
-                                        stderr_data,
-                                        redirect,
-                                        any_tool_uses,
-                                    ) = await consume(proc)
-                            except AgentInterrupted:
-                                # Esc. The scope cancel may land away from
-                                # exec_remote's kill handler, so kill explicitly
-                                # (shielded + idempotent).
-                                with anyio.CancelScope(shield=True):
-                                    await proc.kill()
-                                # Block for the redirect; drop after_cancel's
-                                # repair messages (Claude Code repairs its own
-                                # conversation on --resume).
-                                follow = _user_text(
-                                    await ch.after_cancel(state.messages)
-                                )
-                                resume, agent_prompt = True, follow or agent_prompt
-                                launched_for_operator = True
-                                continue
-
-                            if redirect is not None:
-                                # Plain message delivered at a seam; relaunch via
-                                # --resume.
-                                resume, agent_prompt = True, redirect
-                                launched_for_operator = True
-                                continue
-
-                            if live:
-                                # Backstop: a message that landed during the
-                                # final result.
-                                pending = _user_text(
-                                    await ch.before_turn(state.messages)
-                                )
-                                if pending is not None:
-                                    resume, agent_prompt = True, pending
-                                    launched_for_operator = True
-                                    continue
-
-                            if (
-                                live
-                                and launched_for_operator
-                                and not any_tool_uses
-                                and exit_code == 0
-                            ):
-                                # An operator interjection the model answered
-                                # conversationally (no tools) would otherwise end
-                                # the run. Nudge it once to resume work via
-                                # --resume. Clearing launched_for_operator bounds
-                                # this to once per interjection (only a real
-                                # operator message sets it True again).
-                                resume, agent_prompt = (
-                                    True,
-                                    DEFAULT_CONTINUE_PROMPT_NO_SUBMIT.strip(),
-                                )
-                                launched_for_operator = False
-                                continue
-
-                            return exit_code, stderr_data
-
-                    # execute the agent
-                    agent_prompt = prompt
-                    attempt_count = 0
-                    uncaught_error_count = 0
                     try:
-                        while True:
-                            is_resume = (
-                                has_assistant_response
-                                or attempt_count > 0
-                                or uncaught_error_count > 0
-                            )
-
-                            exit_code, stderr_data = await run_prompt(
-                                is_resume, agent_prompt
-                            )
-
-                            if debug:
-                                debug_output.append(stderr_data)
-
-                            # raise for error
-                            if exit_code != 0:
-                                # if claude code exits with code 1 and no stderr,
-                                # this means an uncaught exception reached the top
-                                # of its main loop -- we treat this as a scaffold
-                                # bug and retry/resume a configurable number of
-                                # times
-                                if (
-                                    exit_code == 1
-                                    and len(stderr_data.strip()) == 0
-                                    and retry_uncaught_errors is not None
-                                    and uncaught_error_count < retry_uncaught_errors
-                                ):
-                                    uncaught_error_count += 1
-                                    continue
-
-                                # otherwise this is a hard failure
-                                raise RuntimeError(
-                                    f"Error executing claude code agent {exit_code}: {stderr_data}"
-                                )
-
-                            # reset uncaught error counter
-                            uncaught_error_count = 0
-
-                            # exit if we are at max_attempts
-                            attempt_count += 1
-                            if attempt_count >= attempts.attempts:
-                                break
-
-                            # score this attempt
-                            answer_scores = await score(state)
-
-                            # break if we score 'correct'
-                            if attempts.score_value(answer_scores[0].value) == 1.0:
-                                break
-
-                            # otherwise update prompt with incorrect message and continue
-                            else:
-                                if callable(attempts.incorrect_message):
-                                    if not is_callable_coroutine(
-                                        attempts.incorrect_message
-                                    ):
-                                        raise ValueError(
-                                            "The incorrect_message function must be async."
-                                        )
-                                    agent_prompt = await attempts.incorrect_message(
-                                        state, answer_scores
-                                    )
-                                else:
-                                    agent_prompt = attempts.incorrect_message
+                        await run_agent_loop(
+                            launch,
+                            policies,
+                            prompt=prompt,
+                            resume=has_assistant_response,
+                        )
                     finally:
                         # Close any spans the final launch left open — covers
                         # both normal exit (last subprocess ran cleanly but a
                         # sub-agent never returned its tool_result) and
-                        # exception exit (RuntimeError above, or anything else
-                        # raised inside the loop). Without this, the agent
-                        # span tree leaks past the @agent boundary.
+                        # exception exit (error_retry_policy's RuntimeError, or
+                        # anything else raised inside the loop). Without this,
+                        # the agent span tree leaks past the @agent boundary.
                         consumer.reset()
 
                     # trace debug info
@@ -573,121 +418,6 @@ def _build_agent_cmd(
             system_args = ["--append-system-prompt", "\n\n".join(system_texts)]
     session_flag = ["--resume", session_id] if resume else ["--session-id", session_id]
     return [claude_binary, *session_flag, *cmd, *system_args, "--", prompt]
-
-
-def _user_text(msgs: Sequence[ChatMessage]) -> str | None:
-    """Join operator user-message text drained from the agent channel.
-
-    Filters out any synthetic ``ChatMessageTool`` repair messages (e.g. those
-    ``after_cancel`` prepends) — Claude Code repairs its own conversation when
-    we relaunch with ``--resume``, so appending ours would double-repair.
-    Returns ``None`` when there are no user messages to forward.
-    """
-    texts = [m.text for m in msgs if isinstance(m, ChatMessageUser)]
-    return "\n\n".join(texts) if texts else None
-
-
-def _is_turn_boundary(cc_event: ClaudeCodeStreamEvent) -> bool:
-    """True at the start of a new top-level Claude Code assistant turn.
-
-    A top-level ``assistant`` event (``parent_tool_use_id is None``) only
-    arrives once every prior top-level tool call — including any ``Task``
-    sub-agents — has resolved (the top-level model can't start a new turn
-    until its tool results are back). So it is a safe seam to abort at: no
-    open sub-agent spans and no unresolved top-level tool calls. A sub-agent's
-    own ``assistant`` events carry a ``parent_tool_use_id`` and are excluded.
-    """
-    return (
-        isinstance(cc_event, JsonlEvent)
-        and cc_event.raw.get("type") == "assistant"
-        and cc_event.raw.get("parent_tool_use_id") is None
-    )
-
-
-def _operator_delivery_gate() -> Callable[[ClaudeCodeStreamEvent], bool]:
-    """Build the per-run predicate for when a queued operator message may be delivered.
-
-    A *plain* operator message is delivered at the next safe seam — one where
-    no top-level tool call is unresolved and no sub-agent span is open, so the
-    process can be killed and resumed cleanly. The returned predicate returns
-    True at the first of two such seams:
-
-    1. **Tools just completed** — every tool call from the CURRENT top-level
-       turn has resolved. This lands BEFORE the next generation starts, so we
-       don't wait for (and then discard on --resume) a full wasted turn. The
-       fast path for tool-heavy turns.
-    2. **Next top-level assistant turn** (:func:`_is_turn_boundary`) — the
-       backstop for turns with no tool calls (the outstanding set never
-       populates) and for a message that lands during the final result.
-
-    Closes over the set of outstanding *top-level* tool calls: a ``Task``
-    sub-agent's own tool calls carry a non-null ``parent_tool_use_id`` and are
-    excluded, so the Task's top-level ``tool_result`` (which only arrives once
-    the sub-agent has finished) is what clears it — preserving the "all
-    top-level tools resolved, no open sub-agent spans" guarantee.
-    """
-    # Mutated in place (``update`` / ``difference_update``) so the closure never
-    # rebinds it and no ``nonlocal`` is needed.
-    outstanding: set[str] = set()
-
-    def is_delivery_seam(cc_event: ClaudeCodeStreamEvent) -> bool:
-        outstanding.update(_top_level_tool_use_ids(cc_event))
-        resolved = _tool_result_ids(cc_event)
-        tools_just_completed = False
-        if resolved and outstanding:
-            outstanding.difference_update(resolved)
-            tools_just_completed = not outstanding
-        return tools_just_completed or _is_turn_boundary(cc_event)
-
-    return is_delivery_seam
-
-
-def _top_level_tool_use_ids(cc_event: ClaudeCodeStreamEvent) -> set[str]:
-    """IDs of the ``tool_use`` blocks in a *top-level* assistant event.
-
-    Empty for sub-agent assistant events (non-null ``parent_tool_use_id``),
-    non-assistant events, and assistant turns with no tool calls.
-    """
-    if not (
-        isinstance(cc_event, JsonlEvent)
-        and cc_event.raw.get("type") == "assistant"
-        and cc_event.raw.get("parent_tool_use_id") is None
-    ):
-        return set()
-    return _tool_block_ids(cc_event.raw, "tool_use", "id")
-
-
-def _tool_result_ids(cc_event: ClaudeCodeStreamEvent) -> set[str]:
-    """``tool_use_id``s of the ``tool_result`` blocks in a *top-level* user event.
-
-    These mark top-level tool calls whose results have come back. Empty for
-    sub-agent user events (non-null ``parent_tool_use_id``) and non-user
-    events.
-    """
-    if not (
-        isinstance(cc_event, JsonlEvent)
-        and cc_event.raw.get("type") == "user"
-        and cc_event.raw.get("parent_tool_use_id") is None
-    ):
-        return set()
-    return _tool_block_ids(cc_event.raw, "tool_result", "tool_use_id")
-
-
-def _tool_block_ids(raw: dict[str, Any], block_type: str, id_field: str) -> set[str]:
-    """Collect ``id_field`` from each ``block_type`` block in ``raw.message.content``."""
-    message = raw.get("message")
-    if not isinstance(message, dict):
-        return set()
-    content = message.get("content")
-    if not isinstance(content, list):
-        return set()
-    ids: set[str] = set()
-    for block in content:
-        if isinstance(block, dict) and block.get("type") == block_type:
-            block_id = block.get(id_field)
-            if isinstance(block_id, str):
-                ids.add(block_id)
-    return ids
 
 
 async def _seed_claude_config(
@@ -772,8 +502,3 @@ async def run_claude_code_centaur(
 
     # run the human cli
     await run_centaur(options, instructions, bashrc, state)
-
-
-class ClaudeCodeDebug(StoreModel):
-    stderr: list[str] = Field(default_factory=list)
-    stdout: list[str] = Field(default_factory=list)

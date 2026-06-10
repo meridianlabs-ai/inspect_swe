@@ -1,13 +1,12 @@
-"""Unit tests for the pure helpers in claude_code.py.
+"""Unit tests for the pure helpers behind the claude_code agent loop.
 
-Covers the module-level functions the ACP live-mode refactor relies on:
-`_build_agent_cmd` (argv assembly + the resume/system-prompt rule),
-`_user_text` (channel-drain → prompt text), `_is_turn_boundary` (top-level
-assistant-turn detection), and the operator-delivery gate
-(`_operator_delivery_gate` + `_top_level_tool_use_ids` / `_tool_result_ids`,
-which decide when a queued operator message may be delivered). The live
-orchestration itself (`consume` / `run_prompt`) is integration-level and
-covered by the manual ACP smoke test.
+Covers `_build_agent_cmd` (argv assembly + the resume/system-prompt rule,
+in claude_code.py) and the loop.py helpers: `_user_text` (channel-drain →
+prompt text), `_is_turn_boundary` (top-level assistant-turn detection), and
+the operator-delivery gate (`_operator_delivery_gate` +
+`_top_level_tool_use_ids` / `_tool_result_ids`, which decide when a queued
+operator message may be delivered). The loop orchestration itself is covered
+by test_claude_code_loop.py.
 """
 
 from __future__ import annotations
@@ -27,8 +26,8 @@ from inspect_swe._claude_code._events.stream import (
     JsonlParseError,
     StderrEvent,
 )
-from inspect_swe._claude_code.claude_code import (
-    _build_agent_cmd,
+from inspect_swe._claude_code.claude_code import _build_agent_cmd
+from inspect_swe._claude_code.loop import (
     _is_turn_boundary,
     _operator_delivery_gate,
     _tool_result_ids,
