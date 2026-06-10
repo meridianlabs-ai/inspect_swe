@@ -1,6 +1,7 @@
 ## Unreleased
 
 - Remove ACP patch for connection initialization order issue (resolved in ACP 0.10.1).
+- Codex CLI: Resolve "stable"/"latest" via the GitHub `releases/latest` endpoint — the full releases listing for openai/codex frequently 504s.
 
 ## 0.2.62 (05 June 2026)
 
