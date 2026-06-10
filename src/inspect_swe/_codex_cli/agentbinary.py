@@ -93,22 +93,11 @@ def _platform_to_codex_arch(platform: SandboxPlatform) -> str:
 
 async def _fetch_latest_stable_version() -> str:
     """Fetch the latest stable version from GitHub releases."""
-    releases_url = "https://api.github.com/repos/openai/codex/releases"
-    releases_json = await download_text_file(releases_url)
-    releases = json.loads(releases_json)
-
-    # Filter out pre-releases and alpha versions
-    stable_releases = [
-        r
-        for r in releases
-        if not r.get("prerelease", False) and "-alpha" not in r.get("tag_name", "")
-    ]
-
-    if not stable_releases:
-        raise RuntimeError("No stable releases found for codex")
-
-    # Get the most recent stable release
-    latest = stable_releases[0]
+    # Use the single-release `latest` endpoint (excludes prereleases/drafts by
+    # definition). The full releases listing is so large for openai/codex that
+    # GitHub's API frequently 504s generating it.
+    latest_url = "https://api.github.com/repos/openai/codex/releases/latest"
+    latest = json.loads(await download_text_file(latest_url))
     tag_name = latest["tag_name"]
 
     # Extract version from tag (e.g., "rust-v0.29.0" -> "0.29.0")
