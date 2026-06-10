@@ -28,6 +28,7 @@ from .._util._async import is_callable_coroutine
 from .._util.agentwheel import AgentWheelSource, ensure_agent_wheel_installed
 from .._util.centaur import CentaurOptions, run_centaur
 from .._util.messages import build_user_prompt
+from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
 from .setup import (
     RESUMABLE_AGENT_PATH,
@@ -143,6 +144,9 @@ def mini_swe_agent(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
+            # resolve working directory (home dir if sandbox default is '/')
+            agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
+
             # ensure mini-swe-agent is installed
             mini_binary = await ensure_agent_wheel_installed(
                 source=MINI_SWE_AGENT_SOURCE,
@@ -222,7 +226,7 @@ def mini_swe_agent(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
                         options=ExecRemoteAwaitableOptions(
-                            cwd=cwd,
+                            cwd=agent_cwd,
                             env=run_env,
                             user=user,
                             concurrency=False,
@@ -238,7 +242,7 @@ def mini_swe_agent(
                     # raise for error
                     if not result.success:
                         raise RuntimeError(
-                            f"Error executing mini-swe-agent (cwd={cwd or 'default'}):\n"
+                            f"Error executing mini-swe-agent (cwd={agent_cwd}):\n"
                             f"stdout: {result.stdout}\n"
                             f"stderr: {result.stderr}"
                         )

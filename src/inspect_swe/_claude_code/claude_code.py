@@ -43,6 +43,7 @@ from inspect_swe._util.path import join_path
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.messages import build_user_prompt
+from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 from .model import resolve_claude_code_models
@@ -237,12 +238,12 @@ def claude_code(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
+            # resolve working directory (home dir if sandbox default is '/')
+            agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
+
             # install skills
             if resolved_skills is not None:
-                CLAUDE_SKILLS = ".claude/skills"
-                skills_dir = (
-                    join_path(cwd, CLAUDE_SKILLS) if cwd is not None else CLAUDE_SKILLS
-                )
+                skills_dir = join_path(agent_cwd, ".claude/skills")
                 await install_skills(resolved_skills, sbox, user, skills_dir)
 
             # define agent env
@@ -266,7 +267,7 @@ def claude_code(
             # output).  Providing an apiKeyHelper in settings.json
             # supplies a key through a path that does work.
             api_key = agent_env.get("ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge")
-            await _seed_claude_config(sbox, api_key, user, cwd)
+            await _seed_claude_config(sbox, api_key, user, agent_cwd)
 
             # centaur mode uses human_cli with custom instructions and bash rc
             if centaur:
@@ -343,7 +344,7 @@ def claude_code(
                             cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                             + agent_cmd,
                             options=ExecRemoteStreamingOptions(
-                                cwd=cwd,
+                                cwd=agent_cwd,
                                 env=agent_env,
                                 user=user,
                                 concurrency=False,
@@ -449,7 +450,7 @@ async def _seed_claude_config(
     sbox: Any,
     api_key: str,
     user: str | None,
-    cwd: str | None,
+    cwd: str,
 ) -> None:
     """Write ~/.claude/settings.json with an apiKeyHelper.
 

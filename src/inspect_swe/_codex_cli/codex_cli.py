@@ -32,7 +32,7 @@ from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
-from inspect_swe._util.sandbox import sandbox_exec
+from inspect_swe._util.sandbox import resolve_agent_cwd, sandbox_exec
 from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
 
@@ -201,19 +201,21 @@ def codex_cli(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
+            # resolve working directory (home dir if sandbox default is '/')
+            agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
+
             # align Codex's `--model` slug to the real bridged model
             codex_model = await resolve_codex_model(
                 model, model_config, sbox, codex_binary, user
             )
 
-            # determine CODEX_HOME (default to whatever sandbox working dir is)
+            # determine CODEX_HOME (default to agent working dir)
             if home_dir is None:
-                working_dir = await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)
-                codex_home = join_path(working_dir, ".codex")
+                codex_home = join_path(agent_cwd, ".codex")
             else:
                 # Resolve ~ and $VARS inside the sandbox
                 codex_home = await sandbox_exec(
-                    sbox, f'eval echo "{home_dir}"', user=user, cwd=cwd
+                    sbox, f'eval echo "{home_dir}"', user=user, cwd=agent_cwd
                 )
             await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=user)
 
@@ -222,10 +224,8 @@ def codex_cli(
                 AGENTS_MD = "AGENTS.md"
                 if home_dir is not None:
                     return join_path(codex_home, AGENTS_MD)
-                elif cwd is not None:
-                    return join_path(cwd, AGENTS_MD)
                 else:
-                    return AGENTS_MD
+                    return join_path(agent_cwd, AGENTS_MD)
 
             # location for config_toml (either codex_home or cwd/.codex )
             async def codex_config_toml() -> str:
@@ -233,7 +233,7 @@ def codex_cli(
                 if home_dir is not None:
                     return join_path(codex_home, CONFIG_TOML)
                 else:
-                    dir = ".codex" if cwd is None else join_path(cwd, ".codex")
+                    dir = join_path(agent_cwd, ".codex")
                     await sandbox_exec(sbox, cmd=f"mkdir -p {dir}", user=user)
                     return join_path(dir, CONFIG_TOML)
 
@@ -351,7 +351,7 @@ def codex_cli(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
                         options=ExecRemoteAwaitableOptions(
-                            cwd=cwd, env=agent_env, user=user, concurrency=False
+                            cwd=agent_cwd, env=agent_env, user=user, concurrency=False
                         ),
                         stream=False,
                     )
