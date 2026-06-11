@@ -13,6 +13,7 @@ from inspect_swe.acp._agents.codex_cli.rollout import (
     FunctionCall,
     FunctionCallOutput,
     PriorItem,
+    RawResponseItem,
     Reasoning,
     UserText,
     build_rollout,
@@ -167,6 +168,114 @@ def test_parse_rollout_redacted_reasoning_drops_plaintext() -> None:
     assert item.text == ""
     assert item.redacted is True
     assert item.encrypted_content == "ENC"
+
+
+def _hand_rollout(*response_payloads: dict[str, Any]) -> str:
+    """A hand-written rollout mimicking real codex output (NOT from build_rollout)."""
+    rows: list[dict[str, Any]] = [
+        {
+            "type": "session_meta",
+            "payload": {
+                "id": "S1",
+                "cwd": "/w",
+                "model_provider": "openai",
+                "cli_version": "0.130.0",
+                "base_instructions": {"text": "BI"},
+            },
+        },
+        {"type": "turn_context", "payload": {"model": "gpt-5.4"}},
+        # real rollouts interleave non-response_item rows; parse must skip them
+        {"type": "event_msg", "payload": {"type": "token_count", "n": 5}},
+    ]
+    rows += [{"type": "response_item", "payload": p} for p in response_payloads]
+    return "".join(json.dumps(r) + "\n" for r in rows)
+
+
+def test_parse_ignores_non_response_item_rows_and_reads_meta() -> None:
+    content = _hand_rollout(
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hi"}],
+        }
+    )
+    parsed = parse_rollout(content)
+    assert parsed.prior == [UserText(text="hi")]  # event_msg row skipped
+    assert parsed.session_id == "S1"
+    assert parsed.model == "gpt-5.4"
+    assert parsed.base_instructions == "BI"
+
+
+def test_parse_preserves_unmodelled_row_types_as_raw() -> None:
+    # web_search_call appears in real codex sessions; must not crash the parse
+    web = {"type": "web_search_call", "id": "ws1", "action": {"query": "x"}}
+    parsed = parse_rollout(_hand_rollout(web))
+    [item] = parsed.prior
+    assert isinstance(item, RawResponseItem)
+    assert item.payload == web
+    # and it round-trips verbatim through a rebuild
+    rebuilt = build_rollout(
+        cwd="/w", prior=parsed.prior, model="gpt-5.4", timestamp=_TS
+    )
+    assert parse_rollout(rebuilt.content).prior == [RawResponseItem(payload=web)]
+
+
+def test_parse_unknown_message_role_preserved_as_raw() -> None:
+    payload = {
+        "type": "message",
+        "role": "tool",
+        "content": [{"type": "input_text", "text": "x"}],
+    }
+    [item] = parse_rollout(_hand_rollout(payload)).prior
+    assert isinstance(item, RawResponseItem)
+
+
+def test_parse_handles_list_valued_tool_output() -> None:
+    # codex writes a list of content blocks for image/structured tool output
+    out = [{"type": "input_image", "image_url": "data:image/png;base64,AAAA"}]
+    [item] = parse_rollout(
+        _hand_rollout({"type": "function_call_output", "call_id": "c1", "output": out})
+    ).prior
+    assert isinstance(item, FunctionCallOutput)
+    assert item.output == out
+
+
+def test_parse_concatenates_multiblock_message_content() -> None:
+    payload = {
+        "type": "message",
+        "role": "assistant",
+        "content": [
+            {"type": "output_text", "text": "a"},
+            {"type": "output_text", "text": "b"},
+        ],
+    }
+    [item] = parse_rollout(_hand_rollout(payload)).prior
+    assert isinstance(item, AssistantText)
+    assert item.text == "ab"
+
+
+def test_build_parse_empty_prior() -> None:
+    spec = build_rollout(cwd="/w", prior=[], model="gpt-5.4", timestamp=_TS)
+    assert parse_rollout(spec.content).prior == []
+
+
+def test_truncate_rebuild_preserves_raw_items() -> None:
+    # raw items survive parse -> slice -> rebuild so a truncated prefix stays faithful
+    web = {"type": "web_search_call", "id": "ws1"}
+    content = _hand_rollout(
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "q"}],
+        },
+        web,
+    )
+    parsed = parse_rollout(content)
+    assert len(parsed.prior) == 2
+    rebuilt = build_rollout(
+        cwd=parsed.cwd, prior=parsed.prior, model=parsed.model, timestamp=_TS
+    )
+    assert parse_rollout(rebuilt.content).prior == parsed.prior
 
 
 def test_parse_truncate_rebuild_resumes_from_a_node() -> None:
