@@ -142,6 +142,7 @@ class RolloutSpec(BaseModel):
     session_id: str
     relative_path: str  # "sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl"
     content: str  # complete jsonl, newline-terminated
+    model: str  # the model recorded in the rollout (resume must serve the same)
 
     def write_to(self, codex_home: Path) -> Path:
         """Write under a host filesystem ``codex_home`` and return the path."""
@@ -232,7 +233,10 @@ def build_rollout(
 
     content = "".join(json.dumps(row) + "\n" for row in rows)
     return RolloutSpec(
-        session_id=session_id, relative_path=relative_path, content=content
+        session_id=session_id,
+        relative_path=relative_path,
+        content=content,
+        model=model,
     )
 
 
@@ -245,6 +249,7 @@ def synthesize_rollout(
     base_instructions: str = _CODEX_BASE_INSTRUCTIONS,
     cli_version: str = "0.130.0",
     model_provider: str = "openai",
+    originator: str = "codex_exec",
     timestamp: datetime | None = None,
 ) -> tuple[Path, str]:
     """Build and write a synthetic rollout to a host fs; return ``(path, session_id)``.
@@ -260,6 +265,7 @@ def synthesize_rollout(
         base_instructions=base_instructions,
         cli_version=cli_version,
         model_provider=model_provider,
+        originator=originator,
         timestamp=timestamp,
     )
     return spec.write_to(codex_home), spec.session_id
@@ -342,13 +348,13 @@ def _typed_item(payload: dict[str, Any]) -> PriorItem | None:
         )
     if ptype == "reasoning":
         content = payload.get("content")
-        text = (
-            "".join(
-                b.get("text", "") for b in content if b.get("type") == "reasoning_text"
-            )
-            if content
-            else ""
-        )
+        # Content we can't represent as plaintext (a drifted/multimodal block
+        # type) must NOT be silently dropped — bail to RawResponseItem so the
+        # row round-trips verbatim. content=None (codex withheld plaintext) and
+        # all-reasoning_text content both stay typed.
+        if content and any(b.get("type") != "reasoning_text" for b in content):
+            return None
+        text = "".join(b.get("text", "") for b in content) if content else ""
         summary_blocks = payload.get("summary") or []
         summary = (
             "".join(
@@ -365,13 +371,14 @@ def _typed_item(payload: dict[str, Any]) -> PriorItem | None:
         )
     if ptype == "message":
         role = payload.get("role")
-        if role in ("user", "assistant", "developer"):
-            blocks = payload.get("content") or []
-            text = "".join(
-                b.get("text", "")
-                for b in blocks
-                if b.get("type") in ("input_text", "output_text")
-            )
+        blocks = payload.get("content") or []
+        # Only claim a typed text message when EVERY block is plain text; a
+        # non-text block (e.g. an input_image) would be lost by the join, so
+        # fall through to RawResponseItem and preserve the row verbatim.
+        if role in ("user", "assistant", "developer") and all(
+            b.get("type") in ("input_text", "output_text") for b in blocks
+        ):
+            text = "".join(b.get("text", "") for b in blocks)
             if role == "assistant":
                 return AssistantText(text=text)
             if role == "developer":

@@ -32,7 +32,7 @@ from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
 
 from .agentbinary import ensure_codex_acp_setup
-from .rollout import RolloutSpec, parse_rollout
+from .rollout import RolloutSpec
 
 logger = logging.getLogger(__name__)
 
@@ -224,9 +224,11 @@ class CodexCli(ACPAgent):
                 "CodexCli._prepare_resume invoked without a resume rollout or "
                 "before _start_agent resolved CODEX_HOME"
             )
-        rollout_model = parse_rollout(self._resume_rollout.content).model
+        rollout_model = self._resume_rollout.model
         resolved_model = get_model(self.model).canonical_name()
-        if rollout_model != resolved_model:
+        # Compare provider-tolerantly: the rollout records a bare model name
+        # while canonical_name() may be provider-qualified ("openai/gpt-5.5").
+        if rollout_model not in (resolved_model, resolved_model.rsplit("/", 1)[-1]):
             logger.warning(
                 "Resume rollout model (%s) differs from this agent's model (%s); "
                 "codex will splice a <model_switch> banner into the resumed "
