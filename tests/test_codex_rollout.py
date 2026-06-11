@@ -12,9 +12,11 @@ from inspect_swe.acp._agents.codex_cli.rollout import (
     DeveloperText,
     FunctionCall,
     FunctionCallOutput,
+    PriorItem,
     Reasoning,
     UserText,
     build_rollout,
+    parse_rollout,
     synthesize_rollout,
 )
 
@@ -127,3 +129,56 @@ def test_synthesize_rollout_roundtrips_on_host(tmp_path: Path) -> None:
     assert path.is_relative_to(tmp_path / "sessions")
     rows = _rows(path.read_text())
     assert rows[0]["payload"]["id"] == session_id
+
+
+def test_parse_rollout_roundtrips_items_and_metadata() -> None:
+    prior: list[PriorItem] = [
+        UserText(text="u"),
+        AssistantText(text="a"),
+        DeveloperText(text="d"),
+        FunctionCall(name="exec", arguments='{"cmd":"ls"}', call_id="c1"),
+        FunctionCallOutput(call_id="c1", output="out"),
+        CustomToolCall(name="apply_patch", input="patch", call_id="c2"),
+        CustomToolCallOutput(call_id="c2", output="ok"),
+        Reasoning(text="thinking"),
+        Reasoning(summary="brief"),
+    ]
+    spec = build_rollout(
+        cwd="/proj", prior=prior, model="gpt-5.4", base_instructions="BI", timestamp=_TS
+    )
+    parsed = parse_rollout(spec.content)
+    assert parsed.prior == prior  # lossless for these variants
+    assert parsed.session_id == spec.session_id
+    assert parsed.cwd == "/proj"
+    assert parsed.model == "gpt-5.4"
+    assert parsed.base_instructions == "BI"
+
+
+def test_parse_rollout_redacted_reasoning_drops_plaintext() -> None:
+    # codex withholds redacted reasoning plaintext on write; parse reflects that
+    # (text dropped, redacted inferred from no-content + signature present).
+    spec = build_rollout(
+        cwd="/w",
+        prior=[Reasoning(text="secret", redacted=True, encrypted_content="ENC")],
+        timestamp=_TS,
+    )
+    [item] = parse_rollout(spec.content).prior
+    assert isinstance(item, Reasoning)
+    assert item.text == ""
+    assert item.redacted is True
+    assert item.encrypted_content == "ENC"
+
+
+def test_parse_truncate_rebuild_resumes_from_a_node() -> None:
+    # "resume from a specific part": parse a saved rollout, slice, rebuild.
+    full: list[PriorItem] = [
+        UserText(text="q1"),
+        AssistantText(text="a1"),
+        UserText(text="q2"),
+    ]
+    saved = build_rollout(cwd="/w", prior=full, timestamp=_TS).content
+    parsed = parse_rollout(saved)
+    truncated = build_rollout(
+        cwd=parsed.cwd, prior=parsed.prior[:1], model=parsed.model, timestamp=_TS
+    )
+    assert parse_rollout(truncated.content).prior == [UserText(text="q1")]

@@ -136,6 +136,22 @@ class RolloutSpec(BaseModel):
         return path
 
 
+class ParsedRollout(BaseModel):
+    """A rollout parsed back into typed items + session metadata.
+
+    The result of :func:`parse_rollout`; feed ``prior`` (optionally sliced)
+    plus the metadata fields back into :func:`build_rollout` to resume.
+    """
+
+    session_id: str | None
+    cwd: str
+    model: str
+    base_instructions: str
+    model_provider: str
+    cli_version: str
+    prior: list[PriorItem]
+
+
 def build_rollout(
     *,
     cwd: str,
@@ -228,6 +244,103 @@ def synthesize_rollout(
         timestamp=timestamp,
     )
     return spec.write_to(codex_home), spec.session_id
+
+
+def parse_rollout(content: str) -> ParsedRollout:
+    """Parse a codex rollout JSONL back into typed items + session metadata.
+
+    The inverse of :func:`build_rollout`. Use it to read a saved/real rollout,
+    truncate ``prior`` at a chosen point, and rebuild a resumable rollout::
+
+        parsed = parse_rollout(saved_content)
+        spec = build_rollout(
+            cwd=parsed.cwd, prior=parsed.prior[:n], model=parsed.model
+        )
+
+    Round-trips losslessly except redacted reasoning: codex withholds redacted
+    reasoning plaintext on write, so a ``Reasoning`` whose plaintext was dropped
+    comes back as ``text=""`` with ``redacted=True``.
+    """
+    rows = [json.loads(line) for line in content.splitlines() if line.strip()]
+    meta: dict[str, Any] = next(
+        (r["payload"] for r in rows if r.get("type") == "session_meta"), {}
+    )
+    turn: dict[str, Any] = next(
+        (r["payload"] for r in rows if r.get("type") == "turn_context"), {}
+    )
+    base = meta.get("base_instructions")
+    base_instructions = base.get("text", "") if isinstance(base, dict) else (base or "")
+    prior = [
+        _payload_to_item(r["payload"]) for r in rows if r.get("type") == "response_item"
+    ]
+    return ParsedRollout(
+        session_id=meta.get("id"),
+        cwd=meta.get("cwd") or turn.get("cwd") or "",
+        model=turn.get("model") or meta.get("model") or "gpt-5.5",
+        base_instructions=base_instructions,
+        model_provider=meta.get("model_provider") or "openai",
+        cli_version=meta.get("cli_version") or "0.130.0",
+        prior=prior,
+    )
+
+
+def _payload_to_item(payload: dict[str, Any]) -> PriorItem:
+    ptype = payload.get("type")
+    if ptype == "function_call":
+        return FunctionCall(
+            name=payload["name"],
+            arguments=payload["arguments"],
+            call_id=payload["call_id"],
+        )
+    if ptype == "function_call_output":
+        return FunctionCallOutput(call_id=payload["call_id"], output=payload["output"])
+    if ptype == "custom_tool_call":
+        return CustomToolCall(
+            name=payload["name"], input=payload["input"], call_id=payload["call_id"]
+        )
+    if ptype == "custom_tool_call_output":
+        return CustomToolCallOutput(
+            call_id=payload["call_id"], output=payload["output"]
+        )
+    if ptype == "reasoning":
+        content = payload.get("content")
+        text = (
+            "".join(
+                b.get("text", "") for b in content if b.get("type") == "reasoning_text"
+            )
+            if content
+            else ""
+        )
+        summary_blocks = payload.get("summary") or []
+        summary = (
+            "".join(
+                b.get("text", "")
+                for b in summary_blocks
+                if b.get("type") == "summary_text"
+            )
+            or None
+        )
+        encrypted = payload.get("encrypted_content")
+        return Reasoning(
+            text=text,
+            summary=summary,
+            encrypted_content=encrypted,
+            redacted=content is None and encrypted is not None,
+        )
+    if ptype == "message":
+        role = payload.get("role")
+        blocks = payload.get("content") or []
+        text = "".join(
+            b.get("text", "")
+            for b in blocks
+            if b.get("type") in ("input_text", "output_text")
+        )
+        if role == "assistant":
+            return AssistantText(text=text)
+        if role == "developer":
+            return DeveloperText(text=text)
+        return UserText(text=text)
+    raise ValueError(f"Unrecognised rollout response_item payload type: {ptype!r}")
 
 
 def _make_turn_context(
