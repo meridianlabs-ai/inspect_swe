@@ -13,7 +13,7 @@ from typing import Any
 import anyio
 from acp import PROTOCOL_VERSION
 from acp.client.connection import ClientSideConnection
-from acp.schema import HttpMcpServer
+from acp.schema import HttpMcpServer, InitializeResponse
 from inspect_ai.agent import Agent, AgentState, BridgedToolsSpec, SandboxAgentBridge
 from inspect_ai.log._samples import sample_active
 from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, get_model
@@ -58,6 +58,11 @@ class ACPAgentParams(TypedDict, total=False):
         env: Extra environment variables for the agent process.
         user: User to execute the agent as in the sandbox.
         sandbox: Sandbox environment name.
+        resume_session_id: Resume an existing ACP session with this id instead
+            of creating a new one. Requires the agent to advertise the
+            ``loadSession`` capability; subclasses materialize the on-disk
+            session in :meth:`ACPAgent._prepare_resume`. ``None`` (default)
+            starts a fresh session.
     """
 
     model: str | Model | None
@@ -71,6 +76,7 @@ class ACPAgentParams(TypedDict, total=False):
     env: dict[str, str] | None
     user: str | None
     sandbox: str | None
+    resume_session_id: str | None
 
 
 class ACPAgent(Agent):
@@ -107,6 +113,7 @@ class ACPAgent(Agent):
         self.env: dict[str, str] = kwargs.get("env") or {}
         self.user = kwargs.get("user")
         self.sandbox = kwargs.get("sandbox")
+        self.resume_session_id = kwargs.get("resume_session_id")
 
         self.model_map: dict[str, str | Model] = self._build_model_map()
         model_map_override = kwargs.get("model_map")
@@ -147,6 +154,57 @@ class ACPAgent(Agent):
         if self.system_prompt is not None:
             parts.append(self.system_prompt)
         return "\n\n".join(parts) if parts else None
+
+    async def _prepare_resume(self, session_id: str) -> None:
+        """Materialize the on-disk session that ``session_id`` refers to.
+
+        Called after the agent process is running and the ACP connection is
+        initialized (so ``inspect_ai.util.sandbox()`` is available), and before
+        ``load_session``. Default is a no-op: an agent whose ACP server can load
+        a session it persisted itself needs nothing here. Agents that resume
+        from a *synthesized* session (e.g. codex writing a rollout into
+        ``$CODEX_HOME/sessions``) override this to write that artifact so the
+        server's ``session/load`` can find it.
+        """
+        return None
+
+    async def _open_session(
+        self,
+        conn: ClientSideConnection,
+        init: InitializeResponse,
+        acp_mcp_servers: list[HttpMcpServer],
+    ) -> str:
+        """Create a new ACP session, or resume one when ``resume_session_id`` is set.
+
+        Returns the active session id. When resuming, verifies the agent
+        advertised the ``loadSession`` capability (raising :class:`ACPError`
+        otherwise), lets the subclass materialize the session via
+        :meth:`_prepare_resume`, then issues ``load_session``.
+        """
+        if self.resume_session_id is None:
+            session = await conn.new_session(
+                cwd=self.cwd,
+                mcp_servers=acp_mcp_servers or None,  # type: ignore[arg-type]
+            )
+            return session.session_id
+
+        caps = init.agent_capabilities
+        if caps is None or not caps.load_session:
+            raise ACPError(
+                f"Cannot resume session {self.resume_session_id!r}: the ACP agent "
+                f"({type(self).__name__}) did not advertise the `loadSession` "
+                f"capability (agentCapabilities.loadSession). Session resume is only "
+                f"supported by agents that implement ACP `session/load`."
+            )
+        await self._prepare_resume(self.resume_session_id)
+        # load_session takes the caller-supplied session_id; unlike new_session
+        # its response carries no session_id, so we keep the one we passed.
+        await conn.load_session(
+            cwd=self.cwd,
+            session_id=self.resume_session_id,
+            mcp_servers=acp_mcp_servers or None,  # type: ignore[arg-type]
+        )
+        return self.resume_session_id
 
     async def _wait_for_active_session(
         self,
@@ -203,21 +261,19 @@ class ACPAgent(Agent):
 
                     async with acp_connection(proc) as (conn, feeder, error_info):
                         logger.info("ACP: initializing...")
-                        await conn.initialize(protocol_version=PROTOCOL_VERSION)
+                        init = await conn.initialize(protocol_version=PROTOCOL_VERSION)
 
                         logger.info(
-                            "ACP: creating session (cwd=%s, mcp_servers=%d)",
+                            "ACP: %s session (cwd=%s, mcp_servers=%d)",
+                            "loading" if self.resume_session_id else "creating",
                             self.cwd,
                             len(acp_mcp_servers),
                         )
 
-                        session = await conn.new_session(
-                            cwd=self.cwd,
-                            mcp_servers=acp_mcp_servers or None,  # type: ignore[arg-type]
-                        )
-
                         self.conn = conn
-                        self.session_id = session.session_id
+                        self.session_id = await self._open_session(
+                            conn, init, acp_mcp_servers
+                        )
 
                         try:
                             self.ready.set()
