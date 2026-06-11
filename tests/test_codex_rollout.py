@@ -276,6 +276,37 @@ def test_parse_dict_valued_tool_output_preserved_as_raw() -> None:
     assert parse_rollout(rebuilt.content).prior == [item]
 
 
+def test_parse_message_with_non_text_block_preserved_as_raw() -> None:
+    # a message carrying a non-text block (e.g. an image) must NOT collapse to
+    # a text-only UserText (losing the image) — preserve the whole row verbatim
+    payload = {
+        "type": "message",
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": "look at this"},
+            {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+        ],
+    }
+    [item] = parse_rollout(_hand_rollout(payload)).prior
+    assert isinstance(item, RawResponseItem)
+    assert item.payload == payload
+    rebuilt = build_rollout(cwd="/w", prior=[item], model="gpt-5.4", timestamp=_TS)
+    assert parse_rollout(rebuilt.content).prior == [item]
+
+
+def test_parse_reasoning_with_drifted_content_preserved_as_raw() -> None:
+    # reasoning content whose block type isn't reasoning_text would be silently
+    # emptied by the text join; preserve it verbatim instead of losing the CoT
+    payload = {
+        "type": "reasoning",
+        "content": [{"type": "text", "text": "real chain of thought"}],
+        "summary": [],
+    }
+    [item] = parse_rollout(_hand_rollout(payload)).prior
+    assert isinstance(item, RawResponseItem)
+    assert item.payload == payload
+
+
 def test_parse_modelled_type_with_missing_key_preserved_as_raw() -> None:
     # a function_call row missing 'arguments' (schema drift) must not KeyError-
     # abort the parse; it degrades to a verbatim RawResponseItem.
