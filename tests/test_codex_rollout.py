@@ -29,7 +29,9 @@ def _rows(content: str) -> list[dict[str, Any]]:
 
 
 def test_header_rows_and_session_id_consistency() -> None:
-    spec = build_rollout(cwd="/work", prior=[UserText(text="hi")], timestamp=_TS)
+    spec = build_rollout(
+        cwd="/work", prior=[UserText(text="hi")], model="gpt-5.5", timestamp=_TS
+    )
     rows = _rows(spec.content)
 
     assert rows[0]["type"] == "session_meta"
@@ -51,6 +53,7 @@ def test_message_items_role_and_content_type() -> None:
             AssistantText(text="a"),
             DeveloperText(text="d"),
         ],
+        model="gpt-5.5",
         timestamp=_TS,
     )
     payloads = [r["payload"] for r in _rows(spec.content)[2:]]
@@ -75,6 +78,7 @@ def test_tool_call_items() -> None:
             CustomToolCall(name="apply_patch", input="*** Begin Patch", call_id="c2"),
             CustomToolCallOutput(call_id="c2", output="ok"),
         ],
+        model="gpt-5.5",
         timestamp=_TS,
     )
     p = [r["payload"] for r in _rows(spec.content)[2:]]
@@ -104,9 +108,12 @@ def test_reasoning_variants() -> None:
         cwd="/w",
         prior=[
             Reasoning(text="thinking"),
-            Reasoning(text="hidden", redacted=True, encrypted_content="ENC"),
+            # signature-only: no plaintext (text=""), encrypted signature kept —
+            # this is how codex persists reasoning whose plaintext was withheld
+            Reasoning(text="", encrypted_content="ENC"),
             Reasoning(summary="brief"),
         ],
+        model="gpt-5.5",
         timestamp=_TS,
     )
     p = [r["payload"] for r in _rows(spec.content)[2:]]
@@ -114,7 +121,7 @@ def test_reasoning_variants() -> None:
     assert p[0]["content"] == [{"type": "reasoning_text", "text": "thinking"}]
     assert p[0]["summary"] == []
     assert "encrypted_content" not in p[0]
-    # redacted -> no plaintext content, but the signature is preserved
+    # no plaintext -> content null, but the signature is preserved
     assert p[1]["content"] is None
     assert p[1]["encrypted_content"] == "ENC"
     # summary-only -> summary list populated, content None
@@ -124,7 +131,11 @@ def test_reasoning_variants() -> None:
 
 def test_synthesize_rollout_roundtrips_on_host(tmp_path: Path) -> None:
     path, session_id = synthesize_rollout(
-        cwd="/w", prior=[UserText(text="hi")], codex_home=tmp_path, timestamp=_TS
+        cwd="/w",
+        prior=[UserText(text="hi")],
+        codex_home=tmp_path,
+        model="gpt-5.5",
+        timestamp=_TS,
     )
     assert path.exists()
     assert path.is_relative_to(tmp_path / "sessions")
@@ -145,7 +156,13 @@ def test_parse_rollout_roundtrips_items_and_metadata() -> None:
         Reasoning(summary="brief"),
     ]
     spec = build_rollout(
-        cwd="/proj", prior=prior, model="gpt-5.4", base_instructions="BI", timestamp=_TS
+        cwd="/proj",
+        prior=prior,
+        model="gpt-5.4",
+        base_instructions="BI",
+        cli_version="9.9.9",
+        model_provider="azure",
+        timestamp=_TS,
     )
     parsed = parse_rollout(spec.content)
     assert parsed.prior == prior  # lossless for these variants
@@ -153,20 +170,22 @@ def test_parse_rollout_roundtrips_items_and_metadata() -> None:
     assert parsed.cwd == "/proj"
     assert parsed.model == "gpt-5.4"
     assert parsed.base_instructions == "BI"
+    assert parsed.cli_version == "9.9.9"
+    assert parsed.model_provider == "azure"
 
 
-def test_parse_rollout_redacted_reasoning_drops_plaintext() -> None:
-    # codex withholds redacted reasoning plaintext on write; parse reflects that
-    # (text dropped, redacted inferred from no-content + signature present).
+def test_parse_rollout_signature_only_reasoning() -> None:
+    # codex withholds reasoning plaintext on write (signature in
+    # encrypted_content); parse reflects that — text empty, signature kept.
     spec = build_rollout(
         cwd="/w",
-        prior=[Reasoning(text="secret", redacted=True, encrypted_content="ENC")],
+        prior=[Reasoning(text="", encrypted_content="ENC")],
+        model="gpt-5.5",
         timestamp=_TS,
     )
     [item] = parse_rollout(spec.content).prior
     assert isinstance(item, Reasoning)
     assert item.text == ""
-    assert item.redacted is True
     assert item.encrypted_content == "ENC"
 
 
@@ -240,6 +259,56 @@ def test_parse_handles_list_valued_tool_output() -> None:
     assert item.output == out
 
 
+def test_parse_dict_valued_tool_output_preserved_as_raw() -> None:
+    # codex-rs can serialize a tool output as a {content, success} object; the
+    # str|list output field rejects it, so it must degrade to RawResponseItem
+    # (verbatim) rather than crash the whole parse.
+    payload = {
+        "type": "function_call_output",
+        "call_id": "c1",
+        "output": {"content": "stdout", "success": True},
+    }
+    [item] = parse_rollout(_hand_rollout(payload)).prior
+    assert isinstance(item, RawResponseItem)
+    assert item.payload == payload
+    # round-trips verbatim
+    rebuilt = build_rollout(cwd="/w", prior=[item], model="gpt-5.4", timestamp=_TS)
+    assert parse_rollout(rebuilt.content).prior == [item]
+
+
+def test_parse_modelled_type_with_missing_key_preserved_as_raw() -> None:
+    # a function_call row missing 'arguments' (schema drift) must not KeyError-
+    # abort the parse; it degrades to a verbatim RawResponseItem.
+    payload = {"type": "function_call", "name": "exec", "call_id": "c1"}
+    [item] = parse_rollout(_hand_rollout(payload)).prior
+    assert isinstance(item, RawResponseItem)
+    assert item.payload == payload
+
+
+def test_parse_handles_unicode_line_separators_in_content() -> None:
+    # real codex rollouts embed U+2028 / U+2029 inside JSON string values
+    # (written with ensure_ascii=False); str.splitlines() would split there and
+    # corrupt the row, so parse must split on "\n" only.
+    meta = {
+        "type": "session_meta",
+        "payload": {"id": "S1", "cwd": "/w", "base_instructions": {"text": "BI"}},
+    }
+    turn = {"type": "turn_context", "payload": {"model": "gpt-5.4"}}
+    msg = {
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "a b c"}],
+        },
+    }
+    content = "".join(
+        json.dumps(r, ensure_ascii=False) + "\n" for r in (meta, turn, msg)
+    )
+    parsed = parse_rollout(content)
+    assert parsed.prior == [AssistantText(text="a b c")]
+
+
 def test_parse_concatenates_multiblock_message_content() -> None:
     payload = {
         "type": "message",
@@ -285,7 +354,7 @@ def test_parse_truncate_rebuild_resumes_from_a_node() -> None:
         AssistantText(text="a1"),
         UserText(text="q2"),
     ]
-    saved = build_rollout(cwd="/w", prior=full, timestamp=_TS).content
+    saved = build_rollout(cwd="/w", prior=full, model="gpt-5.5", timestamp=_TS).content
     parsed = parse_rollout(saved)
     truncated = build_rollout(
         cwd=parsed.cwd, prior=parsed.prior[:1], model=parsed.model, timestamp=_TS
