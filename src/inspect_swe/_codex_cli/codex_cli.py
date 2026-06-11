@@ -25,7 +25,6 @@ from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import SandboxEnvironment, checkpointer, store
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
-from inspect_ai.util._span import current_span_id
 from typing_extensions import Unpack
 
 from inspect_swe._util._async import is_callable_coroutine
@@ -163,10 +162,11 @@ def codex_cli(
 
         # Bridge ModelEventSink: the bridge hands us every ModelEvent instead of
         # emitting it to the transcript, and we attribute each to the correct
-        # (sub-)agent span. Captures this @agent's span as the outer span so
-        # sub-agent spans we discover are parented correctly. Reconstructs spans
-        # bridge-only (no Codex --json parsing); see consumer.py.
-        consumer = CodexConsumer(outer_span_id=current_span_id())
+        # (sub-)agent span. The outer span (main-agent attribution + sub-agent
+        # span parenting) is resolved at emission time so it tracks the
+        # rotating checkpoint span. Reconstructs spans bridge-only (no Codex
+        # --json parsing); see consumer.py.
+        consumer = CodexConsumer()
 
         async with (
             checkpointer() as cp,

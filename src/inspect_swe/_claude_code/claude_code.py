@@ -26,7 +26,6 @@ from inspect_ai.util import (
 from inspect_ai.util import (
     sandbox as sandbox_env,
 )
-from inspect_ai.util._span import current_span_id
 from pydantic import Field
 from pydantic_core import to_json
 
@@ -163,10 +162,11 @@ def claude_code(
         # bridge's ModelEventSink — the bridge hands us every ModelEvent
         # instead of emitting it to the transcript, and we attribute each
         # to the correct agent span using parent_tool_use_id from the JSONL
-        # stream. Captures the outer span_id (this @agent's span) so
-        # sub-agent spans we discover from JSONL can be parented correctly.
-        # See live_consumer.py for full mechanism.
-        consumer = LiveConsumer(outer_span_id=current_span_id())
+        # stream. The outer span (used for main-agent attribution and
+        # sub-agent span parenting) is resolved at emission time so it
+        # tracks the rotating checkpoint span. See live_consumer.py for
+        # full mechanism.
+        consumer = LiveConsumer()
 
         # Resolve the (cosmetic) model identities Claude Code presents to itself
         # and the bridge aliases that route them to the real served model. The
