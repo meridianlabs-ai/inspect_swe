@@ -9,7 +9,14 @@ from ._util.centaur import CentaurOptions
 from ._util.sandbox import SandboxPlatform
 from .acp import ACPAgent, ACPAgentParams, acp_connection, bridge_mcp_to_acp
 from .acp._agents.claude_code import interactive_claude_code
-from .acp._agents.codex_cli import interactive_codex_cli
+from .acp._agents.codex_cli import (
+    ParsedRollout,
+    PriorItem,
+    RolloutSpec,
+    build_rollout,
+    interactive_codex_cli,
+    parse_rollout,
+)
 from .acp._agents.gemini_cli import interactive_gemini_cli
 
 try:
@@ -31,6 +38,11 @@ __all__ = [
     "interactive_claude_code",
     "interactive_codex_cli",
     "interactive_gemini_cli",
+    "build_rollout",
+    "parse_rollout",
+    "RolloutSpec",
+    "ParsedRollout",
+    "PriorItem",
     "download_agent_binary",
     "cached_agent_binaries",
     "AgentBinary",

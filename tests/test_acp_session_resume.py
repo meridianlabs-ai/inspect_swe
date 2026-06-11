@@ -116,3 +116,29 @@ def test_resume_with_no_capabilities_block_raises() -> None:
         assert conn.load_calls == []
 
     anyio.run(run)
+
+
+def test_prepare_resume_runs_strictly_before_load_session() -> None:
+    # _prepare_resume materializes the on-disk session; it MUST complete before
+    # load_session, or the server's session/load has nothing to read.
+    events: list[str] = []
+
+    class _OrderingConn(_FakeConn):
+        async def load_session(
+            self, cwd: str, session_id: str, mcp_servers: Any = None
+        ) -> object:
+            events.append("load")
+            return await super().load_session(cwd, session_id, mcp_servers)
+
+    agent, conn = _agent("prior-session"), _OrderingConn()
+
+    async def _prepare(session_id: str) -> None:
+        events.append("prepare")
+
+    agent._prepare_resume = _prepare  # type: ignore[method-assign]
+
+    async def run() -> None:
+        await _open(agent, conn, _FakeInit(load_session=True))
+        assert events == ["prepare", "load"]
+
+    anyio.run(run)
