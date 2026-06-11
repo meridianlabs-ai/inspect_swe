@@ -54,7 +54,9 @@ class FunctionCall(BaseModel):
 class FunctionCallOutput(BaseModel):
     kind: Literal["function_call_output"] = "function_call_output"
     call_id: str
-    output: str
+    # Usually a string, but codex writes a list of content blocks when a tool
+    # returns structured/image output (e.g. [{"type": "input_image", ...}]).
+    output: str | list[Any]
 
 
 class Reasoning(BaseModel):
@@ -93,12 +95,22 @@ class CustomToolCall(BaseModel):
 class CustomToolCallOutput(BaseModel):
     kind: Literal["custom_tool_call_output"] = "custom_tool_call_output"
     call_id: str
-    output: str
+    output: str | list[Any]
+
+
+class RawResponseItem(BaseModel):
+    # Round-trips any codex ``response_item`` type this module doesn't model
+    # explicitly (e.g. ``web_search_call``, ``tool_search_call``). Real codex
+    # rollouts contain such rows; preserving the raw payload verbatim lets
+    # parse_rollout read real sessions without dropping rows or raising, and
+    # keeps truncate-and-rebuild faithful.
+    kind: Literal["raw"] = "raw"
+    payload: dict[str, Any]
 
 
 # Two discriminated sub-unions joined with a plain union: the message variants
 # carry `role`, the response-item variants carry `kind`. A single
-# `Field(discriminator="role")` over all 8 is invalid (5 variants have no
+# `Field(discriminator="role")` over all variants is invalid (most have no
 # `role`) and makes `TypeAdapter(PriorItem)` — and any model with a
 # `list[PriorItem]` field — fail to build at schema time.
 _MessageItem = Annotated[
@@ -109,7 +121,8 @@ _ResponseItem = Annotated[
     | FunctionCallOutput
     | Reasoning
     | CustomToolCall
-    | CustomToolCallOutput,
+    | CustomToolCallOutput
+    | RawResponseItem,
     Field(discriminator="kind"),
 ]
 PriorItem = _MessageItem | _ResponseItem
@@ -329,18 +342,23 @@ def _payload_to_item(payload: dict[str, Any]) -> PriorItem:
         )
     if ptype == "message":
         role = payload.get("role")
-        blocks = payload.get("content") or []
-        text = "".join(
-            b.get("text", "")
-            for b in blocks
-            if b.get("type") in ("input_text", "output_text")
-        )
-        if role == "assistant":
-            return AssistantText(text=text)
-        if role == "developer":
-            return DeveloperText(text=text)
-        return UserText(text=text)
-    raise ValueError(f"Unrecognised rollout response_item payload type: {ptype!r}")
+        if role in ("user", "assistant", "developer"):
+            blocks = payload.get("content") or []
+            text = "".join(
+                b.get("text", "")
+                for b in blocks
+                if b.get("type") in ("input_text", "output_text")
+            )
+            if role == "assistant":
+                return AssistantText(text=text)
+            if role == "developer":
+                return DeveloperText(text=text)
+            return UserText(text=text)
+    # Anything we don't model explicitly (web_search_call, an unknown message
+    # role, a future row type) is preserved verbatim rather than dropped or
+    # raised on — real codex rollouts carry such rows and parse must survive
+    # them and rebuild them faithfully.
+    return RawResponseItem(payload=payload)
 
 
 def _make_turn_context(
@@ -383,6 +401,8 @@ def _make_turn_context(
 
 
 def _item_payload(item: PriorItem) -> dict[str, Any]:
+    if isinstance(item, RawResponseItem):
+        return item.payload
     if isinstance(item, FunctionCall):
         return {
             "type": "function_call",
