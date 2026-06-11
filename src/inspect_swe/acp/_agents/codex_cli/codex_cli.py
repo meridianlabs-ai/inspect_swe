@@ -32,7 +32,7 @@ from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
 
 from .agentbinary import ensure_codex_acp_setup
-from .rollout import RolloutSpec
+from .rollout import RolloutSpec, parse_rollout
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,15 @@ class CodexCli(ACPAgent):
         # Resume: writing the synthetic rollout is deferred to _prepare_resume
         # (needs the sandbox + resolved CODEX_HOME); set resume_session_id so the
         # base class loads it instead of creating a new session.
+        if (
+            deprecated_args.get("resume_session_id") is not None
+            and resume_rollout is None
+        ):
+            raise ValueError(
+                "Codex resume needs the rollout content, not just an id: pass "
+                "`resume_rollout=build_rollout(...)` (it materializes the session "
+                "on disk so codex can load it), not a bare `resume_session_id`."
+            )
         self._resume_rollout = resume_rollout
         self._codex_home: str | None = None
         if resume_rollout is not None:
@@ -214,6 +223,17 @@ class CodexCli(ACPAgent):
             raise RuntimeError(
                 "CodexCli._prepare_resume invoked without a resume rollout or "
                 "before _start_agent resolved CODEX_HOME"
+            )
+        rollout_model = parse_rollout(self._resume_rollout.content).model
+        resolved_model = get_model(self.model).canonical_name()
+        if rollout_model != resolved_model:
+            logger.warning(
+                "Resume rollout model (%s) differs from this agent's model (%s); "
+                "codex will splice a <model_switch> banner into the resumed "
+                "conversation. Build the rollout with model=%r to avoid it.",
+                rollout_model,
+                resolved_model,
+                resolved_model,
             )
         sbox = sandbox_env(self.sandbox)
         rollout_path = join_path(self._codex_home, self._resume_rollout.relative_path)
