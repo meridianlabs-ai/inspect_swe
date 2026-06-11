@@ -70,15 +70,15 @@ class CodexCli(ACPAgent):
         self._config_overrides = config_overrides or {}
         # Resume: writing the synthetic rollout is deferred to _prepare_resume
         # (needs the sandbox + resolved CODEX_HOME); set resume_session_id so the
-        # base class loads it instead of creating a new session.
-        if (
-            deprecated_args.get("resume_session_id") is not None
-            and resume_rollout is None
-        ):
+        # base class loads it instead of creating a new session. Codex resume is
+        # driven entirely by resume_rollout (it carries the session id AND the
+        # content to materialize on disk), so a caller-supplied resume_session_id
+        # is always wrong — reject it rather than ignore or silently override it.
+        if deprecated_args.get("resume_session_id") is not None:
             raise ValueError(
-                "Codex resume needs the rollout content, not just an id: pass "
-                "`resume_rollout=build_rollout(...)` (it materializes the session "
-                "on disk so codex can load it), not a bare `resume_session_id`."
+                "Codex resume is driven by `resume_rollout`, not `resume_session_id`: "
+                "pass `resume_rollout=build_rollout(...)` (it carries the session id "
+                "and the content codex needs to materialize the session on disk)."
             )
         self._resume_rollout = resume_rollout
         self._codex_home: str | None = None

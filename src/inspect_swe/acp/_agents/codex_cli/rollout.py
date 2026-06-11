@@ -110,10 +110,11 @@ class RawResponseItem(BaseModel):
 # carry `role`, the response-item variants carry `kind`. A single
 # `Field(discriminator="role")` over all variants is invalid (most have no
 # `role`) and makes `TypeAdapter(PriorItem)` — and any model with a
-# `list[PriorItem]` field — fail to build at schema time. On a payload that
-# carries BOTH `role` and `kind` the left arm (message) wins; the parser never
-# feeds such payloads in (it dispatches on `type`), so this only matters for
-# hand-constructed `list[PriorItem]` values.
+# `list[PriorItem]` field — fail to build at schema time. A payload carrying
+# BOTH `role` and `kind` is resolved by Pydantic's smart-union (payload-
+# dependent, not a fixed arm precedence); the parser never feeds such payloads
+# in (it dispatches on `type`), so this only matters for hand-constructed
+# `list[PriorItem]` values, where it's a caller error to begin with.
 _MessageItem = Annotated[
     UserText | AssistantText | DeveloperText, Field(discriminator="role")
 ]

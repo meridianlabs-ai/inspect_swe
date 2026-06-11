@@ -47,6 +47,14 @@ def test_resume_session_id_without_rollout_raises() -> None:
         mod.CodexCli(resume_session_id="some-id")
 
 
+def test_resume_session_id_with_rollout_also_raises() -> None:
+    # Passing both is contradictory (the rollout carries the id); reject rather
+    # than silently let one override the other.
+    spec = _spec("gpt-5.5")
+    with pytest.raises(ValueError, match="resume_rollout"):
+        mod.CodexCli(resume_rollout=spec, resume_session_id="other-id")
+
+
 def test_resume_rollout_wires_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
