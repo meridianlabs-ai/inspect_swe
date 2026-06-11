@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 
 class UserText(BaseModel):
@@ -62,8 +62,11 @@ class FunctionCallOutput(BaseModel):
 class Reasoning(BaseModel):
     kind: Literal["reasoning"] = "reasoning"
     # Plaintext reasoning. Codex's own captures leave this empty (the backend
-    # stores reasoning encrypted in ``encrypted_content``), but synthetic
-    # priors can carry plaintext too.
+    # withholds plaintext and stores the encrypted signature in
+    # ``encrypted_content``), but synthetic priors can carry plaintext too.
+    # The "redacted" state is simply ``text=""`` with ``encrypted_content`` set
+    # — exactly what codex writes — so there is no separate redacted flag to
+    # desync from the content.
     text: str = ""
     # Optional human-readable summary. Codex stores ``summary`` as a list of
     # {type,text} blobs; collapsed to one string here, written back as a
@@ -74,11 +77,6 @@ class Reasoning(BaseModel):
     # round-trip. ``None`` means "no signature" — codex still accepts the row
     # but treats the reasoning as plaintext-only.
     encrypted_content: str | None = None
-    # Whether the original reasoning was redacted by the provider (plaintext
-    # withheld, only summary + signature surfaced). Preserved through
-    # round-trip so consumers can distinguish "no plaintext available" from
-    # "plaintext is the empty string".
-    redacted: bool = False
 
 
 class CustomToolCall(BaseModel):
@@ -112,7 +110,10 @@ class RawResponseItem(BaseModel):
 # carry `role`, the response-item variants carry `kind`. A single
 # `Field(discriminator="role")` over all variants is invalid (most have no
 # `role`) and makes `TypeAdapter(PriorItem)` — and any model with a
-# `list[PriorItem]` field — fail to build at schema time.
+# `list[PriorItem]` field — fail to build at schema time. On a payload that
+# carries BOTH `role` and `kind` the left arm (message) wins; the parser never
+# feeds such payloads in (it dispatches on `type`), so this only matters for
+# hand-constructed `list[PriorItem]` values.
 _MessageItem = Annotated[
     UserText | AssistantText | DeveloperText, Field(discriminator="role")
 ]
@@ -169,7 +170,7 @@ def build_rollout(
     *,
     cwd: str,
     prior: list[PriorItem],
-    model: str = "gpt-5.5",
+    model: str,
     base_instructions: str = _CODEX_BASE_INSTRUCTIONS,
     cli_version: str = "0.130.0",
     model_provider: str = "openai",
@@ -182,6 +183,10 @@ def build_rollout(
     ``<codex_home>/<spec.relative_path>`` (e.g. via ``sandbox.write_file`` for
     a sandboxed codex), after which ``load_session(session_id=spec.session_id)``
     resumes from this prior. For host-fs writes use :func:`synthesize_rollout`.
+
+    ``model`` is required and must match the model the resuming agent serves —
+    a mismatch makes codex splice a ``<model_switch>`` banner into the resumed
+    conversation (when resuming a parsed rollout, pass ``parsed.model``).
     """
     now = timestamp or datetime.now(UTC)
     session_id = str(uuid.uuid4())
@@ -235,7 +240,7 @@ def synthesize_rollout(
     cwd: str,
     prior: list[PriorItem],
     codex_home: Path,
-    model: str = "gpt-5.5",
+    model: str,
     base_instructions: str = _CODEX_BASE_INSTRUCTIONS,
     cli_version: str = "0.130.0",
     model_provider: str = "openai",
@@ -270,11 +275,16 @@ def parse_rollout(content: str) -> ParsedRollout:
             cwd=parsed.cwd, prior=parsed.prior[:n], model=parsed.model
         )
 
-    Round-trips losslessly except redacted reasoning: codex withholds redacted
-    reasoning plaintext on write, so a ``Reasoning`` whose plaintext was dropped
-    comes back as ``text=""`` with ``redacted=True``.
+    Round-trips losslessly for the modelled item types. Reasoning whose
+    plaintext codex withheld comes back as ``text=""`` with its
+    ``encrypted_content`` signature preserved. Rows this module doesn't model
+    (or a modelled row whose shape drifted) come back as :class:`RawResponseItem`
+    carrying the verbatim payload, so they too rebuild faithfully.
     """
-    rows = [json.loads(line) for line in content.splitlines() if line.strip()]
+    # Split on "\n" only — NOT str.splitlines(), which also breaks on the
+    # unicode line separators (U+2028/U+2029, VT, FF, NEL) that appear inside
+    # JSON string values in real rollouts and would corrupt a row mid-string.
+    rows = [json.loads(line) for line in content.split("\n") if line.strip()]
     meta: dict[str, Any] = next(
         (r["payload"] for r in rows if r.get("type") == "session_meta"), {}
     )
@@ -298,6 +308,20 @@ def parse_rollout(content: str) -> ParsedRollout:
 
 
 def _payload_to_item(payload: dict[str, Any]) -> PriorItem:
+    # Anything we don't model explicitly (web_search_call, an unknown message
+    # role, a future row type) — OR a modelled type whose shape has drifted
+    # (a missing key, a dict where a str was expected) — is preserved verbatim
+    # as a RawResponseItem rather than dropped or raised on, so parse survives
+    # real codex rollouts and rebuilds them faithfully.
+    try:
+        typed = _typed_item(payload)
+    except (KeyError, TypeError, AttributeError, ValidationError):
+        typed = None
+    return typed if typed is not None else RawResponseItem(payload=payload)
+
+
+def _typed_item(payload: dict[str, Any]) -> PriorItem | None:
+    """Map a payload to a modelled item, or ``None`` if it isn't one we model."""
     ptype = payload.get("type")
     if ptype == "function_call":
         return FunctionCall(
@@ -333,12 +357,10 @@ def _payload_to_item(payload: dict[str, Any]) -> PriorItem:
             )
             or None
         )
-        encrypted = payload.get("encrypted_content")
         return Reasoning(
             text=text,
             summary=summary,
-            encrypted_content=encrypted,
-            redacted=content is None and encrypted is not None,
+            encrypted_content=payload.get("encrypted_content"),
         )
     if ptype == "message":
         role = payload.get("role")
@@ -354,11 +376,7 @@ def _payload_to_item(payload: dict[str, Any]) -> PriorItem:
             if role == "developer":
                 return DeveloperText(text=text)
             return UserText(text=text)
-    # Anything we don't model explicitly (web_search_call, an unknown message
-    # role, a future row type) is preserved verbatim rather than dropped or
-    # raised on — real codex rollouts carry such rows and parse must survive
-    # them and rebuild them faithfully.
-    return RawResponseItem(payload=payload)
+    return None
 
 
 def _make_turn_context(
@@ -431,13 +449,15 @@ def _item_payload(item: PriorItem) -> dict[str, Any]:
             "output": item.output,
         }
     if isinstance(item, Reasoning):
+        # No plaintext (text == "") -> content is null, matching how codex
+        # persists reasoning whose plaintext was withheld (signature only).
         payload: dict[str, Any] = {
             "type": "reasoning",
             "summary": [{"type": "summary_text", "text": item.summary}]
             if item.summary
             else [],
             "content": [{"type": "reasoning_text", "text": item.text}]
-            if item.text and not item.redacted
+            if item.text
             else None,
         }
         if item.encrypted_content is not None:

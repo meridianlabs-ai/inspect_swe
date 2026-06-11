@@ -60,6 +60,23 @@ def test_resume_rollout_wires_session_id(monkeypatch: pytest.MonkeyPatch) -> Non
     assert agent._resume_rollout is spec
 
 
+def test_interactive_codex_cli_forwards_resume_rollout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the public factory must forward resume_rollout through to CodexCli
+    captured: dict[str, Any] = {}
+
+    def fake_init(self: Any, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(ACPAgent, "__init__", fake_init)
+    spec = _spec("gpt-5.5")
+    agent = mod.interactive_codex_cli(resume_rollout=spec)
+    assert isinstance(agent, mod.CodexCli)
+    assert agent._resume_rollout is spec
+    assert captured["resume_session_id"] == spec.session_id
+
+
 def _prepared_agent(model: str, spec: RolloutSpec) -> mod.CodexCli:
     agent = object.__new__(mod.CodexCli)  # skip __init__ (needs an active sample)
     agent._resume_rollout = spec
