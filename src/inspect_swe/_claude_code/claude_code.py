@@ -19,6 +19,7 @@ from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import (
     ExecRemoteStreamingOptions,
     StoreModel,
+    checkpointer,
     store,
     store_as,
 )
@@ -180,17 +181,31 @@ def claude_code(
             model_aliases=model_aliases,
         )
 
-        async with sandbox_agent_bridge(
-            state,
-            model=models.bridge_model,
-            model_aliases=models.aliases,
-            filter=filter,
-            sandbox=sandbox,
-            retry_refusals=retry_refusals,
-            port=port,
-            bridged_tools=bridged_tools,
-            model_event_sink=consumer,
-        ) as bridge:
+        async with (
+            checkpointer() as cp,
+            sandbox_agent_bridge(
+                state,
+                model=models.bridge_model,
+                model_aliases=models.aliases,
+                filter=filter,
+                sandbox=sandbox,
+                retry_refusals=retry_refusals,
+                port=port,
+                bridged_tools=bridged_tools,
+                model_event_sink=consumer,
+                checkpointer=cp,
+            ) as bridge,
+        ):
+            if cp.attempt == "resume_for_scoring":
+                return bridge.state
+
+            # restore session_id from checkpoint so --resume targets the
+            # session that exists in the restored sandbox
+            nonlocal session_id
+            session_id = cp.track(
+                "claude_code_session_id", lambda: session_id, session_id
+            )
+
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
                 claude_code_binary_source(), version, user, sandbox_env(sandbox)
@@ -281,7 +296,9 @@ def claude_code(
                 # execute the agent (track debug output)
                 debug_output: list[str] = []
                 agent_prompt = prompt
-                attempt_count = 0
+                attempt_count = cp.track(
+                    "claude_code_attempt_count", lambda: attempt_count, 0
+                )
                 uncaught_error_count = 0
                 try:
                     while True:
@@ -289,6 +306,7 @@ def claude_code(
                             has_assistant_response
                             or attempt_count > 0
                             or uncaught_error_count > 0
+                            or cp.attempt == "resume"
                         )
 
                         # System prompt is sent only when creating the session.
