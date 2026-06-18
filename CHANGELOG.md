@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Codex CLI and Claude Code: Support checkpointing and resuming runs via `checkpointer()`, restoring session/attempt state across resumes.
 - All agents: When no `cwd` is specified and the sandbox's default working directory is `/` (i.e. the image has no `WORKDIR`), run the agent in the user's home directory instead of the container root.
 
 ## 0.2.63 (10 June 2026)
