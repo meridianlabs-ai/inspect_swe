@@ -24,6 +24,7 @@ from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
+from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
 
 from .agentbinary import ensure_opencode_setup
@@ -131,6 +132,9 @@ def opencode(
         ) as bridge:
             # resolve sandbox
             sbox = sandbox_env(sandbox)
+
+            # resolve working directory (home dir if sandbox default is '/')
+            agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
 
             # install opencode and its runtime dependencies in sandbox
             opencode_binary, dependency_bin_dirs = await ensure_opencode_setup(
@@ -252,7 +256,7 @@ def opencode(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
                         options=ExecRemoteAwaitableOptions(
-                            cwd=cwd,
+                            cwd=agent_cwd,
                             env=agent_env,
                             user=user,
                             concurrency=False,

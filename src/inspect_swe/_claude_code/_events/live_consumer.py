@@ -64,6 +64,7 @@ from inspect_ai.model._chat_message import (
     ChatMessageUser,
 )
 from inspect_ai.model._model import ModelEventSink
+from inspect_ai.util._span import current_span_id
 
 from .toolview import tool_view
 
@@ -92,9 +93,7 @@ class LiveConsumer(ModelEventSink):
     by Claude Code.
     """
 
-    def __init__(self, outer_span_id: str | None) -> None:
-        self.outer_span_id = outer_span_id
-
+    def __init__(self) -> None:
         # tool_use_id → _OpenAgent for currently-open agent spans (Task/Agent
         # tool_use blocks we've SpanBegin'd, not yet SpanEnd'd).
         self._open_agents: dict[str, _OpenAgent] = {}
@@ -110,6 +109,16 @@ class LiveConsumer(ModelEventSink):
         # knows whether to emit _event_updated (yes if we emitted) vs swallow
         # (no if we didn't — shouldn't happen with current logic but defensive).
         self._emitted_events: set[int] = set()
+
+    @property
+    def outer_span_id(self) -> str | None:
+        """Span for main-agent attribution, resolved at emission time.
+
+        Must not be captured once at construction: with checkpointing
+        active, the enclosing checkpoint span rotates at each fire and a
+        frozen id would pin every event to the first checkpoint.
+        """
+        return current_span_id()
 
     def reset(self) -> None:
         """Close any open spans and clear per-attempt state.

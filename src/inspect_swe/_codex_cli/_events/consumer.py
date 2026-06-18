@@ -45,6 +45,7 @@ from inspect_ai.model._chat_message import (
     ChatMessageUser,
 )
 from inspect_ai.model._model import ModelEventSink
+from inspect_ai.util._span import current_span_id
 
 from .detection import (
     completed_thread_ids,
@@ -74,9 +75,7 @@ class _OpenAgent:
 
 
 class CodexConsumer(ModelEventSink):
-    def __init__(self, outer_span_id: str | None) -> None:
-        self.outer_span_id = outer_span_id
-
+    def __init__(self) -> None:
         # spawn tool_call_id → open sub-agent span. Insertion order = open order
         # (used to close innermost-first in reset()).
         self._agents: dict[str, _OpenAgent] = {}
@@ -89,6 +88,16 @@ class CodexConsumer(ModelEventSink):
 
         # ModelEvents we've _event()'d, so on_complete knows to _event_updated.
         self._emitted_events: set[int] = set()
+
+    @property
+    def outer_span_id(self) -> str | None:
+        """Span for main-agent attribution, resolved at emission time.
+
+        Must not be captured once at construction: with checkpointing
+        active, the enclosing checkpoint span rotates at each fire and a
+        frozen id would pin every event to the first checkpoint.
+        """
+        return current_span_id()
 
     def reset(self) -> None:
         """Close any open spans and clear per-attempt state.

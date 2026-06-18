@@ -19,13 +19,13 @@ from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import (
     ExecRemoteStreamingOptions,
     StoreModel,
+    checkpointer,
     store,
     store_as,
 )
 from inspect_ai.util import (
     sandbox as sandbox_env,
 )
-from inspect_ai.util._span import current_span_id
 from pydantic import Field
 from pydantic_core import to_json
 
@@ -43,6 +43,7 @@ from inspect_swe._util.path import join_path
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.messages import build_user_prompt
+from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 from .model import resolve_claude_code_models
@@ -161,10 +162,11 @@ def claude_code(
         # bridge's ModelEventSink — the bridge hands us every ModelEvent
         # instead of emitting it to the transcript, and we attribute each
         # to the correct agent span using parent_tool_use_id from the JSONL
-        # stream. Captures the outer span_id (this @agent's span) so
-        # sub-agent spans we discover from JSONL can be parented correctly.
-        # See live_consumer.py for full mechanism.
-        consumer = LiveConsumer(outer_span_id=current_span_id())
+        # stream. The outer span (used for main-agent attribution and
+        # sub-agent span parenting) is resolved at emission time so it
+        # tracks the rotating checkpoint span. See live_consumer.py for
+        # full mechanism.
+        consumer = LiveConsumer()
 
         # Resolve the (cosmetic) model identities Claude Code presents to itself
         # and the bridge aliases that route them to the real served model. The
@@ -179,17 +181,31 @@ def claude_code(
             model_aliases=model_aliases,
         )
 
-        async with sandbox_agent_bridge(
-            state,
-            model=models.bridge_model,
-            model_aliases=models.aliases,
-            filter=filter,
-            sandbox=sandbox,
-            retry_refusals=retry_refusals,
-            port=port,
-            bridged_tools=bridged_tools,
-            model_event_sink=consumer,
-        ) as bridge:
+        async with (
+            checkpointer() as cp,
+            sandbox_agent_bridge(
+                state,
+                model=models.bridge_model,
+                model_aliases=models.aliases,
+                filter=filter,
+                sandbox=sandbox,
+                retry_refusals=retry_refusals,
+                port=port,
+                bridged_tools=bridged_tools,
+                model_event_sink=consumer,
+                checkpointer=cp,
+            ) as bridge,
+        ):
+            if cp.attempt == "resume_for_scoring":
+                return bridge.state
+
+            # restore session_id from checkpoint so --resume targets the
+            # session that exists in the restored sandbox
+            nonlocal session_id
+            session_id = cp.track(
+                "claude_code_session_id", lambda: session_id, session_id
+            )
+
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
                 claude_code_binary_source(), version, user, sandbox_env(sandbox)
@@ -237,12 +253,12 @@ def claude_code(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
+            # resolve working directory (home dir if sandbox default is '/')
+            agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
+
             # install skills
             if resolved_skills is not None:
-                CLAUDE_SKILLS = ".claude/skills"
-                skills_dir = (
-                    join_path(cwd, CLAUDE_SKILLS) if cwd is not None else CLAUDE_SKILLS
-                )
+                skills_dir = join_path(agent_cwd, ".claude/skills")
                 await install_skills(resolved_skills, sbox, user, skills_dir)
 
             # define agent env
@@ -266,7 +282,7 @@ def claude_code(
             # output).  Providing an apiKeyHelper in settings.json
             # supplies a key through a path that does work.
             api_key = agent_env.get("ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge")
-            await _seed_claude_config(sbox, api_key, user, cwd)
+            await _seed_claude_config(sbox, api_key, user, agent_cwd)
 
             # centaur mode uses human_cli with custom instructions and bash rc
             if centaur:
@@ -280,7 +296,9 @@ def claude_code(
                 # execute the agent (track debug output)
                 debug_output: list[str] = []
                 agent_prompt = prompt
-                attempt_count = 0
+                attempt_count = cp.track(
+                    "claude_code_attempt_count", lambda: attempt_count, 0
+                )
                 uncaught_error_count = 0
                 try:
                     while True:
@@ -288,6 +306,7 @@ def claude_code(
                             has_assistant_response
                             or attempt_count > 0
                             or uncaught_error_count > 0
+                            or cp.attempt == "resume"
                         )
 
                         # System prompt is sent only when creating the session.
@@ -343,7 +362,7 @@ def claude_code(
                             cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                             + agent_cmd,
                             options=ExecRemoteStreamingOptions(
-                                cwd=cwd,
+                                cwd=agent_cwd,
                                 env=agent_env,
                                 user=user,
                                 concurrency=False,
@@ -449,7 +468,7 @@ async def _seed_claude_config(
     sbox: Any,
     api_key: str,
     user: str | None,
-    cwd: str | None,
+    cwd: str,
 ) -> None:
     """Write ~/.claude/settings.json with an apiKeyHelper.
 
