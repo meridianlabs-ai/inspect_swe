@@ -14,6 +14,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
 from inspect_swe._gemini_cli.agentbinary import ensure_gemini_cli_setup
+from inspect_swe._gemini_cli.gemini_cli import build_gemini_settings
 from inspect_swe._util.path import join_path
 from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
@@ -86,6 +87,12 @@ class GeminiCli(ACPAgent):
             home_result = await sbox.exec(["sh", "-c", "echo $HOME"], user=self.user)
             sandbox_home = home_result.stdout.strip() or "/root"
 
+            all_mcp_servers = list(self.mcp_servers) + list(bridge.mcp_server_configs)
+            settings_json = build_gemini_settings(all_mcp_servers)
+            gemini_settings_dir = f"{sandbox_home}/.gemini"
+            await sbox.exec(["mkdir", "-p", gemini_settings_dir], user=self.user)
+            await sbox.write_file(f"{gemini_settings_dir}/settings.json", settings_json)
+
             # Install skills.
             if self._resolved_skills:
                 GEMINI_SKILLS = ".gemini/skills"
@@ -123,6 +130,13 @@ class GeminiCli(ACPAgent):
                 "--model",
                 model.name,
             ]
+            if all_mcp_servers:
+                cmd.extend(
+                    [
+                        "--allowed-mcp-server-names",
+                        ",".join(server.name for server in all_mcp_servers),
+                    ]
+                )
             if self._debug:
                 # In ACP mode console.* is redirected away from stderr by
                 # ConsolePatcher, so --debug/DEBUG produce nothing observable.
