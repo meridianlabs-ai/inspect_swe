@@ -373,10 +373,19 @@ def claude_code(
                         cc_debug = store_as(ClaudeCodeDebug) if debug else None
                         stderr_data = ""
                         exit_code = 0
+                        terminal_stop_reason: str | None = None
+                        saw_result_event = False
 
                         async for cc_event in claude_code_event_stream(proc):
                             if isinstance(cc_event, JsonlEvent):
                                 consumer.process_jsonl_line(cc_event.raw)
+                                stop_reason = _claude_code_stop_reason(cc_event.raw)
+                                event_type = cc_event.raw.get("type")
+                                if event_type == "result":
+                                    terminal_stop_reason = stop_reason
+                                    saw_result_event = True
+                                elif stop_reason is not None and not saw_result_event:
+                                    terminal_stop_reason = stop_reason
                                 if cc_debug is not None:
                                     cc_debug.stdout.append(cc_event.line)
                             elif isinstance(cc_event, JsonlParseError):
@@ -396,24 +405,32 @@ def claude_code(
 
                         # raise for error
                         if exit_code != 0:
-                            # if claude code exits with code 1 and no stderr,
-                            # this means an uncaught exception reached the top
-                            # of its main loop -- we treat this as a scaffold
-                            # bug and retry/resume a configurable number of
-                            # times
-                            if (
-                                exit_code == 1
-                                and len(stderr_data.strip()) == 0
-                                and retry_uncaught_errors is not None
-                                and uncaught_error_count < retry_uncaught_errors
+                            # Claude Code exits 1 after Anthropic refusal
+                            # responses even though the refusal has already
+                            # been recorded in bridge.state and can be scored.
+                            if not _is_claude_code_refusal_exit(
+                                exit_code,
+                                stderr_data,
+                                terminal_stop_reason,
                             ):
-                                uncaught_error_count += 1
-                                continue
+                                # if claude code exits with code 1 and no stderr,
+                                # this means an uncaught exception reached the top
+                                # of its main loop -- we treat this as a scaffold
+                                # bug and retry/resume a configurable number of
+                                # times
+                                if (
+                                    exit_code == 1
+                                    and len(stderr_data.strip()) == 0
+                                    and retry_uncaught_errors is not None
+                                    and uncaught_error_count < retry_uncaught_errors
+                                ):
+                                    uncaught_error_count += 1
+                                    continue
 
-                            # otherwise this is a hard failure
-                            raise RuntimeError(
-                                f"Error executing claude code agent {exit_code}: {stderr_data}"
-                            )
+                                # otherwise this is a hard failure
+                                raise RuntimeError(
+                                    f"Error executing claude code agent {exit_code}: {stderr_data}"
+                                )
 
                         # reset uncaught error counter
                         uncaught_error_count = 0
@@ -551,3 +568,29 @@ async def run_claude_code_centaur(
 class ClaudeCodeDebug(StoreModel):
     stderr: list[str] = Field(default_factory=list)
     stdout: list[str] = Field(default_factory=list)
+
+
+def _claude_code_stop_reason(raw: dict[str, Any]) -> str | None:
+    event_type = raw.get("type")
+    if event_type == "assistant":
+        message = raw.get("message")
+        if not isinstance(message, dict):
+            return None
+        stop_reason = message.get("stop_reason")
+    elif event_type == "result":
+        stop_reason = raw.get("stop_reason")
+    else:
+        return None
+
+    return stop_reason if isinstance(stop_reason, str) else None
+
+
+def _is_claude_code_refusal_exit(
+    exit_code: int,
+    stderr_data: str,
+    stop_reason: str | None,
+) -> bool:
+    if exit_code != 1 or len(stderr_data.strip()) > 0:
+        return False
+
+    return stop_reason == "refusal"
