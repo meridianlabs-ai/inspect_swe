@@ -64,6 +64,7 @@ from inspect_ai.model._chat_message import (
     ChatMessageUser,
 )
 from inspect_ai.model._model import ModelEventSink
+from inspect_ai.model._model_output import StopReason
 from inspect_ai.util._span import current_span_id
 
 from .toolview import tool_view
@@ -110,6 +111,16 @@ class LiveConsumer(ModelEventSink):
         # (no if we didn't — shouldn't happen with current logic but defensive).
         self._emitted_events: set[int] = set()
 
+        # Stop reason of the most recent completed ModelEvent. Used by the
+        # runner loop to distinguish an Anthropic refusal (content_filter)
+        # from a genuine scaffold crash when Claude Code exits non-zero.
+        self._last_stop_reason: StopReason | None = None
+
+    @property
+    def last_stop_reason(self) -> StopReason | None:
+        """Stop reason of the last completed model event this attempt."""
+        return self._last_stop_reason
+
     @property
     def outer_span_id(self) -> str | None:
         """Span for main-agent attribution, resolved at emission time.
@@ -134,6 +145,7 @@ class LiveConsumer(ModelEventSink):
             transcript()._event(SpanEndEvent(id=agent.span_id))
         self._pending_subagents.clear()
         self._emitted_events.clear()
+        self._last_stop_reason = None
 
     # ------------------------------------------------------------------
     # ModelEventSink callbacks (called from the bridge)
@@ -145,6 +157,12 @@ class LiveConsumer(ModelEventSink):
         transcript()._event(event)
 
     def on_complete(self, event: ModelEvent) -> None:
+        # Record the terminal stop reason (guard against empty choices, where
+        # ModelOutput.stop_reason raises). This fires for sub-agent calls too,
+        # but the runner only consults it on a non-zero exit.
+        if event.output and event.output.choices:
+            self._last_stop_reason = event.output.stop_reason
+
         msg = event.output.message if event.output else None
         if msg is not None and msg.tool_calls:
             # Attach custom rendering for Claude Code's built-in tools.

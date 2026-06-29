@@ -13,7 +13,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
+from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, StopReason
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import (
@@ -373,19 +373,10 @@ def claude_code(
                         cc_debug = store_as(ClaudeCodeDebug) if debug else None
                         stderr_data = ""
                         exit_code = 0
-                        terminal_stop_reason: str | None = None
-                        saw_result_event = False
 
                         async for cc_event in claude_code_event_stream(proc):
                             if isinstance(cc_event, JsonlEvent):
                                 consumer.process_jsonl_line(cc_event.raw)
-                                terminal_stop_reason, saw_result_event = (
-                                    _update_terminal_stop_reason(
-                                        cc_event.raw,
-                                        terminal_stop_reason,
-                                        saw_result_event,
-                                    )
-                                )
                                 if cc_debug is not None:
                                     cc_debug.stdout.append(cc_event.line)
                             elif isinstance(cc_event, JsonlParseError):
@@ -411,7 +402,7 @@ def claude_code(
                             if not _is_claude_code_refusal_exit(
                                 exit_code,
                                 stderr_data,
-                                terminal_stop_reason,
+                                consumer.last_stop_reason,
                             ):
                                 # if claude code exits with code 1 and no stderr,
                                 # this means an uncaught exception reached the top
@@ -570,50 +561,15 @@ class ClaudeCodeDebug(StoreModel):
     stdout: list[str] = Field(default_factory=list)
 
 
-def _claude_code_stop_reason(raw: dict[str, Any]) -> str | None:
-    event_type = raw.get("type")
-    if event_type == "assistant":
-        message = raw.get("message")
-        if not isinstance(message, dict):
-            return None
-        stop_reason = message.get("stop_reason")
-    elif event_type == "result":
-        stop_reason = raw.get("stop_reason")
-    else:
-        return None
-
-    return stop_reason if isinstance(stop_reason, str) else None
-
-
-def _update_terminal_stop_reason(
-    raw: dict[str, Any],
-    terminal_stop_reason: str | None,
-    saw_result_event: bool,
-) -> tuple[str | None, bool]:
-    """Fold a single Claude Code event into the running terminal stop reason.
-
-    The terminal `result` event is authoritative when it carries a stop_reason,
-    but Claude Code's result event often omits it -- in that case keep the
-    stop_reason already derived from the last assistant message (e.g. a refusal)
-    rather than clobbering it. Assistant stop reasons only count before any
-    result event is seen.
-    """
-    stop_reason = _claude_code_stop_reason(raw)
-    if raw.get("type") == "result":
-        saw_result_event = True
-        if stop_reason is not None:
-            terminal_stop_reason = stop_reason
-    elif stop_reason is not None and not saw_result_event:
-        terminal_stop_reason = stop_reason
-    return terminal_stop_reason, saw_result_event
-
-
 def _is_claude_code_refusal_exit(
     exit_code: int,
     stderr_data: str,
-    stop_reason: str | None,
+    stop_reason: StopReason | None,
 ) -> bool:
     if exit_code != 1 or len(stderr_data.strip()) > 0:
         return False
 
-    return stop_reason == "refusal"
+    # Anthropic refusals surface as Inspect's "content_filter" stop reason
+    # (mapped from the raw "refusal"). This matches the native react agent,
+    # which keys refusal handling on the same value (see inspect_ai react).
+    return stop_reason == "content_filter"
