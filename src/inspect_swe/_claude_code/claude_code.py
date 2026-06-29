@@ -379,13 +379,13 @@ def claude_code(
                         async for cc_event in claude_code_event_stream(proc):
                             if isinstance(cc_event, JsonlEvent):
                                 consumer.process_jsonl_line(cc_event.raw)
-                                stop_reason = _claude_code_stop_reason(cc_event.raw)
-                                event_type = cc_event.raw.get("type")
-                                if event_type == "result":
-                                    terminal_stop_reason = stop_reason
-                                    saw_result_event = True
-                                elif stop_reason is not None and not saw_result_event:
-                                    terminal_stop_reason = stop_reason
+                                terminal_stop_reason, saw_result_event = (
+                                    _update_terminal_stop_reason(
+                                        cc_event.raw,
+                                        terminal_stop_reason,
+                                        saw_result_event,
+                                    )
+                                )
                                 if cc_debug is not None:
                                     cc_debug.stdout.append(cc_event.line)
                             elif isinstance(cc_event, JsonlParseError):
@@ -583,6 +583,29 @@ def _claude_code_stop_reason(raw: dict[str, Any]) -> str | None:
         return None
 
     return stop_reason if isinstance(stop_reason, str) else None
+
+
+def _update_terminal_stop_reason(
+    raw: dict[str, Any],
+    terminal_stop_reason: str | None,
+    saw_result_event: bool,
+) -> tuple[str | None, bool]:
+    """Fold a single Claude Code event into the running terminal stop reason.
+
+    The terminal `result` event is authoritative when it carries a stop_reason,
+    but Claude Code's result event often omits it -- in that case keep the
+    stop_reason already derived from the last assistant message (e.g. a refusal)
+    rather than clobbering it. Assistant stop reasons only count before any
+    result event is seen.
+    """
+    stop_reason = _claude_code_stop_reason(raw)
+    if raw.get("type") == "result":
+        saw_result_event = True
+        if stop_reason is not None:
+            terminal_stop_reason = stop_reason
+    elif stop_reason is not None and not saw_result_event:
+        terminal_stop_reason = stop_reason
+    return terminal_stop_reason, saw_result_event
 
 
 def _is_claude_code_refusal_exit(
