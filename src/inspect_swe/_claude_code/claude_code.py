@@ -13,7 +13,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
+from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, StopReason
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.util import (
@@ -396,24 +396,32 @@ def claude_code(
 
                         # raise for error
                         if exit_code != 0:
-                            # if claude code exits with code 1 and no stderr,
-                            # this means an uncaught exception reached the top
-                            # of its main loop -- we treat this as a scaffold
-                            # bug and retry/resume a configurable number of
-                            # times
-                            if (
-                                exit_code == 1
-                                and len(stderr_data.strip()) == 0
-                                and retry_uncaught_errors is not None
-                                and uncaught_error_count < retry_uncaught_errors
+                            # Claude Code exits 1 after Anthropic refusal
+                            # responses even though the refusal has already
+                            # been recorded in bridge.state and can be scored.
+                            if not _is_claude_code_refusal_exit(
+                                exit_code,
+                                stderr_data,
+                                consumer.last_stop_reason,
                             ):
-                                uncaught_error_count += 1
-                                continue
+                                # if claude code exits with code 1 and no stderr,
+                                # this means an uncaught exception reached the top
+                                # of its main loop -- we treat this as a scaffold
+                                # bug and retry/resume a configurable number of
+                                # times
+                                if (
+                                    exit_code == 1
+                                    and len(stderr_data.strip()) == 0
+                                    and retry_uncaught_errors is not None
+                                    and uncaught_error_count < retry_uncaught_errors
+                                ):
+                                    uncaught_error_count += 1
+                                    continue
 
-                            # otherwise this is a hard failure
-                            raise RuntimeError(
-                                f"Error executing claude code agent {exit_code}: {stderr_data}"
-                            )
+                                # otherwise this is a hard failure
+                                raise RuntimeError(
+                                    f"Error executing claude code agent {exit_code}: {stderr_data}"
+                                )
 
                         # reset uncaught error counter
                         uncaught_error_count = 0
@@ -551,3 +559,17 @@ async def run_claude_code_centaur(
 class ClaudeCodeDebug(StoreModel):
     stderr: list[str] = Field(default_factory=list)
     stdout: list[str] = Field(default_factory=list)
+
+
+def _is_claude_code_refusal_exit(
+    exit_code: int,
+    stderr_data: str,
+    stop_reason: StopReason | None,
+) -> bool:
+    if exit_code != 1 or len(stderr_data.strip()) > 0:
+        return False
+
+    # Anthropic refusals surface as Inspect's "content_filter" stop reason
+    # (mapped from the raw "refusal"). This matches the native react agent,
+    # which keys refusal handling on the same value (see inspect_ai react).
+    return stop_reason == "content_filter"
