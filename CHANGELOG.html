@@ -162,7 +162,8 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#june-2026" id="toc-june-2026" class="nav-link active" data-scroll-target="#june-2026">0.2.63 (10 June 2026)</a></li>
+  <li><a href="#july-2026" id="toc-july-2026" class="nav-link active" data-scroll-target="#july-2026">0.2.65 (05 July 2026)</a></li>
+  <li><a href="#june-2026" id="toc-june-2026" class="nav-link" data-scroll-target="#june-2026">0.2.63 (10 June 2026)</a></li>
   <li><a href="#june-2026-1" id="toc-june-2026-1" class="nav-link" data-scroll-target="#june-2026-1">0.2.62 (05 June 2026)</a></li>
   <li><a href="#june-2026-2" id="toc-june-2026-2" class="nav-link" data-scroll-target="#june-2026-2">0.2.61 (03 June 2026)</a></li>
   <li><a href="#june-2026-3" id="toc-june-2026-3" class="nav-link" data-scroll-target="#june-2026-3">0.2.60 (02 June 2026)</a></li>
@@ -224,6 +225,15 @@ ul.task-list li input[type="checkbox"] {
 
 
 
+<section id="july-2026" class="level2">
+<h2 class="anchored" data-anchor-id="july-2026">0.2.65 (05 July 2026)</h2>
+<ul>
+<li>Codex CLI and Claude Code: Support checkpointing and resuming runs via <code>checkpointer()</code>, restoring session/attempt state across resumes.</li>
+<li>Claude Code: Handle Anthropic refusals gracefully — a content-filter refusal now scores the sample as incorrect and continues the eval (matching native Inspect solvers) instead of raising an error that aborts the run.</li>
+<li>Gemini CLI (ACP): Register bridged tools and MCP servers with the CLI (write <code>settings.json</code> and pass <code>--allowed-mcp-server-names</code>) so host-side tools are available to the agent.</li>
+<li>All agents: When no <code>cwd</code> is specified and the sandbox’s default working directory is <code>/</code> (i.e.&nbsp;the image has no <code>WORKDIR</code>), run the agent in the user’s home directory instead of the container root.</li>
+</ul>
+</section>
 <section id="june-2026" class="level2">
 <h2 class="anchored" data-anchor-id="june-2026">0.2.63 (10 June 2026)</h2>
 <ul>

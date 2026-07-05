@@ -264,14 +264,21 @@
     "href": "CHANGELOG.html",
     "title": "Inspect SWE",
     "section": "",
-    "text": "Remove ACP patch for connection initialization order issue (resolved in ACP 0.10.1).\nCodex CLI: Resolve “stable”/“latest” via the GitHub releases/latest endpoint — the full releases listing for openai/codex frequently 504s."
+    "text": "Codex CLI and Claude Code: Support checkpointing and resuming runs via checkpointer(), restoring session/attempt state across resumes.\nClaude Code: Handle Anthropic refusals gracefully — a content-filter refusal now scores the sample as incorrect and continues the eval (matching native Inspect solvers) instead of raising an error that aborts the run.\nGemini CLI (ACP): Register bridged tools and MCP servers with the CLI (write settings.json and pass --allowed-mcp-server-names) so host-side tools are available to the agent.\nAll agents: When no cwd is specified and the sandbox’s default working directory is / (i.e. the image has no WORKDIR), run the agent in the user’s home directory instead of the container root."
+  },
+  {
+    "objectID": "CHANGELOG.html#july-2026",
+    "href": "CHANGELOG.html#july-2026",
+    "title": "Inspect SWE",
+    "section": "",
+    "text": "Codex CLI and Claude Code: Support checkpointing and resuming runs via checkpointer(), restoring session/attempt state across resumes.\nClaude Code: Handle Anthropic refusals gracefully — a content-filter refusal now scores the sample as incorrect and continues the eval (matching native Inspect solvers) instead of raising an error that aborts the run.\nGemini CLI (ACP): Register bridged tools and MCP servers with the CLI (write settings.json and pass --allowed-mcp-server-names) so host-side tools are available to the agent.\nAll agents: When no cwd is specified and the sandbox’s default working directory is / (i.e. the image has no WORKDIR), run the agent in the user’s home directory instead of the container root."
   },
   {
     "objectID": "CHANGELOG.html#june-2026",
     "href": "CHANGELOG.html#june-2026",
     "title": "Inspect SWE",
-    "section": "",
-    "text": "Remove ACP patch for connection initialization order issue (resolved in ACP 0.10.1).\nCodex CLI: Resolve “stable”/“latest” via the GitHub releases/latest endpoint — the full releases listing for openai/codex frequently 504s."
+    "section": "0.2.63 (10 June 2026)",
+    "text": "0.2.63 (10 June 2026)\n\nRemove ACP patch for connection initialization order issue (resolved in ACP 0.10.1).\nCodex CLI: Resolve “stable”/“latest” via the GitHub releases/latest endpoint — the full releases listing for openai/codex frequently 504s."
   },
   {
     "objectID": "CHANGELOG.html#june-2026-1",
