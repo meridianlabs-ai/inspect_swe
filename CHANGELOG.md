@@ -1,4 +1,4 @@
-## 0.2.64 (05 July 2026)
+## 0.2.65 (05 July 2026)
 
 - Codex CLI and Claude Code: Support checkpointing and resuming runs via `checkpointer()`, restoring session/attempt state across resumes.
 - Claude Code: Handle Anthropic refusals gracefully — a content-filter refusal now scores the sample as incorrect and continues the eval (matching native Inspect solvers) instead of raising an error that aborts the run.
