@@ -96,6 +96,17 @@ def test_config_toml_routes_bridge_and_wires_rules() -> None:
     assert 'decision = "allow"' in toml
     assert 'pattern = "WebFetch"' in toml
     assert 'decision = "deny"' in toml
+    assert "skip_afk_prompt_injection" not in toml
+
+    toml = _config_toml(
+        port=3123,
+        mcp_servers=[],
+        disallowed_tools=[],
+        extra_skill_dirs=[],
+        skip_afk_prompt_injection=True,
+    )
+    assert "[system]" in toml
+    assert "skip_afk_prompt_injection = true" in toml
 
 
 def test_mcp_json_shape_and_rejects_non_stdio() -> None:

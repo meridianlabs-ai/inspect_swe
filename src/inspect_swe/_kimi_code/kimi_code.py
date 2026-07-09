@@ -89,6 +89,7 @@ def kimi_code(
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     disallowed_tools: Sequence[str] | None = None,
+    skip_afk_prompt_injection: bool = False,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -123,6 +124,7 @@ def kimi_code(
         filter: Filter for intercepting bridged model requests
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         disallowed_tools: Tool names to deny via Kimi permission rules
+        skip_afk_prompt_injection: Suppress Kimi Code's AFK-mode system reminder.
         cwd: Working directory to run kimi within
         env: Environment variables to set for kimi
         user: User to execute kimi with
@@ -216,6 +218,7 @@ def kimi_code(
                     extra_skill_dirs=[skills_dir]
                     if resolved_skills is not None
                     else [],
+                    skip_afk_prompt_injection=skip_afk_prompt_injection,
                 ),
             )
             if all_mcp_servers:
@@ -394,11 +397,14 @@ def _config_toml(
     mcp_servers: Sequence[MCPServerConfig],
     disallowed_tools: Sequence[str],
     extra_skill_dirs: Sequence[str],
+    skip_afk_prompt_injection: bool = False,
 ) -> str:
     lines = ['default_model = "bridge"']
     if extra_skill_dirs:
         dirs = ", ".join(f'"{d}"' for d in extra_skill_dirs)
         lines.append(f"extra_skill_dirs = [{dirs}]")
+    if skip_afk_prompt_injection:
+        lines += ["", "[system]", "skip_afk_prompt_injection = true"]
     lines += [
         "",
         "[providers.bridge]",
