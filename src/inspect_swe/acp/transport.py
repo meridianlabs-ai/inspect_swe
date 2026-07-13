@@ -15,6 +15,8 @@ from inspect_ai.util import ExecCompleted, ExecRemoteProcess, ExecStderr, ExecSt
 
 logger = logging.getLogger(__name__)
 
+_suppressed_stderr: set[str] = set()
+
 
 class _WriteStdinTransport(asyncio.BaseTransport):
     """Routes ``StreamWriter.write()`` to ``proc.write_stdin()`` via an async queue."""
@@ -90,7 +92,18 @@ async def create_exec_remote_streams(
                     reader.feed_data(event.data.encode())
                 elif isinstance(event, ExecStderr):
                     info.append_stderr(event.data)
-                    logger.warning("ACP stderr: %s", event.data.rstrip())
+                    text = event.data.rstrip()
+                    if "ExperimentalWarning" in text or "onPostToolUseHook" in text:
+                        key = (
+                            "ExperimentalWarning"
+                            if "ExperimentalWarning" in text
+                            else "onPostToolUseHook"
+                        )
+                        if key not in _suppressed_stderr:
+                            _suppressed_stderr.add(key)
+                            logger.info("ACP stderr (suppressing further): %s", text)
+                    else:
+                        logger.warning("ACP stderr: %s", text)
                 elif isinstance(event, ExecCompleted):
                     info.exit_code = event.exit_code
                     if event.exit_code != 0:

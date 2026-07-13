@@ -16,11 +16,11 @@ def claude_code_binary_source() -> AgentBinarySource:
     async def resolve_version(
         version: Literal["stable", "latest"] | str, platform: SandboxPlatform
     ) -> AgentBinaryVersion:
-        gcs_bucket = await _claude_code_gcs_bucket()
-        version = await _claude_code_version(gcs_bucket, version)
-        manifest = await _claude_code_manifest(gcs_bucket, version)
+        base_url = await _claude_code_download_base_url()
+        version = await _claude_code_version(base_url, version)
+        manifest = await _claude_code_manifest(base_url, version)
         expected_checksum = _checksum_for_platform(manifest, platform)
-        download_url = f"{gcs_bucket}/{version}/{platform}/claude"
+        download_url = f"{base_url}/{version}/{platform}/claude"
         return AgentBinaryVersion(version, expected_checksum, download_url)
 
     def cached_binary_path(version: str, platform: SandboxPlatform) -> Path:
@@ -40,19 +40,20 @@ def claude_code_binary_source() -> AgentBinarySource:
     )
 
 
-async def _claude_code_gcs_bucket() -> str:
+async def _claude_code_download_base_url() -> str:
     INSTALL_SCRIPT_URL = "https://claude.ai/install.sh"
     script_content = await download_text_file(INSTALL_SCRIPT_URL)
-    pattern = r'GCS_BUCKET="(https://storage\.googleapis\.com/[^"]+)"'
-    match = re.search(pattern, script_content)
-    if match is not None:
-        gcs_bucket = match.group(1)
-        return gcs_bucket
-    else:
-        raise RuntimeError("Unable to determine GCS bucket for claude code.")
+    for pattern in [
+        r'DOWNLOAD_BASE_URL="(https://[^"]+)"',
+        r'GCS_BUCKET="(https://[^"]+)"',
+    ]:
+        match = re.search(pattern, script_content)
+        if match is not None:
+            return match.group(1)
+    raise RuntimeError("Unable to determine download base URL for claude code.")
 
 
-async def _claude_code_version(gcs_bucket: str, target: str) -> str:
+async def _claude_code_version(base_url: str, target: str) -> str:
     # validate target
     target_pattern = r"^(stable|latest|[0-9]+\.[0-9]+\.[0-9]+(-[^[:space:]]+)?)$"
     if re.match(target_pattern, target) is None:
@@ -62,7 +63,7 @@ async def _claude_code_version(gcs_bucket: str, target: str) -> str:
 
     # resolve target alias if required
     if target in ["stable", "latest"]:
-        version_url = f"{gcs_bucket}/{target}"
+        version_url = f"{base_url}/{target}"
         version = await download_text_file(version_url)
         return version
     else:
@@ -79,8 +80,8 @@ class Manifest(BaseModel):
     platforms: dict[str, PlatformInfo]
 
 
-async def _claude_code_manifest(gcs_bucket: str, version: str) -> Manifest:
-    manifest_url = f"{gcs_bucket}/{version}/manifest.json"
+async def _claude_code_manifest(base_url: str, version: str) -> Manifest:
+    manifest_url = f"{base_url}/{version}/manifest.json"
     manifest_json = await download_text_file(manifest_url)
     return Manifest.model_validate_json(manifest_json)
 

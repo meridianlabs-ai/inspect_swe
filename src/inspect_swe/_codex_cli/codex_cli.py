@@ -2,7 +2,7 @@ import shlex
 from logging import getLogger
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Literal, Sequence
+from typing import Any, Literal, Sequence, cast
 
 from inspect_ai.agent import (
     Agent,
@@ -13,40 +13,67 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
+from inspect_ai.model import (
+    ChatMessageSystem,
+    GenerateFilter,
+    Model,
+    ModelName,
+    get_model,
+)
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
-from inspect_ai.util import SandboxEnvironment, store
+from inspect_ai.util import SandboxEnvironment, checkpointer, store
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
+from typing_extensions import Unpack
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
-from inspect_swe._util.sandbox import sandbox_exec
+from inspect_swe._util.sandbox import resolve_agent_cwd, sandbox_exec
 from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
-from .agentbinary import codex_cli_binary_source
+from ._events.consumer import CodexConsumer
+from .agentbinary import (
+    codex_binary_version,
+    codex_cli_binary_source,
+    codex_models_catalog,
+)
+from .config import (
+    CodexDeprecatedArgs,
+    CodexWebSearch,
+    codex_cli_config_overrides,
+    codex_config_options,
+    resolve_codex_deprecated_args,
+    resolve_codex_web_search,
+)
+from .model_catalog import (
+    is_latest_openai_model,
+    is_openai_derived_api,
+    openai_service_model_name,
+    resolve_codex_model_slug,
+)
 
 logger = getLogger(__file__)
 
 
 @agent
 def codex_cli(
-    name: str = "Codex CLI",
+    name: str = "codex_cli",
     description: str = dedent("""
        Autonomous coding agent capable of writing, testing, debugging,
        and iterating on code across multiple languages.
     """),
     system_prompt: str | None = None,
-    model_config: str = "gpt-5.1",
+    model_config: str | None = None,
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
-    disallowed_tools: list[Literal["web_search"]] | None = None,
+    web_search: CodexWebSearch = "live",
+    goals: bool = True,
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
@@ -60,6 +87,8 @@ def codex_cli(
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "latest"] | str = "auto",
     config_overrides: dict[str, str] | None = None,
+    debug: bool | None = None,
+    **deprecated_args: Unpack[CodexDeprecatedArgs],
 ) -> Agent:
     """Codex CLI.
 
@@ -72,13 +101,17 @@ def codex_cli(
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
         system_prompt: Additional system prompt to append to default system prompt.
-        model_config: Model configuration profile (e.g. used to determine the system prompt).
+        model_config: Codex model slug used to select the system prompt and tool
+            set. Defaults to `None`, which derives the slug from the real model so
+            Codex's prompt/tooling aligns with what's actually running. Pass an
+            explicit slug to override.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
             tools available to the agent running in the sandbox.
-        disallowed_tools: Optionally disallow tools (currently only web_search).
+        web_search: Web search mode. Use "live" for live web search, "cached" for cached web search, or "disabled" to disable web search. Defaults to "live".
+        goals: Enable Codex goal tools (defaults to `True`).
         centaur: Run in 'centaur' mode, which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use (defaults to main model for task).
@@ -99,13 +132,15 @@ def codex_cli(
             - "x.x.x": Download and use a specific version of codex cli.
         config_overrides: Additional Codex CLI configuration overrides.
             Each key-value pair is passed as `-c key=value` to the CLI.
+        debug: Trace all debug output.
+        **deprecated_args: Deprecated compatibility arguments.
     """
     # resolve centaur
     if centaur is True:
         centaur = CentaurOptions()
 
-    # resolve model
-    model = f"inspect/{model}" if model is not None else "inspect"
+    # resolve bridge model (preserve original `model` for prompt/tool alignment)
+    bridge_model = f"inspect/{model}" if model is not None else "inspect"
 
     # resolve skills
     resolved_skills = read_skills(skills) if skills is not None else None
@@ -113,8 +148,11 @@ def codex_cli(
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
-    # ensure disallowed_tools list
-    disallowed_tools = disallowed_tools or []
+    # resolve deprecated arguments
+    disallowed_tools = resolve_codex_deprecated_args(
+        cast(dict[str, Any], deprecated_args)
+    )
+    effective_web_search = resolve_codex_web_search(web_search, disallowed_tools)
 
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
@@ -122,16 +160,32 @@ def codex_cli(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
-        async with sandbox_agent_bridge(
-            state,
-            model=model,
-            model_aliases=model_aliases,
-            filter=filter,
-            sandbox=sandbox,
-            retry_refusals=retry_refusals,
-            port=port,
-            bridged_tools=bridged_tools,
-        ) as bridge:
+        # Bridge ModelEventSink: the bridge hands us every ModelEvent instead of
+        # emitting it to the transcript, and we attribute each to the correct
+        # (sub-)agent span. The outer span (main-agent attribution + sub-agent
+        # span parenting) is resolved at emission time so it tracks the
+        # rotating checkpoint span. Reconstructs spans bridge-only (no Codex
+        # --json parsing); see consumer.py.
+        consumer = CodexConsumer()
+
+        async with (
+            checkpointer() as cp,
+            sandbox_agent_bridge(
+                state,
+                model=bridge_model,
+                model_aliases=model_aliases,
+                filter=filter,
+                sandbox=sandbox,
+                retry_refusals=retry_refusals,
+                port=port,
+                bridged_tools=bridged_tools,
+                model_event_sink=consumer,
+                checkpointer=cp,
+            ) as bridge,
+        ):
+            if cp.attempt == "resume_for_scoring":
+                return bridge.state
+
             # ensure codex is installed and get binary location
             codex_binary = await ensure_agent_binary_installed(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)
@@ -147,14 +201,21 @@ def codex_cli(
             # resolve sandbox
             sbox = sandbox_env(sandbox)
 
-            # determine CODEX_HOME (default to whatever sandbox working dir is)
+            # resolve working directory (home dir if sandbox default is '/')
+            agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
+
+            # align Codex's `--model` slug to the real bridged model
+            codex_model = await resolve_codex_model(
+                model, model_config, sbox, codex_binary, user
+            )
+
+            # determine CODEX_HOME (default to agent working dir)
             if home_dir is None:
-                working_dir = await sandbox_exec(sbox, "pwd", user=user, cwd=cwd)
-                codex_home = join_path(working_dir, ".codex")
+                codex_home = join_path(agent_cwd, ".codex")
             else:
                 # Resolve ~ and $VARS inside the sandbox
                 codex_home = await sandbox_exec(
-                    sbox, f'eval echo "{home_dir}"', user=user, cwd=cwd
+                    sbox, f'eval echo "{home_dir}"', user=user, cwd=agent_cwd
                 )
             await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=user)
 
@@ -163,10 +224,8 @@ def codex_cli(
                 AGENTS_MD = "AGENTS.md"
                 if home_dir is not None:
                     return join_path(codex_home, AGENTS_MD)
-                elif cwd is not None:
-                    return join_path(cwd, AGENTS_MD)
                 else:
-                    return AGENTS_MD
+                    return join_path(agent_cwd, AGENTS_MD)
 
             # location for config_toml (either codex_home or cwd/.codex )
             async def codex_config_toml() -> str:
@@ -174,7 +233,7 @@ def codex_cli(
                 if home_dir is not None:
                     return join_path(codex_home, CONFIG_TOML)
                 else:
-                    dir = ".codex" if cwd is None else join_path(cwd, ".codex")
+                    dir = join_path(agent_cwd, ".codex")
                     await sandbox_exec(sbox, cmd=f"mkdir -p {dir}", user=user)
                     return join_path(dir, CONFIG_TOML)
 
@@ -200,24 +259,32 @@ def codex_cli(
             # default cli args
             cmd.extend(
                 [
-                    # real model is passed to the bridge above, this just affects defaults e.g. system prompt
+                    # the real model is served via the bridge; this slug only
+                    # selects Codex's system prompt + tool set (see codex_model above)
                     "--model",
-                    model_config,
+                    codex_model,
                     "--dangerously-bypass-approvals-and-sandbox",
                 ]
             )
-
-            # include web search if appropriate
-            if "web_search" not in disallowed_tools:
-                cmd.extend(["--enable", "web_search_request"])
 
             # apply config overrides
             if config_overrides:
                 for key, value in config_overrides.items():
                     cmd.extend(["-c", f"{key}={value}"])
 
+            # apply final Codex config overrides for explicit arguments
+            for key, value in codex_cli_config_overrides(
+                effective_web_search, goals
+            ).items():
+                cmd.extend(["-c", f"{key}={value}"])
+
             # build toml config
             toml_config: dict[str, Any] = {}
+
+            # disable codex analytics (both the chatgpt.com analytics-events
+            # sink and the always-on Statsig OTel metrics to ab.chatgpt.com)
+            toml_config["analytics"] = {"enabled": False}
+            toml_config.update(codex_config_options(effective_web_search, goals))
 
             # register mcp servers (combine static configs with bridged tools)
             all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
@@ -229,20 +296,20 @@ def codex_cli(
                         )
                     )
 
-            # model provider if we are in centaur mode
-            if centaur:
-                toml_config["preferred_auth_method"] = "apikey"
-                toml_config["model_provider"] = "openai-proxy"
-                toml_config["model_providers.openai-proxy"] = {
-                    "name": "OpenAI Proxy",
-                    "base_url": f"http://localhost:{bridge.port}/v1",
-                    "env_key": "OPENAI_API_KEY",
-                    "wire_api": "responses",
-                }
+            # model provider (use a custom provider name so we can set
+            # stream_idle_timeout_ms -- built-in providers can't be overridden)
+            toml_config["preferred_auth_method"] = "apikey"
+            toml_config["model_provider"] = "openai-proxy"
+            toml_config["model_providers.openai-proxy"] = {
+                "name": "OpenAI Proxy",
+                "base_url": f"http://localhost:{bridge.port}/v1",
+                "env_key": "OPENAI_API_KEY",
+                "wire_api": "responses",
+                "stream_idle_timeout_ms": 3_600_000,
+            }
 
-            # write toml config if we have it
-            if len(toml_config) > 0:
-                await sbox.write_file(await codex_config_toml(), to_toml(toml_config))
+            # write toml config
+            await sbox.write_file(await codex_config_toml(), to_toml(toml_config))
 
             # setup agent env
             agent_env = {
@@ -263,14 +330,20 @@ def codex_cli(
                 # execute the agent (track debug output)
                 debug_output: list[str] = []
                 agent_prompt = prompt
-                attempt_count = 0
+                attempt_count = cp.track(
+                    "codex_attempt_count", lambda: attempt_count, 0
+                )
                 while True:
                     # append prompt
                     agent_cmd = cmd.copy()
                     agent_cmd.append(agent_prompt)
 
                     # resume previous conversation
-                    if has_assistant_response or attempt_count > 0:
+                    if (
+                        has_assistant_response
+                        or attempt_count > 0
+                        or cp.attempt == "resume"
+                    ):
                         agent_cmd.extend(["resume", "--last"])
 
                     # run agent
@@ -278,14 +351,20 @@ def codex_cli(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
                         options=ExecRemoteAwaitableOptions(
-                            cwd=cwd, env=agent_env, user=user, concurrency=False
+                            cwd=agent_cwd, env=agent_env, user=user, concurrency=False
                         ),
                         stream=False,
                     )
 
                     # record output for debug
-                    debug_output.append(result.stdout)
-                    debug_output.append(result.stderr)
+                    if debug:
+                        debug_output.append(result.stdout)
+                        debug_output.append(result.stderr)
+
+                    # close any sub-agent spans left open by this attempt so the
+                    # span tree stays balanced across restarts and on error
+                    # (Codex doesn't carry sub-agent spans across resumes)
+                    consumer.reset()
 
                     # raise for error
                     if not result.success:
@@ -319,13 +398,56 @@ def codex_cli(
                             agent_prompt = attempts.incorrect_message
 
                 # trace debug info
-                debug_output.insert(0, "Codex CLI Debug Output:")
-                trace("\n".join(debug_output))
+                if debug:
+                    debug_output.insert(0, "Codex CLI Debug Output:")
+                    trace("\n".join(debug_output))
 
         # return success
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+async def resolve_codex_model(
+    model: str | None,
+    model_config: str | None,
+    sandbox: SandboxEnvironment,
+    codex_binary: str,
+    user: str | None,
+) -> str:
+    """Resolve the Codex `--model` slug aligned to the real bridged model.
+
+    Derives the slug from the real model so Codex's system prompt and tool set
+    match what's actually running; an explicit `model_config` overrides. Providers
+    that are `OpenAIAPI`-derived (e.g. a pre-deployment stand-in registered under a
+    custom provider name) are treated as OpenAI and resolved by their declared
+    `service_model_name()` rather than the registry name — so a custom `otter`
+    provider reporting `gpt-5.5` aligns to that catalog entry. "latest"/codename
+    models (per the provider's `is_latest()`) align to the latest catalog profile
+    rather than Codex's generic fallback.
+    """
+    resolved_model = get_model(model)
+    real_model = ModelName(resolved_model)
+    api = resolved_model.api
+    real_api = "openai" if is_openai_derived_api(api) else real_model.api
+    # an OpenAI-derived provider reports its true model identity via
+    # service_model_name() (e.g. a custom 'otter' provider -> 'gpt-5.5'); align to
+    # that, not the registry name ('otter'), which Codex wouldn't recognize.
+    model_name = openai_service_model_name(api, real_model.name)
+    codex_version = await codex_binary_version(sandbox, codex_binary, user)
+    codex_catalog = await codex_models_catalog(codex_version)
+    resolution = resolve_codex_model_slug(
+        model_name,
+        api=real_api,
+        catalog=codex_catalog,
+        override=model_config,
+        is_latest=is_latest_openai_model(api),
+    )
+    trace(
+        f"Codex model alignment: real model '{real_model}' (as '{model_name}') "
+        f"→ --model '{resolution.slug}' ({resolution.reason})"
+    )
+    return resolution.slug
 
 
 async def _run_codex_cli_centaur(

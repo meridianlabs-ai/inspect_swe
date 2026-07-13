@@ -23,14 +23,16 @@ def test_claude_code_system_explorer(sandbox: str) -> None:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_codex_cli_system_explorer(sandbox: str) -> None:
-    check_system_explorer_example("codex_cli", "openai/gpt-5", sandbox)
+    check_system_explorer_example("codex_cli", "openai/gpt-5.4", sandbox)
 
 
 @skip_if_no_google
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_gemini_cli_system_explorer(sandbox: str) -> None:
-    check_system_explorer_example("gemini_cli", "google/gemini-2.5-pro", sandbox)
+    check_system_explorer_example(
+        "gemini_cli", "google/gemini-3.1-pro-preview", sandbox
+    )
 
 
 @skip_if_no_openai
@@ -40,8 +42,17 @@ def test_mini_swe_agent_system_explorer(sandbox: str) -> None:
     check_system_explorer_example("mini_swe_agent", "openai/gpt-5-mini", sandbox)
 
 
+@skip_if_no_anthropic
+@skip_if_no_docker
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_opencode_system_explorer(sandbox: str) -> None:
+    check_system_explorer_example("opencode", "anthropic/claude-sonnet-4-0", sandbox)
+
+
 def check_system_explorer_example(
-    agent: Literal["claude_code", "codex_cli", "gemini_cli", "mini_swe_agent"],
+    agent: Literal[
+        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent", "opencode"
+    ],
     model: str,
     sandbox: str | None = None,
 ) -> None:

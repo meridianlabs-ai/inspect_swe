@@ -1,5 +1,8 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+# Cap hatchling <1.30: 1.30.0 emits core metadata 2.5 (PEP 794), which PyPI
+# does not yet accept (https://github.com/pypi/warehouse/issues/19083).
+# Relax once warehouse supports metadata 2.5.
+requires = ["hatchling<1.30", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
@@ -12,15 +15,15 @@ requires-python = ">=3.10"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect_ai>=0.3.185",
+    "inspect_ai>=0.3.244",
     "nest_asyncio",
     "platformdirs",
-    "pydantic>=2.11.4",
+    "pydantic>=2.13.0",
     "pyyaml",
     "sniffio",
     "anyio",
     "typing_extensions>=4.9.0",
-    "agent-client-protocol",
+    "agent-client-protocol>=0.11.0",
 ]
 
 [project.urls]
@@ -44,9 +47,16 @@ dev = [
     "IPython",
     "inspect-evals",
     "inspect_k8s_sandbox",
-    "mini-swe-agent"
+    "mini-swe-agent",
+    "inspect_swe[doc]",
 ]
-doc = ["quarto-cli==1.7.31"]
+doc = [
+    "quarto-cli>=1.9.36",
+    "griffe>=2",
+    "panflute",
+    "markdown",
+    "rich",
+]
 
 [tool.hatch.build]
 only-packages = true

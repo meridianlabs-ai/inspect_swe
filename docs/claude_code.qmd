@@ -23,13 +23,14 @@ The following options are supported for customizing the behavior of the agent:
 | `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended. | 
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
+| `model_config` | Model id used for the identity the agent presents to itself (its "You are powered by the model ..." system prompt). Defaults to the real served model. |
 | `opus_model` |  The model to use for `opus`, or for `opusplan` when Plan Mode is active. Defaults to `model`. |
 | `sonnet_model` | The model to use for `sonnet`, or for `opusplan` when Plan Mode is not active. Defaults to `model`. |
 | `haiku_model` | The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`. |
 | `subagent_model` | The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`. |
 | `filter` | Filter for intercepting bridged model requests. |
-| `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
-| `retry_timeouts` | Should timeouts be retried? (pass number of times to retry) |
+| `retry_refusals` | Should refusals be retried? Defaults to 3. |
+| `retry_uncaught_errors` | Should uncaught errors (unexpected crashes of Claude Code) be retried? Defaults to 3. |
 | `cwd` | Working directory for {{< meta agent_name >}} session. |
 | `env` | Environment variables to set for {{< meta agent_name >}}. |
 | `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |

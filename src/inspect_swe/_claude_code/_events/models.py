@@ -181,6 +181,8 @@ class BaseEvent(BaseModel):
     version: str | None = None
     gitBranch: str | None = None
     slug: str | None = None
+    # 2.1.x: sub-agent files (subagents/agent-<id>.jsonl) carry this on every event.
+    agentId: str | None = None
 
 
 # =============================================================================

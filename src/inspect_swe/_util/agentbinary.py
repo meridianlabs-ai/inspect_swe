@@ -88,7 +88,7 @@ async def ensure_agent_binary_installed(
                 source, version, platform, None
             )
             if binary_bytes is not None:
-                trace(f"Used claude code binary from cache: {version} ({platform})")
+                trace(f"Used {source.agent} binary from cache: {version} ({platform})")
         else:
             binary_bytes = None
 

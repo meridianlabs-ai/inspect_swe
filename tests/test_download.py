@@ -1,6 +1,7 @@
+import sys
 from pathlib import Path
 from typing import Literal
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from inspect_swe import (
@@ -174,3 +175,56 @@ def test_mini_swe_agent_cache_hit(wheels_cache_cleanup: Path) -> None:
 
     # Verify cache file access time was updated (file was touched)
     assert cache_file.stat().st_atime >= cache_mtime
+
+
+def test_ensure_pip_available_noop_when_present() -> None:
+    from inspect_swe._util.agentwheel import _ensure_pip_available
+
+    with (
+        patch(
+            "inspect_swe._util.agentwheel.importlib.util.find_spec",
+            return_value=MagicMock(),
+        ),
+        patch("inspect_swe._util.agentwheel.subprocess.run") as mock_run,
+    ):
+        _ensure_pip_available()
+        mock_run.assert_not_called()
+
+
+def test_ensure_pip_available_bootstraps_when_missing() -> None:
+    from inspect_swe._util.agentwheel import _ensure_pip_available
+
+    with (
+        patch(
+            "inspect_swe._util.agentwheel.importlib.util.find_spec", return_value=None
+        ),
+        patch("inspect_swe._util.agentwheel.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
+
+        _ensure_pip_available()
+
+        mock_run.assert_called_once_with(
+            [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
+            capture_output=True,
+            text=True,
+        )
+
+
+def test_ensure_pip_available_raises_on_failure() -> None:
+    from inspect_swe._util.agentwheel import _ensure_pip_available
+
+    with (
+        patch(
+            "inspect_swe._util.agentwheel.importlib.util.find_spec", return_value=None
+        ),
+        patch("inspect_swe._util.agentwheel.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = MagicMock(
+            returncode=1, stderr="ensurepip disabled", stdout=""
+        )
+
+        with pytest.raises(RuntimeError, match="pip is required") as exc_info:
+            _ensure_pip_available()
+
+        assert "ensurepip disabled" in str(exc_info.value)

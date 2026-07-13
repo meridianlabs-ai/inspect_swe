@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target-branch:
+        description: "Maintenance branch to release from (e.g. hotfix/1.4.x). Leave as main for a normal release."
+        type: string
+        default: main
+
+jobs:
+  release-please:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: meridianlabs-ai/actions/.github/workflows/release-please-python.yml@v1
+    with:
+      # Publish + the approval gate live in publish.yml (a separate `on: release`
+      # run), so the approval ping is posted from there (deep-links to the paused
+      # run), not from this workflow.
+      approval-ping: false
+      # Empty on push → default branch. On workflow_dispatch, targets the given
+      # maintenance branch to cut a hotfix release from a released tag.
+      target-branch: ${{ inputs.target-branch }}
+    secrets: inherit

@@ -22,18 +22,27 @@ def test_claude_code_bridged_tools() -> None:
 @skip_if_no_openai
 @skip_if_no_docker
 def test_codex_cli_bridged_tools() -> None:
-    check_bridged_tools("codex_cli", "openai/gpt-5", "mcp__secrets__secret_lookup")
+    check_bridged_tools("codex_cli", "openai/gpt-5", "secret_lookup")
 
 
 @skip_if_no_google
 @skip_if_no_docker
 def test_gemini_cli_bridged_tools() -> None:
-    # Gemini CLI uses plain tool names without mcp__/server__ prefix
-    check_bridged_tools("gemini_cli", "google/gemini-2.5-pro", "secret_lookup")
+    check_bridged_tools(
+        "gemini_cli", "google/gemini-3.1-pro-preview", "mcp_secrets_secret_lookup"
+    )
+
+
+@skip_if_no_anthropic
+@skip_if_no_docker
+def test_opencode_bridged_tools() -> None:
+    check_bridged_tools(
+        "opencode", "anthropic/claude-sonnet-4-0", "secrets_secret_lookup"
+    )
 
 
 def check_bridged_tools(
-    agent: Literal["claude_code", "codex_cli", "gemini_cli"],
+    agent: Literal["claude_code", "codex_cli", "gemini_cli", "opencode"],
     model: str,
     expected_tool_name: str,
 ) -> None:

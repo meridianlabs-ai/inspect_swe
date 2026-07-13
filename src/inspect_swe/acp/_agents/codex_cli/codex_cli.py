@@ -4,7 +4,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, cast
 
 from inspect_ai.agent import AgentState, SandboxAgentBridge, agent, sandbox_agent_bridge
 from inspect_ai.model import get_model
@@ -18,6 +18,13 @@ from inspect_ai.util import (
 from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
+from inspect_swe._codex_cli.config import (
+    CodexDeprecatedArgs,
+    CodexWebSearch,
+    codex_config_options,
+    resolve_codex_deprecated_args,
+    resolve_codex_web_search,
+)
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import sandbox_exec
 from inspect_swe._util.toml import to_toml
@@ -27,6 +34,10 @@ from inspect_swe.acp.agent import ACPAgentParams
 from .agentbinary import ensure_codex_acp_setup
 
 logger = logging.getLogger(__name__)
+
+
+class CodexACPAgentParams(ACPAgentParams, CodexDeprecatedArgs, total=False):
+    pass
 
 
 class CodexCli(ACPAgent):
@@ -39,17 +50,23 @@ class CodexCli(ACPAgent):
     def __init__(
         self,
         *,
-        disallowed_tools: list[Literal["web_search"]] | None = None,
+        web_search: CodexWebSearch = "live",
+        goals: bool = True,
         skills: list[str | Path | Skill] | None = None,
         home_dir: str | None = None,
         config_overrides: dict[str, str] | None = None,
-        **kwargs: Unpack[ACPAgentParams],
+        **kwargs: Unpack[CodexACPAgentParams],
     ) -> None:
-        self._disallowed_tools = list(disallowed_tools or [])
+        deprecated_args = cast(dict[str, Any], kwargs)
+        self._disallowed_tools = resolve_codex_deprecated_args(
+            {"disallowed_tools": deprecated_args.pop("disallowed_tools", None)}
+        )
+        self._web_search = resolve_codex_web_search(web_search, self._disallowed_tools)
+        self._goals = goals
         self._resolved_skills = read_skills(skills) if skills else None
         self._home_dir = home_dir
         self._config_overrides = config_overrides or {}
-        super().__init__(**kwargs)
+        super().__init__(**cast(ACPAgentParams, kwargs))
 
     @asynccontextmanager
     async def _start_agent(
@@ -105,22 +122,26 @@ class CodexCli(ACPAgent):
 
             # Write config.toml with model provider pointing at the bridge.
             # Use the canonical model name so the bridge can resolve it
-            # via model_aliases (consistent with how claude-code-acp passes
+            # via model_aliases (consistent with how claude-agent-acp passes
             # ANTHROPIC_MODEL).
             bridge_url = f"http://127.0.0.1:{bridge.port}/v1"
             config_toml_path = await self._config_toml_path(sbox, codex_home)
             toml_config: dict[str, Any] = {
                 "model": default_model,
                 "preferred_auth_method": "apikey",
+                "approval_policy": "never",
+                "sandbox_mode": "danger-full-access",
                 "model_provider": "openai-proxy",
                 "model_providers.openai-proxy": {
                     "name": "OpenAI Proxy",
                     "base_url": bridge_url,
                     "env_key": "OPENAI_API_KEY",
                     "wire_api": "responses",
+                    "stream_idle_timeout_ms": 3_600_000,
                 },
             }
             toml_config.update(self._config_overrides)
+            toml_config.update(codex_config_options(self._web_search, self._goals))
             await sbox.write_file(config_toml_path, to_toml(toml_config))
 
             # Environment variables (same as the non-ACP codex agent).
@@ -177,12 +198,13 @@ class CodexCli(ACPAgent):
 def interactive_codex_cli(
     *,
     # Codex-specific
-    disallowed_tools: list[Literal["web_search"]] | None = None,
+    web_search: CodexWebSearch = "live",
+    goals: bool = True,
     skills: list[str | Path | Skill] | None = None,
     home_dir: str | None = None,
     config_overrides: dict[str, str] | None = None,
     # Forwarded to ACPAgent
-    **kwargs: Unpack[ACPAgentParams],
+    **kwargs: Unpack[CodexACPAgentParams],
 ) -> ACPAgent:
     """Codex CLI agent via ACP.
 
@@ -190,14 +212,16 @@ def interactive_codex_cli(
     multi-turn sessions and mid-turn interrupts.
 
     Args:
-        disallowed_tools: Tools to disable (currently only ``"web_search"``).
+        web_search: Web search mode. Use ``"live"`` for live web search, ``"cached"`` for cached web search, or ``"disabled"`` to disable web search.
+        goals: Enable Codex goal tools.
         skills: Additional skills to make available.
         home_dir: Override for ``CODEX_HOME`` directory in the sandbox.
         config_overrides: Extra Codex config.toml key-value pairs.
         **kwargs: See :class:`ACPAgentParams` for all base options.
     """
     return CodexCli(
-        disallowed_tools=disallowed_tools,
+        web_search=web_search,
+        goals=goals,
         skills=skills,
         home_dir=home_dir,
         config_overrides=config_overrides,

@@ -4,13 +4,13 @@ from inspect_ai import Task, task
 from inspect_ai.dataset import json_dataset
 from inspect_ai.scorer import model_graded_qa
 from inspect_ai.util import SandboxEnvironmentType
-from inspect_swe import claude_code, codex_cli, gemini_cli, mini_swe_agent
+from inspect_swe import claude_code, codex_cli, gemini_cli, mini_swe_agent, opencode
 
 
 @task
 def system_explorer(
     agent: Literal[
-        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent"
+        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent", "opencode"
     ] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
@@ -23,6 +23,8 @@ def system_explorer(
             solver = gemini_cli()
         case "mini_swe_agent":
             solver = mini_swe_agent()
+        case "opencode":
+            solver = opencode()
 
     return Task(
         dataset=json_dataset("dataset.json"),

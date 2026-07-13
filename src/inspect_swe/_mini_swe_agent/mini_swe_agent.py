@@ -28,6 +28,7 @@ from .._util._async import is_callable_coroutine
 from .._util.agentwheel import AgentWheelSource, ensure_agent_wheel_installed
 from .._util.centaur import CentaurOptions, run_centaur
 from .._util.messages import build_user_prompt
+from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
 from .setup import (
     RESUMABLE_AGENT_PATH,
@@ -65,6 +66,7 @@ def mini_swe_agent(
     user: str | None = None,
     sandbox: str | None = None,
     version: Literal["stable", "sandbox", "latest"] | str = "stable",
+    debug: bool | None = None,
 ) -> Agent:
     """mini-swe-agent agent.
 
@@ -104,6 +106,7 @@ def mini_swe_agent(
             - "sandbox": Use version in sandbox (raises RuntimeError if not available)
             - "latest": Download and install latest version from PyPI.
             - "x.x.x": Install and use a specific version.
+        debug: Trace all debug output.
     """
     # validate version before anything else
     validate_version(version)
@@ -140,6 +143,9 @@ def mini_swe_agent(
         ) as bridge:
             # resolve sandbox
             sbox = sandbox_env(sandbox)
+
+            # resolve working directory (home dir if sandbox default is '/')
+            agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
 
             # ensure mini-swe-agent is installed
             mini_binary = await ensure_agent_wheel_installed(
@@ -220,7 +226,7 @@ def mini_swe_agent(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
                         options=ExecRemoteAwaitableOptions(
-                            cwd=cwd,
+                            cwd=agent_cwd,
                             env=run_env,
                             user=user,
                             concurrency=False,
@@ -229,13 +235,14 @@ def mini_swe_agent(
                     )
 
                     # track debug output
-                    debug_output.append(f"[stdout]\n{result.stdout}")
-                    debug_output.append(f"[stderr]\n{result.stderr}")
+                    if debug:
+                        debug_output.append(f"[stdout]\n{result.stdout}")
+                        debug_output.append(f"[stderr]\n{result.stderr}")
 
                     # raise for error
                     if not result.success:
                         raise RuntimeError(
-                            f"Error executing mini-swe-agent (cwd={cwd or 'default'}):\n"
+                            f"Error executing mini-swe-agent (cwd={agent_cwd}):\n"
                             f"stdout: {result.stdout}\n"
                             f"stderr: {result.stderr}"
                         )
@@ -266,8 +273,9 @@ def mini_swe_agent(
                             agent_prompt = attempts.incorrect_message
 
                 # trace debug info
-                debug_output.insert(0, "mini-swe-agent Debug Output:")
-                trace("\n".join(debug_output))
+                if debug:
+                    debug_output.insert(0, "mini-swe-agent Debug Output:")
+                    trace("\n".join(debug_output))
 
         return bridge.state
 
