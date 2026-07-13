@@ -2,6 +2,26 @@
 
 - ACP: Compatibility with `agent-client-protocol` 0.11.0 — match the revised `Client` interface signatures and implement the new elicitation methods (rejected as an unsupported capability, like fs/terminal). Requires `agent-client-protocol>=0.11.0`.
 
+## [0.3.0](https://github.com/meridianlabs-ai/inspect_swe/compare/v0.2.65...v0.3.0) (2026-07-13)
+
+
+### Features
+
+* Add `home_dir` param to `codex_cli` agent ([176bc34](https://github.com/meridianlabs-ai/inspect_swe/commit/176bc34a86dc5992509efda0a65610ebbe66bfcc))
+* Save AGENTS.md and MCP config to `home_dir` ([f29ed14](https://github.com/meridianlabs-ai/inspect_swe/commit/f29ed141d16fd73db1d5b94af5ba5cf2a3c7c5ad))
+
+
+### Bug Fixes
+
+* cache GitHub API responses in Codex version resolution to avoid rate limit errors ([#28](https://github.com/meridianlabs-ai/inspect_swe/issues/28)) ([1d72992](https://github.com/meridianlabs-ai/inspect_swe/commit/1d72992106197ebb17ebb16f0e8fb1ab269235be))
+* pass port parameter to sandbox_agent_bridge in codex_cli ([#7](https://github.com/meridianlabs-ai/inspect_swe/issues/7)) ([e4a32b9](https://github.com/meridianlabs-ai/inspect_swe/commit/e4a32b98bb411583363ee2ea00a8f17f681d2c36))
+* Pre-seed Claude Code config to fix silent auth failure in sandbox ([#24](https://github.com/meridianlabs-ai/inspect_swe/issues/24)) ([7ab7171](https://github.com/meridianlabs-ai/inspect_swe/commit/7ab71711febe627f1e5632d19c25ef7215421909))
+
+
+### Documentation
+
+* add contributing guide ([#78](https://github.com/meridianlabs-ai/inspect_swe/issues/78)) ([2d502e6](https://github.com/meridianlabs-ai/inspect_swe/commit/2d502e6d055037317c54c44e820f77474e64d8a1))
+
 ## 0.2.65 (05 July 2026)
 
 - Codex CLI and Claude Code: Support checkpointing and resuming runs via `checkpointer()`, restoring session/attempt state across resumes.
