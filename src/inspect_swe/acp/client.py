@@ -14,13 +14,17 @@ from acp.client.connection import ClientSideConnection
 from acp.interfaces import Client
 from acp.schema import (
     AgentMessageChunk,
+    AgentPlanContentUpdate,
+    AgentPlanRemovedUpdate,
     AgentPlanUpdate,
     AgentThoughtChunk,
     AllowedOutcome,
     AvailableCommandsUpdate,
     ConfigOptionUpdate,
+    CreateElicitationResponse,
     CreateTerminalResponse,
     CurrentModeUpdate,
+    ElicitationMode,
     EnvVariable,
     KillTerminalResponse,
     PermissionOption,
@@ -62,9 +66,9 @@ class DefaultClient(Client):
 
     async def request_permission(
         self,
-        options: list[PermissionOption],
         session_id: str,
         tool_call: ToolCallUpdate,
+        options: list[PermissionOption],
         **kwargs: Any,
     ) -> RequestPermissionResponse:
         for kind in ("allow_always", "allow_once"):
@@ -96,6 +100,8 @@ class DefaultClient(Client):
         | ToolCallStart
         | ToolCallProgress
         | AgentPlanUpdate
+        | AgentPlanContentUpdate
+        | AgentPlanRemovedUpdate
         | AvailableCommandsUpdate
         | CurrentModeUpdate
         | ConfigOptionUpdate
@@ -107,26 +113,26 @@ class DefaultClient(Client):
 
     async def read_text_file(
         self,
-        path: str,
         session_id: str,
-        limit: int | None = None,
+        path: str,
         line: int | None = None,
+        limit: int | None = None,
         **kwargs: Any,
     ) -> ReadTextFileResponse:
         raise _unsupported_capability_request("fs/read_text_file")
 
     async def write_text_file(
-        self, content: str, path: str, session_id: str, **kwargs: Any
+        self, session_id: str, path: str, content: str, **kwargs: Any
     ) -> WriteTextFileResponse | None:
         raise _unsupported_capability_request("fs/write_text_file")
 
     async def create_terminal(
         self,
-        command: str,
         session_id: str,
+        command: str,
         args: list[str] | None = None,
-        cwd: str | None = None,
         env: list[EnvVariable] | None = None,
+        cwd: str | None = None,
         output_byte_limit: int | None = None,
         **kwargs: Any,
     ) -> CreateTerminalResponse:
@@ -151,6 +157,14 @@ class DefaultClient(Client):
         self, session_id: str, terminal_id: str, **kwargs: Any
     ) -> KillTerminalResponse | None:
         raise _unsupported_capability_request("terminal/kill")
+
+    async def create_elicitation(
+        self, message: str, mode: ElicitationMode, **kwargs: Any
+    ) -> CreateElicitationResponse:
+        raise _unsupported_capability_request("elicitation/create")
+
+    async def complete_elicitation(self, elicitation_id: str, **kwargs: Any) -> None:
+        pass
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         raise _unsupported_capability_request(method)
