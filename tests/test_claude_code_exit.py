@@ -1,6 +1,6 @@
 import pytest
 from inspect_ai.event._model import ModelEvent
-from inspect_ai.model import GenerateConfig, ModelOutput
+from inspect_ai.model import GenerateConfig, ModelOutput, StopReason
 from inspect_swe._claude_code._events.live_consumer import LiveConsumer
 from inspect_swe._claude_code.claude_code import _is_claude_code_refusal_exit
 
@@ -22,7 +22,7 @@ from inspect_swe._claude_code.claude_code import _is_claude_code_refusal_exit
 def test_is_claude_code_refusal_exit(
     exit_code: int,
     stderr_data: str,
-    stop_reason: str | None,
+    stop_reason: StopReason | None,
     expected: bool,
 ) -> None:
     assert (
