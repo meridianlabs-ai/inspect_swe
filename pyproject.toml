@@ -101,6 +101,7 @@ testpaths = ["tests"]
 
 [tool.mypy]
 strict = true
+files = ["src", "tests"]
 mypy_path = "src"
 namespace_packages = true
 explicit_package_bases = true

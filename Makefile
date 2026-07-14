@@ -6,7 +6,7 @@ hooks:
 check:
 	ruff format
 	ruff check --fix
-	mypy src tests
+	mypy
 
 .PHONY: test
 test:
