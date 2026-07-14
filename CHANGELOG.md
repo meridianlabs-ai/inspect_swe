@@ -5,6 +5,13 @@
 - Gemini CLI (ACP): Register bridged tools and MCP servers with the CLI (write `settings.json` and pass `--allowed-mcp-server-names`) so host-side tools are available to the agent.
 - All agents: When no `cwd` is specified and the sandbox's default working directory is `/` (i.e. the image has no `WORKDIR`), run the agent in the user's home directory instead of the container root.
 
+## [0.2.66](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.65...0.2.66) (2026-07-14)
+
+
+### Bug Fixes
+
+* update ACP client for agent-client-protocol 0.11.0 compatibility ([#76](https://github.com/meridianlabs-ai/inspect_swe/issues/76)) ([#82](https://github.com/meridianlabs-ai/inspect_swe/issues/82)) ([22328dc](https://github.com/meridianlabs-ai/inspect_swe/commit/22328dc0082e0ed49f751d0f905ee249f640db70))
+
 ## 0.2.63 (10 June 2026)
 
 - Remove ACP patch for connection initialization order issue (resolved in ACP 0.10.1).
