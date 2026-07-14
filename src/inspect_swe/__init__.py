@@ -1,5 +1,6 @@
 from ._claude_code.claude_code import claude_code
 from ._codex_cli.codex_cli import codex_cli
+from ._antigravity_cli.antigravity_cli import antigravity_cli
 from ._gemini_cli.gemini_cli import gemini_cli
 from ._mini_swe_agent.mini_swe_agent import mini_swe_agent
 from ._opencode.opencode import opencode
@@ -25,6 +26,7 @@ __all__ = [
     "bridge_mcp_to_acp",
     "claude_code",
     "codex_cli",
+    "antigravity_cli",
     "gemini_cli",
     "mini_swe_agent",
     "opencode",
