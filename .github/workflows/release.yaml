@@ -4,11 +4,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      target-branch:
-        description: "Maintenance branch to release from (e.g. hotfix/1.4.x). Leave as main for a normal release."
-        type: string
-        default: main
 
 jobs:
   release-please:
@@ -23,5 +18,4 @@ jobs:
       approval-ping: false
       # Empty on push → default branch. On workflow_dispatch, targets the given
       # maintenance branch to cut a hotfix release from a released tag.
-      target-branch: ${{ inputs.target-branch }}
     secrets: inherit
