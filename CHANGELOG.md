@@ -1,3 +1,10 @@
+## [0.2.66](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.65...0.2.66) (2026-07-14)
+
+
+### Bug Fixes
+
+* update ACP client for agent-client-protocol 0.11.0 compatibility ([#76](https://github.com/meridianlabs-ai/inspect_swe/issues/76)) ([#82](https://github.com/meridianlabs-ai/inspect_swe/issues/82)) ([22328dc](https://github.com/meridianlabs-ai/inspect_swe/commit/22328dc0082e0ed49f751d0f905ee249f640db70))
+
 ## 0.2.65 (05 July 2026)
 
 - Codex CLI and Claude Code: Support checkpointing and resuming runs via `checkpointer()`, restoring session/attempt state across resumes.
