@@ -1,7 +1,3 @@
-## Unreleased
-
-- ACP: Compatibility with `agent-client-protocol` 0.11.0 — match the revised `Client` interface signatures and implement the new elicitation methods (rejected as an unsupported capability, like fs/terminal). Requires `agent-client-protocol>=0.11.0`.
-
 ## 0.2.65 (05 July 2026)
 
 - Codex CLI and Claude Code: Support checkpointing and resuming runs via `checkpointer()`, restoring session/attempt state across resumes.
