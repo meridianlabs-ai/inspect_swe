@@ -70,6 +70,10 @@ version-file = "src/inspect_swe/_version.py"
 
 [tool.hatch.version.raw-options]
 local_scheme = "no-local-version" # Important for PyPI compatibility
+# Used only when no tag is reachable (e.g. a shallow/tag-less `uv` git-URL
+# fetch of a single commit) -- normal tagged checkouts/releases still get a
+# real git-describe-derived version and ignore this.
+fallback_version = "0.2.66"
 
 [tool.hatch.metadata]
 allow-direct-references = true
