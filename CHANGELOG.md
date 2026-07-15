@@ -1,3 +1,5 @@
+# Changelog
+
 ## [0.2.66](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.65...0.2.66) (2026-07-14)
 
 
