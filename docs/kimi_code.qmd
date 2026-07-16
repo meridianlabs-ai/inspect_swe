@@ -22,6 +22,7 @@ The following options are supported for customizing the behavior of the agent:
 | `centaur` | Run in [Centaur Mode](#centaur-mode), which makes {{< meta agent_name >}} available to an Inspect `human_cli()` agent rather than running it unattended. |
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
+| `max_context_size` | Context window to configure for Kimi. Defaults to the bridged model's context length from Inspect model metadata; required when that metadata is unavailable. |
 | `filter` | Filter for intercepting bridged model requests. |
 | `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
 | `disallowed_tools` | Tool names to deny via {{< meta agent_name >}} permission rules. |

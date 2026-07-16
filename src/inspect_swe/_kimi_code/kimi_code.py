@@ -26,6 +26,8 @@ from inspect_ai.model import (
     GenerateFilter,
     Model,
     ModelOutput,
+    get_model,
+    get_model_info,
 )
 from inspect_ai.model._model import GenerateInput
 from inspect_ai.scorer import score
@@ -72,8 +74,6 @@ def _is_legacy_str_filter(fn: GenerateFilter) -> bool:
     return first is not None and first.annotation is str
 
 
-KIMI_MAX_CONTEXT_SIZE = 262144
-
 # Kimi Code's CLI appends escalating <system-reminder> nags to tool results when
 # it detects an identical tool call repeated N times in a row (tool-dedup: tier 1
 # at streak >= 3, tier 2 at >= 5, tier 3 "respond now" at >= 8, forced turn stop
@@ -114,11 +114,11 @@ def kimi_code(
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
+    max_context_size: int | None = None,
     model_aliases: dict[str, str | Model] | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     disallowed_tools: Sequence[str] | None = None,
-    skip_afk_prompt_injection: bool = False,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -149,11 +149,13 @@ def kimi_code(
         centaur: Run in 'centaur' mode, which makes Kimi Code available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts
         model: Model name to use for inspect bridge (defaults to main model for task)
+        max_context_size: Context window to configure for Kimi. Defaults to the
+            bridged model's context length from Inspect model metadata; required
+            when that metadata is unavailable.
         model_aliases: Optional mapping of model names to Model instances or model name strings.
         filter: Filter for intercepting bridged model requests
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         disallowed_tools: Tool names to deny via Kimi permission rules
-        skip_afk_prompt_injection: Suppress Kimi Code's AFK-mode system reminder.
         cwd: Working directory to run kimi within
         env: Environment variables to set for kimi
         user: User to execute kimi with
@@ -180,6 +182,10 @@ def kimi_code(
     filter_is_legacy = filter is not None and _is_legacy_str_filter(filter)
 
     async def execute(state: AgentState) -> AgentState:
+        resolved_max_context_size = _resolve_max_context_size(
+            model=model, max_context_size=max_context_size
+        )
+
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "kimi_code_model_port"
         port = store().get(MODEL_PORT, 3100) + 1
@@ -256,13 +262,10 @@ def kimi_code(
                     extra_skill_dirs=[skills_dir]
                     if resolved_skills is not None
                     else [],
-                    skip_afk_prompt_injection=skip_afk_prompt_injection,
+                    max_context_size=resolved_max_context_size,
                 ),
             )
-            if all_mcp_servers:
-                await sbox.write_file(
-                    f"{kimi_home}/mcp.json", _mcp_json(all_mcp_servers)
-                )
+            await sbox.write_file(f"{kimi_home}/mcp.json", _mcp_json(all_mcp_servers))
 
             # build the prompt (kimi -p takes a single message and has no
             # separate system-prompt flag, so we prepend system messages)
@@ -455,20 +458,41 @@ def _mcp_json(mcp_servers: Sequence[MCPServerConfig]) -> str:
     return json.dumps({"mcpServers": servers}, indent=2)
 
 
+def _resolve_max_context_size(
+    *, model: str | None, max_context_size: int | None
+) -> int:
+    if max_context_size is not None:
+        if max_context_size <= 0:
+            raise ValueError("max_context_size must be a positive integer")
+        return max_context_size
+
+    resolved_model = get_model(model)
+    model_info = get_model_info(resolved_model)
+    if model_info is None or model_info.context_length is None:
+        raise ValueError(
+            f"Context length metadata is unavailable for model "
+            f"{resolved_model.name!r}; pass max_context_size explicitly."
+        )
+    if model_info.context_length <= 0:
+        raise ValueError(
+            f"Context length metadata for model {resolved_model.name!r} must be "
+            "positive; pass max_context_size explicitly."
+        )
+    return model_info.context_length
+
+
 def _config_toml(
     *,
     port: int,
     mcp_servers: Sequence[MCPServerConfig],
     disallowed_tools: Sequence[str],
     extra_skill_dirs: Sequence[str],
-    skip_afk_prompt_injection: bool = False,
+    max_context_size: int,
 ) -> str:
-    lines = ['default_model = "bridge"']
+    lines = ['default_model = "bridge"', "telemetry = false"]
     if extra_skill_dirs:
         dirs = ", ".join(_format_value(d) for d in extra_skill_dirs)
         lines.append(f"extra_skill_dirs = [{dirs}]")
-    if skip_afk_prompt_injection:
-        lines += ["", "[system]", "skip_afk_prompt_injection = true"]
     lines += [
         "",
         "[providers.bridge]",
@@ -479,7 +503,7 @@ def _config_toml(
         "[models.bridge]",
         'provider = "bridge"',
         'model = "inspect"',
-        f"max_context_size = {KIMI_MAX_CONTEXT_SIZE}",
+        f"max_context_size = {max_context_size}",
     ]
     # -p (prompt) mode auto-approves regular tool calls under the auto policy;
     # make MCP tools explicitly allowed and honor disallowed_tools as static

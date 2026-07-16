@@ -2,7 +2,7 @@
 
 import json
 import re
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import anyio
 import pytest
@@ -13,6 +13,7 @@ from inspect_ai.model import (
     ChatMessageUser,
     GenerateConfig,
     Model,
+    ModelInfo,
     ModelOutput,
 )
 from inspect_ai.tool import (
@@ -28,6 +29,7 @@ from inspect_swe._kimi_code.kimi_code import (
     _dedupe_tool_call_ids,
     _is_legacy_str_filter,
     _mcp_json,
+    _resolve_max_context_size,
     _strip_repeat_reminders,
 )
 
@@ -97,6 +99,7 @@ def test_config_toml_routes_bridge_and_wires_rules() -> None:
         mcp_servers=[MCPServerConfigStdio(name="engine", command="serve", args=[])],
         disallowed_tools=["WebFetch"],
         extra_skill_dirs=["/root/.kimi-code/skills"],
+        max_context_size=131072,
     )
     assert 'base_url = "http://localhost:3123/v1"' in toml
     assert 'default_model = "bridge"' in toml
@@ -105,7 +108,8 @@ def test_config_toml_routes_bridge_and_wires_rules() -> None:
     assert 'decision = "allow"' in toml
     assert 'pattern = "WebFetch"' in toml
     assert 'decision = "deny"' in toml
-    assert "skip_afk_prompt_injection" not in toml
+    assert toml.startswith('default_model = "bridge"\ntelemetry = false\n')
+    assert "max_context_size = 131072" in toml
 
     # user-supplied strings are escaped rather than breaking the TOML
     toml = _config_toml(
@@ -113,18 +117,72 @@ def test_config_toml_routes_bridge_and_wires_rules() -> None:
         mcp_servers=[],
         disallowed_tools=['Web"Fetch\\x'],
         extra_skill_dirs=[],
+        max_context_size=8192,
     )
     assert 'pattern = "Web\\"Fetch\\\\x"' in toml
 
-    toml = _config_toml(
-        port=3123,
-        mcp_servers=[],
-        disallowed_tools=[],
-        extra_skill_dirs=[],
-        skip_afk_prompt_injection=True,
-    )
-    assert "[system]" in toml
-    assert "skip_afk_prompt_injection = true" in toml
+
+def test_resolve_max_context_size_uses_explicit_override() -> None:
+    with patch("inspect_swe._kimi_code.kimi_code.get_model") as mock_get_model:
+        assert (
+            _resolve_max_context_size(model="unknown/model", max_context_size=4096)
+            == 4096
+        )
+    mock_get_model.assert_not_called()
+
+
+def test_resolve_max_context_size_uses_model_metadata() -> None:
+    resolved_model = Mock(spec=Model)
+    resolved_model.name = "provider/model"
+    with (
+        patch(
+            "inspect_swe._kimi_code.kimi_code.get_model",
+            return_value=resolved_model,
+        ) as mock_get_model,
+        patch(
+            "inspect_swe._kimi_code.kimi_code.get_model_info",
+            return_value=ModelInfo(context_length=32768),
+        ) as mock_get_model_info,
+    ):
+        assert _resolve_max_context_size(model=None, max_context_size=None) == 32768
+    mock_get_model.assert_called_once_with(None)
+    mock_get_model_info.assert_called_once_with(resolved_model)
+
+
+@pytest.mark.parametrize(
+    "model_info", [None, ModelInfo(context_length=None), ModelInfo(context_length=0)]
+)
+def test_resolve_max_context_size_requires_metadata_or_override(
+    model_info: ModelInfo | None,
+) -> None:
+    resolved_model = Mock(spec=Model)
+    resolved_model.name = "provider/unknown"
+    with (
+        patch(
+            "inspect_swe._kimi_code.kimi_code.get_model",
+            return_value=resolved_model,
+        ),
+        patch(
+            "inspect_swe._kimi_code.kimi_code.get_model_info",
+            return_value=model_info,
+        ),
+        pytest.raises(ValueError, match="pass max_context_size explicitly"),
+    ):
+        _resolve_max_context_size(model="provider/unknown", max_context_size=None)
+
+
+@pytest.mark.parametrize("max_context_size", [0, -1])
+def test_resolve_max_context_size_rejects_invalid_override(
+    max_context_size: int,
+) -> None:
+    with pytest.raises(ValueError, match="must be a positive integer"):
+        _resolve_max_context_size(
+            model="provider/model", max_context_size=max_context_size
+        )
+
+
+def test_mcp_json_empty_shape() -> None:
+    assert json.loads(_mcp_json([])) == {"mcpServers": {}}
 
 
 def test_mcp_json_stdio_shape() -> None:
