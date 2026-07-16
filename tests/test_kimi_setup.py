@@ -11,12 +11,22 @@ from inspect_ai.model import (
     ChatMessageAssistant,
     ChatMessageTool,
     ChatMessageUser,
+    GenerateConfig,
+    Model,
+    ModelOutput,
 )
-from inspect_ai.tool import MCPServerConfigHTTP, MCPServerConfigStdio, ToolCall
+from inspect_ai.tool import (
+    MCPServerConfigHTTP,
+    MCPServerConfigStdio,
+    ToolCall,
+    ToolChoice,
+    ToolInfo,
+)
 from inspect_swe._kimi_code import agentbinary
 from inspect_swe._kimi_code.kimi_code import (
     _config_toml,
     _dedupe_tool_call_ids,
+    _is_legacy_str_filter,
     _mcp_json,
     _strip_repeat_reminders,
 )
@@ -63,23 +73,22 @@ def test_resolve_version_specific_skips_pointer() -> None:
     mock_download.assert_awaited_once()
 
 
-def test_platform_musl_collapses_to_glibc_key() -> None:
-    assert agentbinary._platform_to_kimi_platform("linux-x64-musl") == "linux-x64"
-    assert agentbinary._platform_to_kimi_platform("linux-arm64-musl") == "linux-arm64"
+def test_platform_musl_raises() -> None:
+    # kimi publishes glibc-only linux builds; musl must fail at resolution time
+    for platform in ("linux-x64-musl", "linux-arm64-musl"):
+        with pytest.raises(RuntimeError, match="glibc-only"):
+            agentbinary._platform_to_kimi_platform(platform)
 
 
 def test_resolve_version_unknown_platform_raises() -> None:
     source = agentbinary.kimi_code_binary_source()
+    # requesting a linux platform absent from a manifest
+    manifest_no_linux = json.dumps({"version": "0.21.1", "platforms": {}})
     with patch.object(
-        agentbinary, "download_text_file", AsyncMock(return_value=_MANIFEST_JSON)
+        agentbinary, "download_text_file", AsyncMock(return_value=manifest_no_linux)
     ):
-        # manifest omits win32; requesting a linux platform absent from a manifest
-        manifest_no_linux = json.dumps({"version": "0.21.1", "platforms": {}})
-        with patch.object(
-            agentbinary, "download_text_file", AsyncMock(return_value=manifest_no_linux)
-        ):
-            with pytest.raises(RuntimeError, match="No Kimi Code binary"):
-                anyio.run(source.resolve_version, "0.21.1", "linux-x64")
+        with pytest.raises(RuntimeError, match="No Kimi Code binary"):
+            anyio.run(source.resolve_version, "0.21.1", "linux-x64")
 
 
 def test_config_toml_routes_bridge_and_wires_rules() -> None:
@@ -98,6 +107,15 @@ def test_config_toml_routes_bridge_and_wires_rules() -> None:
     assert 'decision = "deny"' in toml
     assert "skip_afk_prompt_injection" not in toml
 
+    # user-supplied strings are escaped rather than breaking the TOML
+    toml = _config_toml(
+        port=3123,
+        mcp_servers=[],
+        disallowed_tools=['Web"Fetch\\x'],
+        extra_skill_dirs=[],
+    )
+    assert 'pattern = "Web\\"Fetch\\\\x"' in toml
+
     toml = _config_toml(
         port=3123,
         mcp_servers=[],
@@ -109,37 +127,117 @@ def test_config_toml_routes_bridge_and_wires_rules() -> None:
     assert "skip_afk_prompt_injection = true" in toml
 
 
-def test_mcp_json_shape_and_rejects_non_stdio() -> None:
+def test_mcp_json_stdio_shape() -> None:
     parsed = json.loads(
         _mcp_json(
-            [MCPServerConfigStdio(name="engine", command="serve", args=["--flag"])]
+            [
+                MCPServerConfigStdio(
+                    name="engine",
+                    command="serve",
+                    args=["--flag"],
+                    cwd="/srv/engine",
+                    tools=["query", "status"],
+                )
+            ]
         )
     )
     assert parsed == {
-        "mcpServers": {"engine": {"command": "serve", "args": ["--flag"]}}
+        "mcpServers": {
+            "engine": {
+                "transport": "stdio",
+                "command": "serve",
+                "args": ["--flag"],
+                "cwd": "/srv/engine",
+                "enabledTools": ["query", "status"],
+            }
+        }
     }
-    with pytest.raises(ValueError, match="only supports stdio"):
-        _mcp_json([MCPServerConfigHTTP(name="remote", type="http", url="http://x")])
+
+
+def test_mcp_json_http_shape() -> None:
+    # bridged tools arrive as MCPServerConfigHTTP (the bridge's own MCP
+    # endpoint); kimi supports remote servers natively via transport http/sse
+    parsed = json.loads(
+        _mcp_json(
+            [
+                MCPServerConfigHTTP(
+                    name="bridged",
+                    type="http",
+                    url="http://localhost:3101/mcp/bridged",
+                    headers={"Authorization": "Bearer tok"},
+                )
+            ]
+        )
+    )
+    assert parsed == {
+        "mcpServers": {
+            "bridged": {
+                "transport": "http",
+                "url": "http://localhost:3101/mcp/bridged",
+                "headers": {"Authorization": "Bearer tok"},
+            }
+        }
+    }
+
+
+# reminder wordings by kimi-code era (rewritten in 0.23.4) and escalation tier
+_REMINDERS_STRIPPED = [
+    # >= 0.23.4, tiers 1-2
+    "<system-reminder>\nThe same tool call has been repeated several times in a "
+    "row. Before your next call, write one sentence stating what new information "
+    "you expect it to produce.\n</system-reminder>",
+    "<system-reminder>\nThe same tool call has now been issued 5 times in a row. "
+    "Choose exactly one of the following and state your choice before acting.\n"
+    "</system-reminder>",
+    # < 0.23.4, tiers 1-2
+    "<system-reminder>\nYou are repeating the exact same tool call with identical "
+    "parameters. Please carefully analyze the previous result.\n</system-reminder>",
+    "<system-reminder>\nYou have repeatedly called the same tool with identical "
+    "parameters many times.\nRepeated tool call detected:\n- tool: Bash\n"
+    "</system-reminder>",
+]
+# tier 3 precedes kimi's forced turn stop (streak >= 12) and must be preserved
+_REMINDERS_KEPT = [
+    "<system-reminder>\nWrite your final response now, without any further tool "
+    "calls.\n</system-reminder>",
+    "<system-reminder>\nYou are stuck in a dead end and have repeatedly made the "
+    "same function call without progress.\nStop all function calls immediately.\n"
+    "</system-reminder>",
+]
 
 
 def test_strip_repeat_reminders_removes_nag_and_keeps_pairing() -> None:
-    reminder = (
-        "<system-reminder>Repeated tool call detected: do not repeat.</system-reminder>"
-    )
-    messages: list[ChatMessage] = [
-        ChatMessageUser(content=f"check status\n\n{reminder}"),
-        ChatMessageAssistant(
-            content="polling",
-            tool_calls=[ToolCall(id="functions_Bash_0", function="Bash", arguments={})],
-        ),
-        ChatMessageTool(content=f"pending {reminder}", tool_call_id="functions_Bash_0"),
-    ]
-    cleaned, changed = _strip_repeat_reminders(messages)
-    assert changed is True
-    assert all("Repeated tool call detected" not in m.text for m in cleaned)
-    # tool/user messages preserved (pairing intact), user text retained
-    assert len(cleaned) == 3
-    assert cleaned[0].text == "check status"
+    for reminder in _REMINDERS_STRIPPED:
+        messages: list[ChatMessage] = [
+            ChatMessageUser(content=f"check status\n\n{reminder}"),
+            ChatMessageAssistant(
+                content="polling",
+                tool_calls=[
+                    ToolCall(id="functions_Bash_0", function="Bash", arguments={})
+                ],
+            ),
+            ChatMessageTool(
+                content=f"pending {reminder}", tool_call_id="functions_Bash_0"
+            ),
+        ]
+        cleaned, changed = _strip_repeat_reminders(messages)
+        assert changed is True
+        assert all("<system-reminder>" not in m.text for m in cleaned)
+        # tool/user messages preserved (pairing intact), user text retained
+        assert len(cleaned) == 3
+        assert cleaned[0].text == "check status"
+
+
+def test_strip_repeat_reminders_keeps_final_response_tier() -> None:
+    for reminder in _REMINDERS_KEPT:
+        messages: list[ChatMessage] = [
+            ChatMessageTool(
+                content=f"pending {reminder}", tool_call_id="functions_Bash_0"
+            ),
+        ]
+        cleaned, changed = _strip_repeat_reminders(messages)
+        assert changed is False
+        assert cleaned is messages
 
 
 def test_strip_repeat_reminders_noop_when_absent() -> None:
@@ -173,6 +271,41 @@ def test_dedupe_tool_call_ids_makes_ids_unique_preserving_pairing() -> None:
     assert len(set(call_ids)) == 2
     # each tool result still threads to its originating call (FIFO)
     assert result_ids == call_ids
+
+    # idempotent: a second pass (bridge retry) must not grow suffixes
+    _dedupe_tool_call_ids(messages)
+    assert [
+        tc.id
+        for m in messages
+        if isinstance(m, ChatMessageAssistant) and m.tool_calls
+        for tc in m.tool_calls
+    ] == call_ids
+    assert [
+        m.tool_call_id for m in messages if isinstance(m, ChatMessageTool)
+    ] == result_ids
+
+
+def test_is_legacy_str_filter_dispatch() -> None:
+    async def legacy(
+        model: str,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | None:
+        return None
+
+    async def modern(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | None:
+        return None
+
+    assert _is_legacy_str_filter(legacy) is True
+    assert _is_legacy_str_filter(modern) is False
 
 
 @skip_if_github_action

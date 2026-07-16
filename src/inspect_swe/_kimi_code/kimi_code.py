@@ -1,3 +1,4 @@
+import inspect
 import json
 import re
 import shlex
@@ -30,6 +31,7 @@ from inspect_ai.model._model import GenerateInput
 from inspect_ai.scorer import score
 from inspect_ai.tool import (
     MCPServerConfig,
+    MCPServerConfigHTTP,
     MCPServerConfigStdio,
     Skill,
     ToolChoice,
@@ -48,25 +50,52 @@ from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.sandbox import resolve_agent_cwd
+from .._util.toml import _format_value
 from .agentbinary import kimi_code_binary_source
 
-# GenerateFilter is a union of Model-first and str-first callables; the bridge
-# dispatches Model-first filters (as used here), so we call through this form.
+# GenerateFilter is a union of Model-first and (deprecated) str-first callables;
+# the bridge dispatches on the user filter's first-parameter annotation. Our
+# combined_filter wrapper hides the user filter from that dispatch, so we
+# replicate it: Model-first filters get the Model, str-first get model.name.
 _ModelFilter = Callable[
     [Model, list[ChatMessage], list[ToolInfo], "ToolChoice | None", GenerateConfig],
     Awaitable["ModelOutput | GenerateInput | None"],
 ]
+_StrFilter = Callable[
+    [str, list[ChatMessage], list[ToolInfo], "ToolChoice | None", GenerateConfig],
+    Awaitable["ModelOutput | GenerateInput | None"],
+]
+
+
+def _is_legacy_str_filter(fn: GenerateFilter) -> bool:
+    first = next(iter(inspect.signature(fn).parameters.values()), None)
+    return first is not None and first.annotation is str
+
 
 KIMI_MAX_CONTEXT_SIZE = 262144
 
-# Kimi Code's CLI injects a <system-reminder> nagging the model not to repeat an
-# identical tool call. Re-polling the same read tool with the same arguments is
-# legitimate (a build hasn't finished, a status is still pending), so the nag is
-# a harness artifact rather than part of the task; strip it before the bridged
-# model sees it.
-_REPEAT_REMINDER_MARKER = "Repeated tool call detected"
+# Kimi Code's CLI appends escalating <system-reminder> nags to tool results when
+# it detects an identical tool call repeated N times in a row (tool-dedup: tier 1
+# at streak >= 3, tier 2 at >= 5, tier 3 "respond now" at >= 8, forced turn stop
+# at >= 12). Re-polling the same read tool with the same arguments is legitimate
+# (a build hasn't finished, a status is still pending), so tiers 1-2 are harness
+# artifacts rather than part of the task; strip them before the bridged model
+# sees them. Tier 3 is deliberately NOT stripped: kimi force-stops the turn at
+# streak 12 regardless of what the model saw, so hiding the "write your final
+# response now" instruction would only turn a graceful wrap-up into an abrupt
+# cutoff. Markers cover both wordings (rewritten in kimi-code 0.23.4, PR #1518).
+_REPEAT_REMINDER_MARKERS = (
+    # kimi-code >= 0.23.4
+    "The same tool call has been repeated",
+    "The same tool call has now been issued",
+    # kimi-code < 0.23.4
+    "You are repeating the exact same tool call",
+    "Repeated tool call detected",
+)
 _REPEAT_REMINDER_RE = re.compile(
-    r"<system-reminder>(?:(?!</system-reminder>).)*?Repeated tool call detected.*?</system-reminder>",
+    r"<system-reminder>(?:(?!</system-reminder>).)*?(?:"
+    + "|".join(re.escape(marker) for marker in _REPEAT_REMINDER_MARKERS)
+    + r").*?</system-reminder>",
     re.DOTALL,
 )
 
@@ -148,6 +177,7 @@ def kimi_code(
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
     resolved_disallowed = list(disallowed_tools or [])
+    filter_is_legacy = filter is not None and _is_legacy_str_filter(filter)
 
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
@@ -162,11 +192,19 @@ def kimi_code(
             tool_choice: ToolChoice | None,
             config: GenerateConfig,
         ) -> ModelOutput | GenerateInput | None:
+            # in place (not via GenerateInput) so the rewritten ids persist in
+            # both the recorded ModelEvent input and bridge.state.messages
+            _dedupe_tool_call_ids(messages)
             cleaned, changed = _strip_repeat_reminders(messages)
             if filter is not None:
-                result = await cast(_ModelFilter, filter)(
-                    model, cleaned, tools, tool_choice, config
-                )
+                if filter_is_legacy:
+                    result = await cast(_StrFilter, filter)(
+                        model.name, cleaned, tools, tool_choice, config
+                    )
+                else:
+                    result = await cast(_ModelFilter, filter)(
+                        model, cleaned, tools, tool_choice, config
+                    )
                 if result is not None:
                     return result
             if changed:
@@ -237,7 +275,11 @@ def kimi_code(
             if system_messages:
                 prompt = "\n\n".join(system_messages) + "\n\n" + prompt
 
-            cmd = [kimi_binary, "--output-format", "text"]
+            cmd = [kimi_binary]
+            # kimi rejects --output-format outside -p (prompt) mode, so keep the
+            # centaur alias (interactive) free of it
+            if centaur is False:
+                cmd.extend(["--output-format", "text"])
 
             agent_env = {
                 "KIMI_CODE_HOME": kimi_home,
@@ -310,20 +352,23 @@ def kimi_code(
                     debug_output.insert(0, "Kimi Code Debug Output:")
                     trace("\n".join(debug_output))
 
-        _dedupe_tool_call_ids(bridge.state.messages)
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
 
 
+def _contains_repeat_reminder(text: str) -> bool:
+    return any(marker in text for marker in _REPEAT_REMINDER_MARKERS)
+
+
 def _strip_repeat_reminders(
     messages: list[ChatMessage],
 ) -> tuple[list[ChatMessage], bool]:
-    if not any(_REPEAT_REMINDER_MARKER in m.text for m in messages):
+    if not any(_contains_repeat_reminder(m.text) for m in messages):
         return messages, False
     cleaned: list[ChatMessage] = []
     for message in messages:
-        if _REPEAT_REMINDER_MARKER not in message.text:
+        if not _contains_repeat_reminder(message.text):
             cleaned.append(message)
             continue
         if isinstance(message.content, str):
@@ -348,23 +393,29 @@ def _strip_repeat_reminders(
     return cleaned, True
 
 
+_DEDUPE_SUFFIX_RE = re.compile(r"__u\d+$")
+
+
 def _dedupe_tool_call_ids(messages: list[ChatMessage]) -> None:
     # Kimi Code assigns tool_call_ids of the form `functions_<tool>_<n>` whose
-    # counter resets, so the same id (e.g. `functions_Bash_0`) recurs across a
-    # session. The bridge records those ids verbatim, so a transcript viewer that
-    # threads assistant-call<->tool-result on tool_call_id alone collapses every
-    # reuse of an id into one node — the linear chain renders as a spurious tree.
-    # Rewrite ids in place to be globally unique while preserving pairing: the
-    # k-th tool result for an original id maps (FIFO) to the k-th assistant call
-    # bearing that id. Generation is already complete, so the model never sees
-    # these ids.
+    # counter resets, so the same id (e.g. `functions_Bash_0`) recurs within a
+    # session — and, in a long enough session, within a single request, which a
+    # provider can reject or mispair. Transcript viewers that thread
+    # assistant-call<->tool-result on tool_call_id alone also collapse every
+    # reuse of an id into one node, rendering the linear chain as a spurious
+    # tree. Rewrite ids in place to be unique within the request while
+    # preserving pairing: the k-th tool result for an original id maps (FIFO)
+    # to the k-th assistant call bearing that id. Kimi resends the full history
+    # each request, so the rewrite is deterministic across requests; stripping
+    # any prior `__u<n>` suffix keeps it idempotent across bridge retries.
     pending: dict[str, list[str]] = {}
     counter = 0
     for message in messages:
         if isinstance(message, ChatMessageAssistant) and message.tool_calls:
             for tool_call in message.tool_calls:
                 original = tool_call.id
-                unique_id = f"{original}__{counter}"
+                base = _DEDUPE_SUFFIX_RE.sub("", original)
+                unique_id = f"{base}__u{counter}"
                 counter += 1
                 tool_call.id = unique_id
                 pending.setdefault(original, []).append(unique_id)
@@ -375,18 +426,31 @@ def _dedupe_tool_call_ids(messages: list[ChatMessage]) -> None:
 
 
 def _mcp_json(mcp_servers: Sequence[MCPServerConfig]) -> str:
+    # kimi's mcp.json accepts stdio, http, and sse servers, discriminated by a
+    # `transport` field that maps directly from the inspect config types.
     servers: dict[str, dict[str, object]] = {}
     for server in mcp_servers:
-        if not isinstance(server, MCPServerConfigStdio):
+        entry: dict[str, object]
+        if isinstance(server, MCPServerConfigStdio):
+            entry = {
+                "transport": "stdio",
+                "command": server.command,
+                "args": list(server.args),
+            }
+            if server.env:
+                entry["env"] = dict(server.env)
+            if server.cwd is not None:
+                entry["cwd"] = str(server.cwd)
+        elif isinstance(server, MCPServerConfigHTTP):
+            entry = {"transport": server.type, "url": server.url}
+            if server.headers:
+                entry["headers"] = dict(server.headers)
+        else:
             raise ValueError(
-                f"kimi_code only supports stdio MCP servers, got {type(server).__name__}"
+                f"Unsupported MCP server config type: {type(server).__name__}"
             )
-        entry: dict[str, object] = {
-            "command": server.command,
-            "args": list(server.args),
-        }
-        if server.env:
-            entry["env"] = dict(server.env)
+        if server.tools != "all":
+            entry["enabledTools"] = list(server.tools)
         servers[server.name] = entry
     return json.dumps({"mcpServers": servers}, indent=2)
 
@@ -401,7 +465,7 @@ def _config_toml(
 ) -> str:
     lines = ['default_model = "bridge"']
     if extra_skill_dirs:
-        dirs = ", ".join(f'"{d}"' for d in extra_skill_dirs)
+        dirs = ", ".join(_format_value(d) for d in extra_skill_dirs)
         lines.append(f"extra_skill_dirs = [{dirs}]")
     if skip_afk_prompt_injection:
         lines += ["", "[system]", "skip_afk_prompt_injection = true"]
@@ -426,14 +490,14 @@ def _config_toml(
             "",
             "[[permission.rules]]",
             'decision = "allow"',
-            f'pattern = "mcp__{server.name}__*"',
+            f"pattern = {_format_value(f'mcp__{server.name}__*')}",
         ]
     for tool in disallowed_tools:
         lines += [
             "",
             "[[permission.rules]]",
             'decision = "deny"',
-            f'pattern = "{tool}"',
+            f"pattern = {_format_value(tool)}",
         ]
     return "\n".join(lines) + "\n"
 

@@ -43,7 +43,13 @@ For example, here we specify a custom system prompt:
 
 {{< include _snippets/agent_bridged_tools.md >}}
 
+## Tool Repetition Reminders
+
+The {{< meta agent_name >}} CLI appends escalating `<system-reminder>` notes to tool results when it detects the same tool call repeated several times in a row. Since re-polling an identical read-only command is often legitimate in long-running tasks (e.g. waiting for a build to finish), the `kimi_code()` agent strips the first two escalation tiers of these reminders before the bridged model sees them (so they also don't appear in the transcript). The final tier — which instructs the model to write its final response, and precedes {{< meta agent_name >}} force-stopping the turn at 12 repetitions — is passed through unchanged so the model can wrap up gracefully.
+
 ## Installation
+
+{{< meta agent_name >}} publishes glibc-only Linux binaries, and the agent runs them via `bash`, so sandbox images must provide glibc and bash (e.g. Debian/Ubuntu based images). musl-based images such as Alpine are not supported and fail at binary resolution time.
 
 By default, the agent will download the current latest version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:
 

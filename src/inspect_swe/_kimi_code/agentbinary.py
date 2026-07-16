@@ -53,17 +53,16 @@ def kimi_code_binary_source() -> AgentBinarySource:
 
 
 def _platform_to_kimi_platform(platform: SandboxPlatform) -> str:
-    # Kimi ships glibc linux builds keyed by arch only (no musl variants), so
-    # collapse musl platforms onto the plain linux key.
-    platform_map = {
-        "linux-x64": "linux-x64",
-        "linux-x64-musl": "linux-x64",
-        "linux-arm64": "linux-arm64",
-        "linux-arm64-musl": "linux-arm64",
-    }
-    if platform not in platform_map:
-        raise ValueError(f"Unsupported platform: {platform}")
-    return platform_map[platform]
+    # Kimi publishes glibc-only linux builds (no musl variants), so there is no
+    # binary to fall back to on musl images (e.g. Alpine) — the glibc build
+    # would download fine and then fail at exec with a cryptic "required file
+    # not found". Raise at resolution time instead.
+    if platform.endswith("-musl"):
+        raise RuntimeError(
+            f"Kimi Code publishes glibc-only linux builds; no musl binary is "
+            f"available for {platform}."
+        )
+    return platform
 
 
 async def _fetch_latest_version() -> str:
