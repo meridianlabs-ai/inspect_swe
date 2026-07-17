@@ -1,7 +1,12 @@
 import pytest
 from inspect_swe._codex_cli.config import (
+    CodexApprovalPolicy,
+    CodexSandboxMode,
     codex_cli_config_overrides,
     codex_config_options,
+    codex_mcp_server_toml,
+    codex_sandbox_args,
+    resolve_codex_approval_policy,
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
@@ -51,3 +56,76 @@ def test_codex_cli_config_overrides_format_values_for_cli() -> None:
         "web_search": '"cached"',
         "features.goals": "false",
     }
+
+
+def test_codex_mcp_server_toml_sets_approve_when_never() -> None:
+    dump = {"type": "http", "url": "http://localhost:8901/mcp/taiga-mcp"}
+    result = codex_mcp_server_toml(dump, "never")
+    assert result == {
+        "type": "http",
+        "url": "http://localhost:8901/mcp/taiga-mcp",
+        "default_tools_approval_mode": "approve",
+    }
+
+
+def test_codex_mcp_server_toml_leaves_other_policies_untouched() -> None:
+    dump = {"type": "http", "url": "http://localhost:8901/mcp/taiga-mcp"}
+    for policy in ("untrusted", "on-request"):
+        assert codex_mcp_server_toml(dump, policy) == dump
+
+
+def test_codex_mcp_server_toml_does_not_mutate_input() -> None:
+    dump = {"type": "http", "url": "http://localhost:8901/mcp/taiga-mcp"}
+    codex_mcp_server_toml(dump, "never")
+    assert "default_tools_approval_mode" not in dump
+
+
+@pytest.mark.parametrize(
+    ("sandbox_mode", "approval_policy", "network_access", "expected"),
+    [
+        (
+            "danger-full-access",
+            "never",
+            True,
+            ["--dangerously-bypass-approvals-and-sandbox"],
+        ),
+        (
+            "read-only",
+            "never",
+            True,
+            ["--sandbox", "read-only", "-c", "approval_policy=never"],
+        ),
+        (
+            "workspace-write",
+            "on-request",
+            False,
+            [
+                "--sandbox",
+                "workspace-write",
+                "-c",
+                "approval_policy=on-request",
+                "-c",
+                "sandbox_workspace_write.network_access=false",
+            ],
+        ),
+    ],
+)
+def test_codex_sandbox_args(
+    sandbox_mode: CodexSandboxMode,
+    approval_policy: CodexApprovalPolicy,
+    network_access: bool,
+    expected: list[str],
+) -> None:
+    assert codex_sandbox_args(sandbox_mode, approval_policy, network_access) == expected
+
+
+def test_config_override_resolves_effective_approval_policy() -> None:
+    assert (
+        resolve_codex_approval_policy("on-request", {"approval_policy": "never"})
+        == "never"
+    )
+
+
+def test_config_override_rejects_unknown_approval_policy() -> None:
+    with pytest.raises(ValueError, match="approval_policy"):
+        resolve_codex_approval_policy("never", {"approval_policy": "always"})
