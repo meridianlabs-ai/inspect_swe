@@ -47,6 +47,7 @@ from .config import (
     CodexWebSearch,
     codex_cli_config_overrides,
     codex_config_options,
+    codex_mcp_server_toml,
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
@@ -85,6 +86,8 @@ def codex_cli(
     env: dict[str, str] | None = None,
     user: str | None = None,
     sandbox: str | None = None,
+    sandbox_mode: Literal["read-only", "workspace-write", "danger-full-access"] = "danger-full-access",
+    approval_policy: Literal["untrusted", "on-request", "never"] = "never",
     version: Literal["auto", "sandbox", "latest"] | str = "auto",
     config_overrides: dict[str, str] | None = None,
     debug: bool | None = None,
@@ -125,6 +128,20 @@ def codex_cli(
         env: Environment variables to set for codex cli
         user: User to execute codex cli with.
         sandbox: Optional sandbox environment name.
+        sandbox_mode: Codex's own sandbox policy for model-generated shell commands
+            (`-s`/`--sandbox`). Defaults to `"danger-full-access"`, which combined with
+            `approval_policy="never"` (the default) reproduces the original
+            `--dangerously-bypass-approvals-and-sandbox` behavior. Passing
+            `"workspace-write"` or `"read-only"` runs Codex's own Linux sandbox
+            (bubblewrap); this requires the sandbox environment to allow unprivileged
+            user namespace creation, and `sandbox_workspace_write.network_access` is
+            forced on so bridged MCP tools and the model proxy (both localhost HTTP)
+            keep working.
+        approval_policy: Codex's approval policy (`AskForApproval`). Defaults to
+            `"never"` (commands are never escalated to interactive approval --
+            required for headless `codex exec`, which cannot answer approval
+            prompts). `-a`/`--ask-for-approval` is not accepted by `codex exec`, so
+            this is applied via `-c approval_policy=<value>`.
         version: Version of codex cli to use. One of:
             - "auto": Use any available version of codex cli in the sandbox, otherwise download the latest version.
             - "sandbox": Use the version of codex cli in the sandbox (raises `RuntimeError` if codex is not available in the sandbox)
@@ -263,9 +280,23 @@ def codex_cli(
                     # selects Codex's system prompt + tool set (see codex_model above)
                     "--model",
                     codex_model,
-                    "--dangerously-bypass-approvals-and-sandbox",
                 ]
             )
+
+            # Codex's own sandbox/approval gating (see sandbox_mode/approval_policy
+            # docstrings). The full-access default reproduces the original
+            # unconditional `--dangerously-bypass-approvals-and-sandbox` behavior;
+            # any other combination runs Codex's own sandbox and sets approval_policy
+            # via config override (`codex exec` has no `-a`/`--ask-for-approval` flag).
+            if sandbox_mode == "danger-full-access" and approval_policy == "never":
+                cmd.append("--dangerously-bypass-approvals-and-sandbox")
+            else:
+                cmd.extend(["--sandbox", sandbox_mode])
+                cmd.extend(["-c", f"approval_policy={approval_policy}"])
+                if sandbox_mode == "workspace-write":
+                    cmd.extend(
+                        ["-c", "sandbox_workspace_write.network_access=true"]
+                    )
 
             # apply config overrides
             if config_overrides:
@@ -291,8 +322,11 @@ def codex_cli(
             if all_mcp_servers:
                 for mcp_server in all_mcp_servers:
                     toml_config[f"mcp_servers.{mcp_server.name}"] = (
-                        mcp_server.model_dump(
-                            exclude={"name", "tools"}, exclude_none=True
+                        codex_mcp_server_toml(
+                            mcp_server.model_dump(
+                                exclude={"name", "tools"}, exclude_none=True
+                            ),
+                            approval_policy,
                         )
                     )
 
