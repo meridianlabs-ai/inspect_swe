@@ -113,19 +113,31 @@ async def start_interceptor(
     """Start mitmdump and return its process, CA certificate, and monitor task."""
     addon_data = Path(__file__).with_name("_addon.py").read_bytes()
     await sandbox.write_file(ADDON_PATH, addon_data)
+    cmd = [
+        MITMDUMP_PATH,
+        "--listen-host",
+        "127.0.0.1",
+        "--listen-port",
+        str(listen_port),
+        "--set",
+        f"confdir={confdir}",
+        "-s",
+        ADDON_PATH,
+        "-q",
+    ]
+    # When the sandbox exposes an upstream egress-allowlist proxy (set by the
+    # compose egress profile as SANDBOX_EGRESS_PROXY), chain mitmdump's
+    # pass-through traffic (agy's OAuth / cloudcode bootstrap calls) through it.
+    # Inference is still short-circuited to the local Inspect bridge by the addon
+    # and never egresses; in an isolated sandbox this proxy is the ONLY route out.
+    egress = await sandbox.exec(
+        bash_command('printf %s "${SANDBOX_EGRESS_PROXY:-}"'), user=user
+    )
+    upstream = egress.stdout.strip() if egress.success else ""
+    if upstream:
+        cmd += ["--mode", f"upstream:{upstream}"]
     process = await sandbox.exec_remote(
-        cmd=[
-            MITMDUMP_PATH,
-            "--listen-host",
-            "127.0.0.1",
-            "--listen-port",
-            str(listen_port),
-            "--set",
-            f"confdir={confdir}",
-            "-s",
-            ADDON_PATH,
-            "-q",
-        ],
+        cmd=cmd,
         options=ExecRemoteStreamingOptions(
             concurrency=False,
             env={"ANTIGRAVITY_BRIDGE_PORT": str(bridge_port)},
