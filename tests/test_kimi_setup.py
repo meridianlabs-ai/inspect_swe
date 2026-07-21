@@ -2,6 +2,7 @@
 
 import json
 import re
+from importlib import import_module
 from unittest.mock import AsyncMock, Mock, patch
 
 import anyio
@@ -30,6 +31,7 @@ from inspect_swe._kimi_code.kimi_code import (
     _is_legacy_str_filter,
     _mcp_json,
     _resolve_max_context_size,
+    _resolve_model,
     _strip_repeat_reminders,
 )
 
@@ -45,6 +47,7 @@ _MANIFEST_JSON = json.dumps(
         },
     }
 )
+_KIMI_CODE_MODULE = import_module("inspect_swe._kimi_code.kimi_code")
 
 
 def test_resolve_version_latest_fetches_pointer_then_manifest() -> None:
@@ -99,6 +102,7 @@ def test_config_toml_routes_bridge_and_wires_rules() -> None:
         mcp_servers=[MCPServerConfigStdio(name="engine", command="serve", args=[])],
         disallowed_tools=["WebFetch"],
         extra_skill_dirs=["/root/.kimi-code/skills"],
+        model="openai/gpt-5",
         max_context_size=131072,
     )
     assert 'base_url = "http://localhost:3123/v1"' in toml
@@ -109,6 +113,7 @@ def test_config_toml_routes_bridge_and_wires_rules() -> None:
     assert 'pattern = "WebFetch"' in toml
     assert 'decision = "deny"' in toml
     assert toml.startswith('default_model = "bridge"\ntelemetry = false\n')
+    assert 'model = "openai/gpt-5"' in toml
     assert "max_context_size = 131072" in toml
 
     # user-supplied strings are escaped rather than breaking the TOML
@@ -117,35 +122,84 @@ def test_config_toml_routes_bridge_and_wires_rules() -> None:
         mcp_servers=[],
         disallowed_tools=['Web"Fetch\\x'],
         extra_skill_dirs=[],
+        model='alias"name',
         max_context_size=8192,
     )
     assert 'pattern = "Web\\"Fetch\\\\x"' in toml
+    assert 'model = "alias\\"name"' in toml
+
+
+@pytest.mark.parametrize(
+    ("model", "requested_model", "bridge_model"),
+    [
+        (None, "inspect", "inspect"),
+        ("openai/gpt-5", "openai/gpt-5", "inspect/openai/gpt-5"),
+    ],
+)
+def test_resolve_model_matches_bridge_resolution(
+    model: str | None, requested_model: str, bridge_model: str
+) -> None:
+    resolved_model = Mock(spec=Model)
+    with patch.object(
+        _KIMI_CODE_MODULE,
+        "resolve_inspect_model",
+        return_value=resolved_model,
+    ) as mock_resolve:
+        assert _resolve_model(model=model, model_aliases=None) is resolved_model
+    mock_resolve.assert_called_once_with(requested_model, None, bridge_model)
+
+
+def test_explicit_alias_drives_context_size() -> None:
+    aliased_model = Mock(spec=Model)
+    aliases: dict[str, str | Model] = {"fast": aliased_model}
+    with patch.object(
+        _KIMI_CODE_MODULE,
+        "get_model_info",
+        return_value=ModelInfo(context_length=65536),
+    ) as mock_get_model_info:
+        resolved_model = _resolve_model(model="fast", model_aliases=aliases)
+        assert resolved_model is aliased_model
+        assert (
+            _resolve_max_context_size(model=resolved_model, max_context_size=None)
+            == 65536
+        )
+    mock_get_model_info.assert_called_once_with(aliased_model)
+
+
+def test_resolve_model_does_not_hide_resolution_errors() -> None:
+    with (
+        patch.object(
+            _KIMI_CODE_MODULE,
+            "resolve_inspect_model",
+            side_effect=ValueError("unknown model"),
+        ),
+        pytest.raises(ValueError, match="unknown model"),
+    ):
+        _resolve_model(model="missing/model", model_aliases=None)
 
 
 def test_resolve_max_context_size_uses_explicit_override() -> None:
-    with patch("inspect_swe._kimi_code.kimi_code.get_model") as mock_get_model:
+    resolved_model = Mock(spec=Model)
+    with patch.object(_KIMI_CODE_MODULE, "get_model_info") as mock_get_model_info:
         assert (
-            _resolve_max_context_size(model="unknown/model", max_context_size=4096)
+            _resolve_max_context_size(model=resolved_model, max_context_size=4096)
             == 4096
         )
-    mock_get_model.assert_not_called()
+    mock_get_model_info.assert_not_called()
 
 
 def test_resolve_max_context_size_uses_model_metadata() -> None:
     resolved_model = Mock(spec=Model)
     resolved_model.name = "provider/model"
-    with (
-        patch(
-            "inspect_swe._kimi_code.kimi_code.get_model",
-            return_value=resolved_model,
-        ) as mock_get_model,
-        patch(
-            "inspect_swe._kimi_code.kimi_code.get_model_info",
-            return_value=ModelInfo(context_length=32768),
-        ) as mock_get_model_info,
-    ):
-        assert _resolve_max_context_size(model=None, max_context_size=None) == 32768
-    mock_get_model.assert_called_once_with(None)
+    with patch.object(
+        _KIMI_CODE_MODULE,
+        "get_model_info",
+        return_value=ModelInfo(context_length=32768),
+    ) as mock_get_model_info:
+        assert (
+            _resolve_max_context_size(model=resolved_model, max_context_size=None)
+            == 32768
+        )
     mock_get_model_info.assert_called_once_with(resolved_model)
 
 
@@ -158,26 +212,24 @@ def test_resolve_max_context_size_requires_metadata_or_override(
     resolved_model = Mock(spec=Model)
     resolved_model.name = "provider/unknown"
     with (
-        patch(
-            "inspect_swe._kimi_code.kimi_code.get_model",
-            return_value=resolved_model,
-        ),
-        patch(
-            "inspect_swe._kimi_code.kimi_code.get_model_info",
+        patch.object(
+            _KIMI_CODE_MODULE,
+            "get_model_info",
             return_value=model_info,
         ),
         pytest.raises(ValueError, match="pass max_context_size explicitly"),
     ):
-        _resolve_max_context_size(model="provider/unknown", max_context_size=None)
+        _resolve_max_context_size(model=resolved_model, max_context_size=None)
 
 
 @pytest.mark.parametrize("max_context_size", [0, -1])
 def test_resolve_max_context_size_rejects_invalid_override(
     max_context_size: int,
 ) -> None:
+    resolved_model = Mock(spec=Model)
     with pytest.raises(ValueError, match="must be a positive integer"):
         _resolve_max_context_size(
-            model="provider/model", max_context_size=max_context_size
+            model=resolved_model, max_context_size=max_context_size
         )
 
 

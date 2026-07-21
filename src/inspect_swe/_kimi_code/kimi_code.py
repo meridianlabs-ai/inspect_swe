@@ -15,6 +15,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
+from inspect_ai.agent._bridge.util import resolve_inspect_model
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageAssistant,
@@ -26,7 +27,6 @@ from inspect_ai.model import (
     GenerateFilter,
     Model,
     ModelOutput,
-    get_model,
     get_model_info,
 )
 from inspect_ai.model._model import GenerateInput
@@ -171,7 +171,10 @@ def kimi_code(
     if centaur is True:
         centaur = CentaurOptions()
 
-    # resolve model
+    # resolve the name Kimi sends and the bridge fallback independently: the
+    # bridge matches aliases against the raw requested name before stripping
+    # the inspect/ prefix from its fallback.
+    requested_model = model or "inspect"
     bridge_model = f"inspect/{model}" if model is not None else "inspect"
 
     # resolve skills / attempts
@@ -182,8 +185,9 @@ def kimi_code(
     filter_is_legacy = filter is not None and _is_legacy_str_filter(filter)
 
     async def execute(state: AgentState) -> AgentState:
+        resolved_model = _resolve_model(model=model, model_aliases=model_aliases)
         resolved_max_context_size = _resolve_max_context_size(
-            model=model, max_context_size=max_context_size
+            model=resolved_model, max_context_size=max_context_size
         )
 
         # determine port (use new port for each execution of agent on sample)
@@ -262,6 +266,7 @@ def kimi_code(
                     extra_skill_dirs=[skills_dir]
                     if resolved_skills is not None
                     else [],
+                    model=requested_model,
                     max_context_size=resolved_max_context_size,
                 ),
             )
@@ -458,24 +463,29 @@ def _mcp_json(mcp_servers: Sequence[MCPServerConfig]) -> str:
     return json.dumps({"mcpServers": servers}, indent=2)
 
 
-def _resolve_max_context_size(
-    *, model: str | None, max_context_size: int | None
-) -> int:
+def _resolve_model(
+    *, model: str | None, model_aliases: dict[str, str | Model] | None
+) -> Model:
+    requested_model = model or "inspect"
+    bridge_model = f"inspect/{model}" if model is not None else "inspect"
+    return resolve_inspect_model(requested_model, model_aliases, bridge_model)
+
+
+def _resolve_max_context_size(*, model: Model, max_context_size: int | None) -> int:
     if max_context_size is not None:
         if max_context_size <= 0:
             raise ValueError("max_context_size must be a positive integer")
         return max_context_size
 
-    resolved_model = get_model(model)
-    model_info = get_model_info(resolved_model)
+    model_info = get_model_info(model)
     if model_info is None or model_info.context_length is None:
         raise ValueError(
             f"Context length metadata is unavailable for model "
-            f"{resolved_model.name!r}; pass max_context_size explicitly."
+            f"{model.name!r}; pass max_context_size explicitly."
         )
     if model_info.context_length <= 0:
         raise ValueError(
-            f"Context length metadata for model {resolved_model.name!r} must be "
+            f"Context length metadata for model {model.name!r} must be "
             "positive; pass max_context_size explicitly."
         )
     return model_info.context_length
@@ -487,6 +497,7 @@ def _config_toml(
     mcp_servers: Sequence[MCPServerConfig],
     disallowed_tools: Sequence[str],
     extra_skill_dirs: Sequence[str],
+    model: str,
     max_context_size: int,
 ) -> str:
     lines = ['default_model = "bridge"', "telemetry = false"]
@@ -502,7 +513,7 @@ def _config_toml(
         "",
         "[models.bridge]",
         'provider = "bridge"',
-        'model = "inspect"',
+        f"model = {_format_value(model)}",
         f"max_context_size = {max_context_size}",
     ]
     # -p (prompt) mode auto-approves regular tool calls under the auto policy;
