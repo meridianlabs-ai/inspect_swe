@@ -35,6 +35,14 @@ def test_gemini_cli_bridged_tools() -> None:
 
 @skip_if_no_anthropic
 @skip_if_no_docker
+def test_kimi_code_bridged_tools() -> None:
+    check_bridged_tools(
+        "kimi_code", "anthropic/claude-sonnet-4-0", "mcp__secrets__secret_lookup"
+    )
+
+
+@skip_if_no_anthropic
+@skip_if_no_docker
 def test_opencode_bridged_tools() -> None:
     check_bridged_tools(
         "opencode", "anthropic/claude-sonnet-4-0", "secrets_secret_lookup"
@@ -42,7 +50,7 @@ def test_opencode_bridged_tools() -> None:
 
 
 def check_bridged_tools(
-    agent: Literal["claude_code", "codex_cli", "gemini_cli", "opencode"],
+    agent: Literal["claude_code", "codex_cli", "gemini_cli", "kimi_code", "opencode"],
     model: str,
     expected_tool_name: str,
 ) -> None:

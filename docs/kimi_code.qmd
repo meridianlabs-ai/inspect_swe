@@ -1,0 +1,70 @@
+---
+title: Kimi Code
+agent: kimi_code
+agent_provider: "Moonshot AI"
+agent_name: "Kimi Code"
+agent_url: "https://github.com/MoonshotAI/kimi-code"
+agent_disallowed_tool: "WebFetch"
+---
+
+{{< include _snippets/agent_intro.md >}}
+
+## Options
+
+The following options are supported for customizing the behavior of the agent:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Additional system prompt to append to default system prompt. |
+| `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
+| `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
+| `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
+| `centaur` | Run in [Centaur Mode](#centaur-mode), which makes {{< meta agent_name >}} available to an Inspect `human_cli()` agent rather than running it unattended. |
+| `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
+| `model` | Model name to use for agent (defaults to main model for task). |
+| `max_context_size` | Context window to configure for Kimi. Defaults to the bridged model's context length from Inspect model metadata; required when that metadata is unavailable. |
+| `filter` | Filter for intercepting bridged model requests. |
+| `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
+| `disallowed_tools` | Tool names to deny via {{< meta agent_name >}} permission rules. |
+| `cwd` | Working directory for {{< meta agent_name >}} session. |
+| `env` | Environment variables to set for {{< meta agent_name >}}. |
+| `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |
+
+: {tbl-colwidths=\[25,75\]}
+
+For example, here we specify a custom system prompt:
+
+```python
+{{< meta agent >}}(
+    system_prompt="You are an ace system researcher."
+)
+```
+
+{{< include _snippets/agent_mcp_servers.md >}}
+
+{{< include _snippets/agent_bridged_tools.md >}}
+
+## Tool Repetition Reminders
+
+The {{< meta agent_name >}} CLI appends escalating `<system-reminder>` notes to tool results when it detects the same tool call repeated several times in a row. Since re-polling an identical read-only command is often legitimate in long-running tasks (e.g. waiting for a build to finish), the `kimi_code()` agent strips the first two escalation tiers of these reminders before the bridged model sees them (so they also don't appear in the transcript). The final tier — which instructs the model to write its final response, and precedes {{< meta agent_name >}} force-stopping the turn at 12 repetitions — is passed through unchanged so the model can wrap up gracefully.
+
+## Installation
+
+{{< meta agent_name >}} publishes glibc-only Linux binaries, and the agent runs them via `bash`, so sandbox images must provide glibc and bash (e.g. Debian/Ubuntu based images). musl-based images such as Alpine are not supported and fail at binary resolution time.
+
+By default, the agent will download the current latest version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `"auto"` | Use any available version of {{< meta agent_name >}} in the sandbox, otherwise download the latest version. |
+| `"sandbox"` | Use the version of {{< meta agent_name >}} in the sandbox (raises `RuntimeError` if not available in the sandbox) |
+| `"latest"` | Download and use the very latest version. |
+| `"x.x.x"` | Download and use a specific version number. |
+
+: {tbl-colwidths=\[25,75\]}
+
+{{< include _snippets/agent_installation.md >}}
+
+{{< include _snippets/agent_centaur.md >}}
+
+{{< include _snippets/agent_troubleshooting.md >}}
