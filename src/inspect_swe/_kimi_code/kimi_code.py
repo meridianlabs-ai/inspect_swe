@@ -398,7 +398,10 @@ def _strip_repeat_reminders(
                 for item in message.content
             ]
             cleaned.append(message.model_copy(update={"content": new_content}))
-    return cleaned, True
+    # AgentBridge tracks the original input list after generation, so update it
+    # in place to keep reminders out of both model input and returned state.
+    messages[:] = cleaned
+    return messages, True
 
 
 _DEDUPE_SUFFIX_RE = re.compile(r"__u\d+$")

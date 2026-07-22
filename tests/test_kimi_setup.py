@@ -332,6 +332,7 @@ def test_strip_repeat_reminders_removes_nag_and_keeps_pairing() -> None:
         ]
         cleaned, changed = _strip_repeat_reminders(messages)
         assert changed is True
+        assert cleaned is messages
         assert all("<system-reminder>" not in m.text for m in cleaned)
         # tool/user messages preserved (pairing intact), user text retained
         assert len(cleaned) == 3
