@@ -25,11 +25,11 @@ from inspect_ai.model import (
     ContentText,
     GenerateConfig,
     GenerateFilter,
+    GenerateInput,
     Model,
     ModelOutput,
     get_model_info,
 )
-from inspect_ai.model._model import GenerateInput
 from inspect_ai.scorer import score
 from inspect_ai.tool import (
     MCPServerConfig,
