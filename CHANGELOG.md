@@ -13,7 +13,6 @@
 - Claude Code: Handle Anthropic refusals gracefully — a content-filter refusal now scores the sample as incorrect and continues the eval (matching native Inspect solvers) instead of raising an error that aborts the run.
 - Gemini CLI (ACP): Register bridged tools and MCP servers with the CLI (write `settings.json` and pass `--allowed-mcp-server-names`) so host-side tools are available to the agent.
 - All agents: When no `cwd` is specified and the sandbox's default working directory is `/` (i.e. the image has no `WORKDIR`), run the agent in the user's home directory instead of the container root.
-- Kimi Code: Add `kimi_code()` agent for Moonshot AI's [Kimi Code](https://github.com/MoonshotAI/kimi-code) CLI, running headless in a sandbox with Inspect model bridging and native MCP. Supports binary download (`version` "auto"/"sandbox"/"latest"/"x.x.x"), skills, bridged tools, centaur mode, and multiple attempts.
 
 ## 0.2.63 (10 June 2026)
 
