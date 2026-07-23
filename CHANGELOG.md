@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.67](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.66...0.2.67) (2026-07-23)
+
+
+### Features
+
+* **kimi:** add `kimi_code()` agent with Inspect bridging, MCP, skills, and Centaur support ([#73](https://github.com/meridianlabs-ai/inspect_swe/issues/73)) ([7fca27f](https://github.com/meridianlabs-ai/inspect_swe/commit/7fca27f4481a02e39122efd0fd98b306274251bb))
+
 ## [0.2.66](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.65...0.2.66) (2026-07-14)
 
 
