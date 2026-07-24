@@ -8,9 +8,9 @@ trimmed snapshot of the fields the resolver reads
 (``slug``/``priority``/``apply_patch_tool_type``/``supports_search_tool``) is
 sufficient.
 
-Snapshot source: ``openai/codex`` ``codex-rs/models-manager/models.json`` (main,
-June 2026). Refresh when bumping the default Codex version; the live fetch keeps
-this exact when ``raw.githubusercontent.com`` is reachable.
+Snapshot source: ``openai/codex`` ``codex-rs/models-manager/models.json``
+(``rust-v0.145.0``, July 2026). Refresh when bumping the default Codex version;
+the live fetch keeps this exact when ``raw.githubusercontent.com`` is reachable.
 """
 
 from typing import Any
@@ -18,38 +18,50 @@ from typing import Any
 BUNDLED_CODEX_CATALOG: dict[str, Any] = {
     "models": [
         {
-            "slug": "gpt-5.5",
-            "priority": 0,
+            "slug": "gpt-5.6-sol",
+            "priority": 1,
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
         },
         {
-            "slug": "gpt-5.4",
+            "slug": "gpt-5.6-terra",
             "priority": 2,
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
         },
         {
-            "slug": "gpt-5.4-mini",
-            "priority": 4,
+            "slug": "gpt-5.6-luna",
+            "priority": 3,
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
         },
         {
-            "slug": "gpt-5.3-codex",
-            "priority": 6,
+            "slug": "gpt-5.5",
+            "priority": 7,
+            "apply_patch_tool_type": "freeform",
+            "supports_search_tool": True,
+        },
+        {
+            "slug": "gpt-5.4",
+            "priority": 16,
+            "apply_patch_tool_type": "freeform",
+            "supports_search_tool": True,
+        },
+        {
+            "slug": "gpt-5.4-mini",
+            "priority": 23,
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
         },
         {
             "slug": "gpt-5.2",
-            "priority": 10,
+            "priority": 29,
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
         },
         {
             "slug": "codex-auto-review",
-            "priority": 29,
+            "priority": 43,
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
         },
