@@ -5,7 +5,7 @@ from inspect_ai.agent import BridgedToolsSpec
 from inspect_ai.dataset import Sample
 from inspect_ai.tool import Tool, tool
 from inspect_ai.util import SandboxEnvironmentType
-from inspect_swe import claude_code, codex_cli, gemini_cli, opencode
+from inspect_swe import claude_code, codex_cli, gemini_cli, kimi_code, opencode
 
 
 @tool
@@ -29,7 +29,7 @@ def secret_lookup() -> Tool:
 @task
 def bridged_tools_test(
     agent: Literal[
-        "claude_code", "codex_cli", "gemini_cli", "opencode"
+        "claude_code", "codex_cli", "gemini_cli", "kimi_code", "opencode"
     ] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
@@ -50,6 +50,8 @@ def bridged_tools_test(
             solver = gemini_cli(
                 system_prompt=system_prompt, bridged_tools=bridged_tools
             )
+        case "kimi_code":
+            solver = kimi_code(system_prompt=system_prompt, bridged_tools=bridged_tools)
         case "opencode":
             solver = opencode(system_prompt=system_prompt, bridged_tools=bridged_tools)
 

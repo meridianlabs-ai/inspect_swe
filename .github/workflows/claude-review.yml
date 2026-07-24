@@ -1,0 +1,57 @@
+# Copy to .github/workflows/claude-review.yml in any Meridian repo to add the
+# read-only reviewer. Auto-reviews PRs when they open (drafts are skipped
+# until marked ready for review) and on demand via an @review comment.
+# Independent of the dev agent (claude.yml) — different trigger, different
+# (lower) permissions.
+#
+# Caveat: auto-review-on-open (the pull_request trigger) only fires where this
+# file exists on the PR's BASE branch — GitHub resolves pull_request-family
+# workflows from the PR's branches, not the default branch. On a pristine-base
+# mirror like the inspect_ai fork, PRs target a base that lacks this workflow,
+# so pull_request never fires; only the @review comment path works there, and
+# auto-review is instead driven by the dev agent posting @review on PR open.
+#
+# Caveat: PRs from forks are skipped by auto-review. GitHub issues no OIDC
+# token and only a read-only GITHUB_TOKEN to pull_request runs from forks, so
+# the job — which requests id-token: write for WIF auth — fails at startup.
+# A maintainer can still review a fork PR with an @review comment, which runs
+# as issue_comment in the base-repo context with full token access.
+
+name: Review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+jobs:
+  review:
+    # Run on PR events (skipping drafts — they get reviewed via
+    # ready_for_review when marked ready — and fork PRs, which get no OIDC
+    # token so the run would die at startup on id-token: write; the full_name
+    # check, not head.repo.fork, keeps same-repo PRs working on repos that are
+    # themselves forks), or on a PR comment containing @review. An explicit
+    # @review still works on a draft and on a fork PR. `@review` does not
+    # collide with the dev agent's `@claude` trigger.
+    if: >
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.draft != true &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '@review')) ||
+      (github.event.issue.pull_request == null &&
+       contains(github.event.issue.labels.*.name, 'External') &&
+       contains(github.event.comment.body, '@review'))
+    uses: meridianlabs-ai/agents/.github/workflows/claude-review.yml@main
+    # Machine-account PAT for the deterministic ack/stage steps only (eyes
+    # reaction + board stage); never handed to the review agent, which stays
+    # read-only. Absent -> those steps no-op.
+    secrets:
+      MARVIN_TOKEN: ${{ secrets.MARVIN_TOKEN }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+      actions: read
