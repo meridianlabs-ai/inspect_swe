@@ -51,3 +51,25 @@ def codex_cli_config_overrides(
         "web_search": f'"{web_search}"',
         "features.goals": "true" if goals else "false",
     }
+
+
+def codex_mcp_server_toml(
+    mcp_server_dump: dict[str, Any], approval_policy: str
+) -> dict[str, Any]:
+    """Build one `[mcp_servers.<name>]` TOML table for a bridged/static MCP server.
+
+    MCP tool calls have their OWN approval gate
+    (`default_tools_approval_mode`, one of "prompt"/"writes"/"auto"/"approve"),
+    separate from the top-level `approval_policy`: with `approval_policy="never"`
+    alone, write-type MCP tool calls (e.g. an `edit_file` call) are auto-denied
+    ("user cancelled MCP tool call") rather than run, because headless
+    `codex exec` has no way to answer the resulting approval prompt. "auto" is
+    NOT sufficient either (confirmed empirically: same auto-denial) -- only
+    "approve" actually skips the gate. When `approval_policy` is `"never"`, set
+    the per-server gate to `"approve"` so it doesn't silently override the
+    caller's intent.
+    """
+    mcp_server_toml = dict(mcp_server_dump)
+    if approval_policy == "never":
+        mcp_server_toml["default_tools_approval_mode"] = "approve"
+    return mcp_server_toml

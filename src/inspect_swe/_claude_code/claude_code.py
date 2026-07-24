@@ -71,7 +71,7 @@ def claude_code(
     haiku_model: str | None = None,
     subagent_model: str | None = None,
     filter: GenerateFilter | None = None,
-    auto_mode: bool = False,
+    permission_mode: str | None = None,
     retry_refusals: int | None = 3,
     retry_uncaught_errors: int | None = 3,
     cwd: str | None = None,
@@ -121,7 +121,12 @@ def claude_code(
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
         subagent_model: The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`.
         filter: Filter for intercepting bridged model requests.
-        auto_mode: Use `auto` permission mode rather than `--dangerously-skip-permissions`. Note that this can result in rejected tool calls so only enable if your evaluation can tolerate this.
+        permission_mode: Run under this Claude Code `--permission-mode`
+            (e.g. `"acceptEdits"`, `"auto"`, `"plan"`) instead of
+            `--dangerously-skip-permissions`. Note this can result in rejected
+            tool calls so only set if your evaluation can tolerate this; bridged
+            MCP tools still need `--allowed-tools` to be usable at all under any
+            non-bypass mode (handled automatically -- see `resolve_mcp_servers`).
         retry_refusals: Should refusals be retried? Defaults to retrying up to 3 times.
         retry_uncaught_errors: Should uncaught errors (unexpected crashes of Claude Code) be retried. Defaults to retrying up to 3 times.
         cwd: Working directory to run claude code within.
@@ -211,11 +216,11 @@ def claude_code(
                 claude_code_binary_source(), version, user, sandbox_env(sandbox)
             )
 
-            # base options — auto_mode uses --permission-mode auto (monitor active);
-            # otherwise --dangerously-skip-permissions (no permission gating).
+            # base options — permission_mode runs Claude's own gating for that
+            # mode; otherwise --dangerously-skip-permissions (no gating at all).
             permission_flag = (
-                ["--permission-mode", "auto"]
-                if auto_mode
+                ["--permission-mode", permission_mode]
+                if permission_mode is not None
                 else ["--dangerously-skip-permissions"]
             )
             cmd = [
@@ -509,7 +514,7 @@ def resolve_mcp_servers(
             exclude={"name", "tools"}, exclude_none=True
         )
         if mcp_server.tools == "all":
-            allowed_tools.append(f"mcp__{mcp_server.name}_*")
+            allowed_tools.append(f"mcp__{mcp_server.name}__*")
         elif isinstance(mcp_server.tools, list):
             allowed_tools.extend(
                 [f"mcp__{mcp_server.name}__{tool}" for tool in mcp_server.tools]
