@@ -32,6 +32,7 @@ from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
 
 from .agentbinary import ensure_codex_acp_setup
+from .rollout import RolloutSpec
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class CodexCli(ACPAgent):
         skills: list[str | Path | Skill] | None = None,
         home_dir: str | None = None,
         config_overrides: dict[str, str] | None = None,
+        resume_rollout: RolloutSpec | None = None,
         **kwargs: Unpack[CodexACPAgentParams],
     ) -> None:
         deprecated_args = cast(dict[str, Any], kwargs)
@@ -66,6 +68,22 @@ class CodexCli(ACPAgent):
         self._resolved_skills = read_skills(skills) if skills else None
         self._home_dir = home_dir
         self._config_overrides = config_overrides or {}
+        # Resume: writing the synthetic rollout is deferred to _prepare_resume
+        # (needs the sandbox + resolved CODEX_HOME); set resume_session_id so the
+        # base class loads it instead of creating a new session. Codex resume is
+        # driven entirely by resume_rollout (it carries the session id AND the
+        # content to materialize on disk), so a caller-supplied resume_session_id
+        # is always wrong — reject it rather than ignore or silently override it.
+        if deprecated_args.get("resume_session_id") is not None:
+            raise ValueError(
+                "Codex resume is driven by `resume_rollout`, not `resume_session_id`: "
+                "pass `resume_rollout=build_rollout(...)` (it carries the session id "
+                "and the content codex needs to materialize the session on disk)."
+            )
+        self._resume_rollout = resume_rollout
+        self._codex_home: str | None = None
+        if resume_rollout is not None:
+            kwargs["resume_session_id"] = resume_rollout.session_id
         super().__init__(**cast(ACPAgentParams, kwargs))
 
     @asynccontextmanager
@@ -108,6 +126,8 @@ class CodexCli(ACPAgent):
                     cwd=self.cwd,
                 )
             await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=self.user)
+            # Stash for _prepare_resume (base class calls it after this yields).
+            self._codex_home = codex_home
 
             # Write system prompt to AGENTS.md (Codex convention).
             resolved_prompt = self._resolve_system_prompt(state)
@@ -188,6 +208,44 @@ class CodexCli(ACPAgent):
         await sandbox_exec(sbox, cmd=f"mkdir -p {directory}", user=self.user)
         return join_path(directory, "config.toml")
 
+    async def _prepare_resume(self, session_id: str) -> None:
+        """Write the synthetic rollout into the sandbox so ``load_session`` finds it.
+
+        Codex resolves a resumed session by reading
+        ``$CODEX_HOME/sessions/.../rollout-<id>.jsonl`` off disk, so the rollout
+        must exist before the base class issues ``session/load``. ``_start_agent``
+        has already resolved and created ``CODEX_HOME`` by the time this runs.
+
+        Note: the rollout's ``model`` must match this agent's resolved model, or
+        codex splices a ``<model_switch>`` banner into the resumed conversation.
+        """
+        if self._resume_rollout is None or self._codex_home is None:
+            raise RuntimeError(
+                "CodexCli._prepare_resume invoked without a resume rollout or "
+                "before _start_agent resolved CODEX_HOME"
+            )
+        rollout_model = self._resume_rollout.model
+        resolved_model = get_model(self.model).canonical_name()
+        # Compare provider-tolerantly: the rollout records a bare model name
+        # while canonical_name() may be provider-qualified ("openai/gpt-5.5").
+        if rollout_model not in (resolved_model, resolved_model.rsplit("/", 1)[-1]):
+            logger.warning(
+                "Resume rollout model (%s) differs from this agent's model (%s); "
+                "codex will splice a <model_switch> banner into the resumed "
+                "conversation. Build the rollout with model=%r to avoid it.",
+                rollout_model,
+                resolved_model,
+                resolved_model,
+            )
+        sbox = sandbox_env(self.sandbox)
+        rollout_path = join_path(self._codex_home, self._resume_rollout.relative_path)
+        await sbox.write_file(rollout_path, self._resume_rollout.content)
+        logger.info(
+            "Wrote synthetic codex rollout to %s (session_id=%s)",
+            rollout_path,
+            session_id,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -203,6 +261,7 @@ def interactive_codex_cli(
     skills: list[str | Path | Skill] | None = None,
     home_dir: str | None = None,
     config_overrides: dict[str, str] | None = None,
+    resume_rollout: RolloutSpec | None = None,
     # Forwarded to ACPAgent
     **kwargs: Unpack[CodexACPAgentParams],
 ) -> ACPAgent:
@@ -217,6 +276,10 @@ def interactive_codex_cli(
         skills: Additional skills to make available.
         home_dir: Override for ``CODEX_HOME`` directory in the sandbox.
         config_overrides: Extra Codex config.toml key-value pairs.
+        resume_rollout: Resume from a prior session instead of starting fresh.
+            Build it with :func:`build_rollout` (its ``model`` must match this
+            agent's model); the synthetic rollout is written into the sandbox's
+            ``CODEX_HOME`` and loaded via ACP ``session/load``.
         **kwargs: See :class:`ACPAgentParams` for all base options.
     """
     return CodexCli(
@@ -225,5 +288,6 @@ def interactive_codex_cli(
         skills=skills,
         home_dir=home_dir,
         config_overrides=config_overrides,
+        resume_rollout=resume_rollout,
         **kwargs,
     )
