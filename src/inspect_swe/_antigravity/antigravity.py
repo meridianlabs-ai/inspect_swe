@@ -14,7 +14,16 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
+from inspect_ai.model import (
+    ChatMessage,
+    ChatMessageSystem,
+    GenerateConfig,
+    GenerateFilter,
+    GenerateInput,
+    Model,
+    ModelOutput,
+)
+from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.tool import MCPServerConfig
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_ai.util import sandbox as sandbox_env
@@ -54,6 +63,49 @@ _BRIDGE_PORT_KEY: Final = "antigravity_bridge_port"
 # base_url, so the value is never used for auth. A DUMMY keeps the real host
 # credential out of the sandbox (only-dummy-creds-in-sandbox invariant).
 _SANDBOX_DUMMY_API_KEY: Final = "inspect-bridge-unused"
+
+
+# localharness advertises engine builtin tools (list_resources, read_resource,
+# manage_task, schedule) in EVERY generateContent request. They are not members
+# of the SDK's BuiltinTools enum, and no CapabilitiesConfig / McpServerConfig /
+# policy knob removes them from the DECLARATION (policy.deny_all() gates execution
+# only). To keep the agent hermetic -- only the environment's tools, reached via
+# the call_mcp_tool dispatcher -- strip the model's tool declaration to this
+# allow-list before it reaches the model (the analog of the claude_code/codex CLIs'
+# --disallowed-tools), via Inspect's GenerateFilter hook. Agent-scoped; no change
+# to the shared bridge.
+_ALLOWED_TOOL_NAMES: Final = frozenset({"call_mcp_tool"})
+
+
+def _confine_declared_tools(user_filter: GenerateFilter | None) -> GenerateFilter:
+    """Wrap any user filter so the model is only ever offered the allow-listed tools."""
+
+    async def _filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        eff = (messages, tools, tool_choice, config)
+        if user_filter is not None:
+            result = await user_filter(model, messages, tools, tool_choice, config)  # type: ignore[arg-type]
+            if isinstance(result, ModelOutput):
+                return result
+            if result is not None:
+                eff = (result.input, result.tools, result.tool_choice, result.config)
+        eff_messages, eff_tools, eff_choice, eff_config = eff
+        confined = [tool for tool in eff_tools if tool.name in _ALLOWED_TOOL_NAMES]
+        if user_filter is None and len(confined) == len(eff_tools):
+            return None
+        return GenerateInput(
+            input=eff_messages,
+            tools=confined,
+            tool_choice=eff_choice,
+            config=eff_config,
+        )
+
+    return _filter
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +204,7 @@ def antigravity(
             state,
             model=bridge_model,
             model_aliases=model_aliases,
-            filter=filter,
+            filter=_confine_declared_tools(filter),
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=bridge_port,
