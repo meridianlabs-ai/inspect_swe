@@ -16,17 +16,42 @@ Build a :class:`RolloutSpec` with :func:`build_rollout`, then write
 ``spec.content`` to ``<codex_home>/<spec.relative_path>`` — inside a sandbox
 via ``sandbox.write_file`` (see ``CodexCli`` resume), or on the host via
 :meth:`RolloutSpec.write_to`.
+
+``build_rollout`` takes either a list of Inspect ``ChatMessage`` (the ergonomic
+form — most callers already have messages) or a list of :data:`PriorItem` (the
+codex-native form). ``ChatMessage`` is a lossy input for a few codex constructs,
+so the typed items remain available as the full-fidelity layer; see
+:func:`prior_from_messages` for what does not survive the conversion.
 """
 
 from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
+from inspect_ai.model import (
+    ChatMessage,
+    ChatMessageAssistant,
+    ChatMessageSystem,
+    ChatMessageTool,
+    ChatMessageUser,
+    Content,
+    ContentImage,
+    ContentReasoning,
+    ContentText,
+)
+from inspect_ai.tool import ToolCall
 from pydantic import BaseModel, Field, ValidationError
+
+# Key under which Inspect's OpenAI Responses provider stashes the reasoning
+# ciphertext for non-redacted reasoning (mirrors the private
+# `inspect_ai.model._openai_responses.REASONING_ENCRYPTED_CONTENT`; importing it
+# would pull the `openai` SDK into a runtime path where it isn't a dependency).
+_REASONING_ENCRYPTED_CONTENT = "reasoning_encrypted_content"
 
 
 class UserText(BaseModel):
@@ -167,11 +192,22 @@ class ParsedRollout(BaseModel):
     cli_version: str
     prior: list[PriorItem]
 
+    def as_messages(self) -> list[ChatMessage]:
+        """This rollout as Inspect ``ChatMessage``, for reading and scoring.
+
+        Convenience wrapper around :func:`messages_from_prior`. To *resume* from
+        a rollout, pass ``prior`` back to :func:`build_rollout` rather than
+        round-tripping through messages — the item form is lossless, messages
+        are not (see :func:`messages_from_prior`). ``base_instructions`` is
+        codex's own system prompt and is not included.
+        """
+        return messages_from_prior(self.prior)
+
 
 def build_rollout(
     *,
     cwd: str,
-    prior: list[PriorItem],
+    prior: Sequence[PriorItem] | Sequence[ChatMessage],
     model: str,
     base_instructions: str = _CODEX_BASE_INSTRUCTIONS,
     cli_version: str = "0.130.0",
@@ -186,10 +222,15 @@ def build_rollout(
     a sandboxed codex), after which ``load_session(session_id=spec.session_id)``
     resumes from this prior. For host-fs writes use :func:`synthesize_rollout`.
 
+    ``prior`` is either Inspect ``ChatMessage`` (converted via
+    :func:`prior_from_messages`) or codex-native :data:`PriorItem` — all of one
+    or all of the other, not a mix.
+
     ``model`` is required and must match the model the resuming agent serves —
     a mismatch makes codex splice a ``<model_switch>`` banner into the resumed
     conversation (when resuming a parsed rollout, pass ``parsed.model``).
     """
+    prior_items = _as_prior_items(prior)
     now = timestamp or datetime.now(UTC)
     session_id = str(uuid.uuid4())
     ts_str = now.strftime("%Y-%m-%dT%H-%M-%S")
@@ -222,7 +263,7 @@ def build_rollout(
             "payload": _make_turn_context(cwd=cwd, model=model, current_date=now),
         },
     ]
-    for item in prior:
+    for item in prior_items:
         rows.append(
             {
                 "timestamp": ts_iso,
@@ -243,7 +284,7 @@ def build_rollout(
 def synthesize_rollout(
     *,
     cwd: str,
-    prior: list[PriorItem],
+    prior: Sequence[PriorItem] | Sequence[ChatMessage],
     codex_home: Path,
     model: str,
     base_instructions: str = _CODEX_BASE_INSTRUCTIONS,
@@ -312,6 +353,262 @@ def parse_rollout(content: str) -> ParsedRollout:
         cli_version=meta.get("cli_version") or "0.130.0",
         prior=prior,
     )
+
+
+# ---------------------------------------------------------------------------
+# ChatMessage <-> PriorItem
+#
+# Codex rollout ``response_item`` payloads are OpenAI Responses API items, so
+# this is the same mapping Inspect's OpenAI Responses provider performs — done
+# here rather than imported from it because that module imports the `openai`
+# SDK, which inspect_swe does not depend on at runtime.
+# ---------------------------------------------------------------------------
+
+
+def prior_from_messages(messages: Sequence[ChatMessage]) -> list[PriorItem]:
+    """Convert Inspect messages into codex prior items.
+
+    The ergonomic way to build a prior, and lossy in ways the typed items are
+    not:
+
+    - tool-call arguments are re-serialized from ``ToolCall.arguments`` (a dict),
+      so a rollout built this way won't be byte-identical to codex's own;
+    - codex ``custom_tool_call`` items (``apply_patch``) take free-form text
+      rather than JSON arguments and have no ``ToolCall`` representation, so
+      they can only be expressed as :class:`CustomToolCall`;
+    - rows codex writes that Inspect has no equivalent for (``web_search_call``,
+      ``tool_search_call``) can only be expressed as :class:`RawResponseItem`.
+
+    Reasoning is carried across in full: plaintext into ``text``, the ciphertext
+    Inspect stashes for signed reasoning into ``encrypted_content``, and a
+    redacted block as ``text=""`` plus its ciphertext (exactly how codex
+    persists reasoning whose plaintext the backend withheld).
+
+    Raises ``ValueError`` on content with no codex equivalent (audio, video)
+    rather than dropping it silently.
+    """
+    prior: list[PriorItem] = []
+    for message in messages:
+        if isinstance(message, ChatMessageSystem):
+            prior.append(DeveloperText(text=message.text))
+        elif isinstance(message, ChatMessageUser):
+            prior.extend(_user_items(message))
+        elif isinstance(message, ChatMessageAssistant):
+            prior.extend(_assistant_items(message))
+        elif isinstance(message, ChatMessageTool):
+            # codex has no error flag on a call output; fold the error text in.
+            output = message.error.message if message.error else message.text
+            prior.append(
+                FunctionCallOutput(call_id=message.tool_call_id or "", output=output)
+            )
+    return prior
+
+
+def messages_from_prior(prior: Sequence[PriorItem]) -> list[ChatMessage]:
+    """Convert codex prior items into Inspect messages, for reading and scoring.
+
+    Not a lossless inverse of :func:`prior_from_messages` — resume from the
+    items, not from these messages. Specifically: consecutive assistant-side
+    items (reasoning, text, tool calls) are folded into one
+    ``ChatMessageAssistant``; ``custom_tool_call`` text is wrapped as
+    ``{"input": ...}`` because ``ToolCall.arguments`` is a dict; a call output
+    that codex stored as content blocks is JSON-encoded into the message text;
+    and :class:`RawResponseItem` rows are dropped (there is nothing to map them
+    to).
+    """
+    messages: list[ChatMessage] = []
+    content: list[Content] = []
+    tool_calls: list[ToolCall] = []
+    # function name per call_id, so a tool result can name the tool it answers
+    call_names: dict[str, str] = {}
+
+    def flush_assistant() -> None:
+        if content or tool_calls:
+            messages.append(
+                ChatMessageAssistant(
+                    content=list(content), tool_calls=list(tool_calls) or None
+                )
+            )
+            content.clear()
+            tool_calls.clear()
+
+    for item in prior:
+        if isinstance(item, UserText):
+            flush_assistant()
+            messages.append(ChatMessageUser(content=item.text))
+        elif isinstance(item, DeveloperText):
+            flush_assistant()
+            messages.append(ChatMessageSystem(content=item.text))
+        elif isinstance(item, AssistantText):
+            content.append(ContentText(text=item.text))
+        elif isinstance(item, Reasoning):
+            content.append(_reasoning_content(item))
+        elif isinstance(item, FunctionCall):
+            call_names[item.call_id] = item.name
+            tool_calls.append(_tool_call(item))
+        elif isinstance(item, CustomToolCall):
+            call_names[item.call_id] = item.name
+            tool_calls.append(
+                ToolCall(
+                    id=item.call_id,
+                    function=item.name,
+                    arguments={"input": item.input},
+                )
+            )
+        elif isinstance(item, FunctionCallOutput | CustomToolCallOutput):
+            flush_assistant()
+            messages.append(
+                ChatMessageTool(
+                    content=item.output
+                    if isinstance(item.output, str)
+                    else json.dumps(item.output),
+                    tool_call_id=item.call_id,
+                    function=call_names.get(item.call_id),
+                )
+            )
+        else:
+            flush_assistant()  # RawResponseItem: no ChatMessage equivalent
+
+    flush_assistant()
+    return messages
+
+
+def _as_prior_items(
+    prior: Sequence[PriorItem] | Sequence[ChatMessage],
+) -> list[PriorItem]:
+    items = list(prior)
+    message_types = ChatMessageSystem | ChatMessageUser | ChatMessageAssistant
+    is_message = [isinstance(i, message_types | ChatMessageTool) for i in items]
+    if not any(is_message):
+        return cast(list[PriorItem], items)
+    if not all(is_message):
+        raise ValueError(
+            "`prior` must be all ChatMessage or all PriorItem, not a mix of both."
+        )
+    return prior_from_messages(cast(Sequence[ChatMessage], items))
+
+
+def _user_items(message: ChatMessageUser) -> list[PriorItem]:
+    if isinstance(message.content, str):
+        return [UserText(text=message.content)]
+    items: list[PriorItem] = []
+    text_parts: list[str] = []
+
+    def flush_text() -> None:
+        if text_parts:
+            items.append(UserText(text="".join(text_parts)))
+            text_parts.clear()
+
+    for block in message.content:
+        if isinstance(block, ContentText):
+            text_parts.append(block.text)
+        elif isinstance(block, ContentImage):
+            # Codex models images as an input_image block on a user message; we
+            # don't model that shape, so emit the payload verbatim.
+            flush_text()
+            items.append(
+                RawResponseItem(
+                    payload={
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_image",
+                                "image_url": block.image,
+                                "detail": block.detail,
+                            }
+                        ],
+                    }
+                )
+            )
+        else:
+            raise ValueError(
+                f"prior_from_messages: user content of type {block.type!r} has no "
+                f"codex rollout equivalent; pass a RawResponseItem instead."
+            )
+    flush_text()
+    return items
+
+
+def _assistant_items(message: ChatMessageAssistant) -> list[PriorItem]:
+    blocks: list[Content] = (
+        [ContentText(text=message.content)]
+        if isinstance(message.content, str)
+        else list(message.content)
+    )
+    items: list[PriorItem] = []
+    for block in blocks:
+        if isinstance(block, ContentReasoning):
+            items.append(_reasoning_item(block))
+        elif isinstance(block, ContentText):
+            # An empty text block is what Inspect emits alongside tool calls;
+            # codex has no row for it.
+            if block.text:
+                items.append(AssistantText(text=block.text))
+        else:
+            raise ValueError(
+                f"prior_from_messages: assistant content of type {block.type!r} has "
+                f"no codex rollout equivalent; pass a RawResponseItem instead."
+            )
+    for tool_call in message.tool_calls or []:
+        items.append(
+            FunctionCall(
+                name=tool_call.function,
+                arguments=json.dumps(tool_call.arguments),
+                call_id=tool_call.id,
+            )
+        )
+    return items
+
+
+def _reasoning_item(block: ContentReasoning) -> Reasoning:
+    if block.redacted:
+        # Inspect keeps the ciphertext in `reasoning` when the plaintext was
+        # withheld; codex keeps it in `encrypted_content` with no plaintext.
+        return Reasoning(
+            text="", summary=block.summary, encrypted_content=block.reasoning
+        )
+    encrypted = (
+        block.internal.get(_REASONING_ENCRYPTED_CONTENT)
+        if isinstance(block.internal, dict)
+        else None
+    )
+    return Reasoning(
+        text=block.reasoning,
+        summary=block.summary,
+        encrypted_content=encrypted if isinstance(encrypted, str) else None,
+    )
+
+
+def _reasoning_content(item: Reasoning) -> ContentReasoning:
+    if not item.text and item.encrypted_content is not None:
+        return ContentReasoning(
+            reasoning=item.encrypted_content, summary=item.summary, redacted=True
+        )
+    return ContentReasoning(
+        reasoning=item.text,
+        summary=item.summary,
+        internal={_REASONING_ENCRYPTED_CONTENT: item.encrypted_content}
+        if item.encrypted_content is not None
+        else None,
+    )
+
+
+def _tool_call(item: FunctionCall) -> ToolCall:
+    try:
+        arguments = json.loads(item.arguments)
+    except json.JSONDecodeError as ex:
+        return ToolCall(
+            id=item.call_id, function=item.name, arguments={}, parse_error=str(ex)
+        )
+    if not isinstance(arguments, dict):
+        return ToolCall(
+            id=item.call_id,
+            function=item.name,
+            arguments={},
+            parse_error=f"arguments are {type(arguments).__name__}, not an object",
+        )
+    return ToolCall(id=item.call_id, function=item.name, arguments=arguments)
 
 
 def _payload_to_item(payload: dict[str, Any]) -> PriorItem:

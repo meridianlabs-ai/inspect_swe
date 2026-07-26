@@ -15,7 +15,9 @@ from .rollout import (
     RolloutSpec,
     UserText,
     build_rollout,
+    messages_from_prior,
     parse_rollout,
+    prior_from_messages,
     synthesize_rollout,
 )
 
@@ -29,6 +31,10 @@ __all__ = [
     "RolloutSpec",
     "ParsedRollout",
     "PriorItem",
+    # ChatMessage conversion (build_rollout takes messages directly; these are
+    # for callers that want the items, or messages back out of a parsed rollout).
+    "prior_from_messages",
+    "messages_from_prior",
     # Prior-item types (construct a synthetic prior by hand).
     "UserText",
     "AssistantText",
