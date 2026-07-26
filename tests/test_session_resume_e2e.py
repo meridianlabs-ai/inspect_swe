@@ -2,13 +2,12 @@
 
 Two tiers, because they fail for different reasons and cost different amounts:
 
-1. **Load tier** (docker only, no model call). Starts the agent, waits for the
-   ACP session to open, and then inspects the sandbox: the synthesized session
-   file has to be exactly where the CLI looks for it, and the CLI process has to
-   have been launched resuming it. This is where the things that actually break
-   live — the on-disk path (config dir, cwd slug, symlink resolution), the
-   serialized content, and whether ``session/load`` accepted it at all (if it
-   didn't, ``ready`` never fires and the test times out).
+1. **Load tier** (docker only, no model call). Starts the agent and inspects the
+   sandbox: the synthesized session file has to be exactly where the CLI reads
+   it, carry the prior, and the CLI the adapter spawns has to be launched
+   resuming that session. This is where the things that actually break live —
+   the on-disk path (config dir, cwd slug, symlink resolution), the serialized
+   content, and the resume flags derived from the session options.
 
 2. **Turn tier** (docker + a working model, ``--runapi``). Sends one prompt and
    checks the planted prior shows up in what the CLI sends upstream, and that
@@ -72,12 +71,17 @@ PROBE_KEY = "resume_probe"
 
 @solver
 def open_session_and_probe(agent_factory: Any, session_glob: str) -> Solver:
-    """Open the ACP session, then record what the sandbox looks like.
+    """Start the agent, then record what resuming actually put in the sandbox.
 
     ``ACPAgent.__call__`` blocks until cancelled, so it runs in a task group that
-    is cancelled as soon as the session is up. Reaching ``ready`` at all means
-    ``session/load`` succeeded; the probe then captures the on-disk session file
-    and the resumed CLI's own command line.
+    is cancelled once the probe is taken.
+
+    The probe polls rather than waiting for ``agent.ready``, because ready only
+    fires once ``session/load`` has returned — which the CLI does not reach
+    without a model handshake it can complete. Polling keeps the assertion on
+    the part this feature owns: the session file we synthesized, at the path the
+    CLI reads, with the CLI launched against it. ``session_loaded`` records
+    whether the ACP session also opened, for environments where it can.
     """
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -85,15 +89,25 @@ def open_session_and_probe(agent_factory: Any, session_glob: str) -> Solver:
         agent_state = AgentState(messages=[])
         async with anyio.create_task_group() as tg:
             tg.start_soon(agent, agent_state)
-            with anyio.fail_after(420):
-                await agent.ready.wait()
             sbox = sandbox_env()
-            # `ps -eo args` gives us the CLI the adapter spawned, including the
-            # resume flags the Agent SDK derives from the session options.
-            argv = await sbox.exec(["bash", "-c", "ps -eo args 2>/dev/null || ps aux"])
-            session_files = await sbox.exec(
-                ["bash", "-c", f"ls -1 {session_glob} 2>/dev/null || true"]
-            )
+            session_files = ""
+            argv = ""
+            with anyio.move_on_after(420):
+                # Wait until both the session file is planted and the CLI that
+                # reads it is running, so the probe can't catch a half-set-up
+                # sandbox and report a false negative.
+                while not (session_files and "--resume=" in argv):
+                    await anyio.sleep(2)
+                    listed = await sbox.exec(
+                        ["bash", "-c", f"ls -1 {session_glob} 2>/dev/null || true"]
+                    )
+                    session_files = listed.stdout.strip()
+                    # `ps -eo args` shows the CLI the adapter spawned, including
+                    # the resume flags the Agent SDK derives from its options.
+                    running = await sbox.exec(
+                        ["bash", "-c", "ps -eo args 2>/dev/null || ps aux"]
+                    )
+                    argv = running.stdout
             contents = await sbox.exec(
                 ["bash", "-c", f"cat {session_glob} 2>/dev/null || true"]
             )
@@ -102,8 +116,9 @@ def open_session_and_probe(agent_factory: Any, session_glob: str) -> Solver:
                 PROBE_KEY,
                 {
                     "session_id": agent.session_id,
-                    "argv": argv.stdout,
-                    "session_files": session_files.stdout.strip(),
+                    "session_loaded": agent.ready.is_set(),
+                    "argv": argv,
+                    "session_files": session_files,
                     "contents": contents.stdout,
                     "cwd_listing": cwd_listing.stdout,
                 },
@@ -153,6 +168,19 @@ def _run(solver_instance: Solver) -> EvalLog:
 def _sample(log: EvalLog) -> EvalSample:
     assert log.samples
     return log.samples[0]
+
+
+def _planted_session_id(probe: dict[str, Any]) -> str:
+    """The session id from the planted file name.
+
+    ``agent.session_id`` is only set once ``session/load`` returns, so the file
+    the agent wrote is the observable identity of the synthesized session.
+    """
+    files: list[str] = probe["session_files"].splitlines()
+    assert len(files) == 1, f"expected exactly one session file, got {files}"
+    name = files[0].rsplit("/", 1)[-1]
+    assert name.endswith(".jsonl"), files
+    return name[: -len(".jsonl")]
 
 
 def _probe(log: EvalLog) -> dict[str, Any]:
@@ -206,7 +234,7 @@ def test_claude_code_resume_messages_plants_a_loadable_session() -> None:
         )
     )
     probe = _probe(log)
-    session_id = probe["session_id"]
+    session_id = _planted_session_id(probe)
     # the transcript is at $CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<session>.jsonl
     assert probe["session_files"] == f"/root/.claude/projects/-root/{session_id}.jsonl"
     # ...carries the prior...
@@ -235,8 +263,7 @@ def test_claude_code_resume_transcript_plants_a_loadable_session() -> None:
         )
     )
     probe = _probe(log)
-    assert probe["session_id"] == spec.session_id
-    assert probe["session_files"].endswith(f"{spec.session_id}.jsonl")
+    assert _planted_session_id(probe) == spec.session_id
     assert PASSPHRASE in probe["contents"]
     assert f"--resume={spec.session_id}" in probe["argv"]
 
@@ -298,11 +325,12 @@ def test_claude_code_config_dir_moves_sessions_out_of_cwd() -> None:
         )
     )
     probe = _probe(log)
+    session_id = _planted_session_id(probe)
     assert probe["session_files"] == (
-        f"/opt/claude-config/projects/-root/{probe['session_id']}.jsonl"
+        f"/opt/claude-config/projects/-root/{session_id}.jsonl"
     )
     assert PASSPHRASE in probe["contents"]
-    assert f"--resume={probe['session_id']}" in probe["argv"]
+    assert f"--resume={session_id}" in probe["argv"]
     assert ".claude" not in probe["cwd_listing"].split(), (
         "session store still present in the agent's working directory"
     )
@@ -330,7 +358,8 @@ def test_codex_resume_messages_plants_a_loadable_rollout() -> None:
         )
     )
     probe = _probe(log)
-    assert probe["session_files"].endswith(f"{probe['session_id']}.jsonl")
+    # rollout-<ts>-<session-id>.jsonl under sessions/YYYY/MM/DD/
+    assert "/opt/codex-home/sessions/" in probe["session_files"]
     assert PASSPHRASE in probe["contents"]
     assert ".codex" not in probe["cwd_listing"].split()
 
