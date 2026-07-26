@@ -283,7 +283,8 @@ class CodexCli(ACPAgent):
             logger.warning(
                 "Synthetic rollout will be written to %s, inside the agent's working "
                 "directory (%s), where the agent can read its own planted history. "
-                "Pass home_dir=... (e.g. '$HOME/.codex') to move CODEX_HOME out of cwd.",
+                "Pass home_dir=... (a path outside cwd, e.g. '/opt/codex-home') to "
+                "move CODEX_HOME out of the agent's working directory.",
                 self._codex_home,
                 self.cwd,
             )
