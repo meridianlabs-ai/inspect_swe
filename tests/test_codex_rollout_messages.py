@@ -60,7 +60,7 @@ def test_build_rollout_rejects_mixed_prior() -> None:
     with pytest.raises(ValueError, match="not a mix"):
         build_rollout(
             cwd="/w",
-            prior=[ChatMessageUser(content="hi"), UserText(text="hi")],  # type: ignore[list-item]
+            prior=[ChatMessageUser(content="hi"), UserText(text="hi")],
             model="gpt-5.5",
         )
 

@@ -8,6 +8,7 @@ Anthropic message. These tests pin that layout plus the round-trips.
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from inspect_ai.model import (
@@ -27,6 +28,7 @@ from inspect_swe.acp._agents.claude_code.transcript import (
     Thinking,
     ToolResult,
     ToolUse,
+    TranscriptItem,
     UserText,
     build_transcript,
     items_from_messages,
@@ -38,7 +40,7 @@ from inspect_swe.acp._agents.claude_code.transcript import (
 _TS = datetime(2026, 6, 11, 12, 30, 0, tzinfo=UTC)
 
 
-def _rows(content: str) -> list[dict]:
+def _rows(content: str) -> list[dict[str, Any]]:
     return [json.loads(line) for line in content.split("\n") if line.strip()]
 
 
@@ -149,7 +151,7 @@ def test_thinking_without_signature_omits_the_key() -> None:
 
 
 def test_items_round_trip_through_build_and_parse() -> None:
-    items = [
+    items: list[TranscriptItem] = [
         UserText(text="go"),
         Thinking(thinking="hmm", signature="sig"),
         AssistantText(text="running it"),
@@ -168,7 +170,7 @@ def test_items_round_trip_through_build_and_parse() -> None:
 
 
 def test_truncate_and_rebuild() -> None:
-    items = [
+    items: list[TranscriptItem] = [
         UserText(text="go"),
         AssistantText(text="step one"),
         UserText(text="keep going"),
@@ -292,7 +294,7 @@ def test_build_transcript_rejects_mixed_items() -> None:
     with pytest.raises(ValueError, match="not a mix"):
         build_transcript(
             cwd="/w",
-            items=[ChatMessageUser(content="hi"), UserText(text="hi")],  # type: ignore[list-item]
+            items=[ChatMessageUser(content="hi"), UserText(text="hi")],
             model="claude-opus-5",
         )
 

@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -180,7 +181,7 @@ def project_slug(cwd: str) -> str:
 def build_transcript(
     *,
     cwd: str,
-    items: list[TranscriptItem] | list[ChatMessage],
+    items: Sequence[TranscriptItem | ChatMessage],
     model: str,
     session_id: str | None = None,
     version: str = _CLAUDE_CODE_VERSION,
@@ -318,7 +319,7 @@ def parse_transcript(content: str) -> ParsedTranscript:
 
 
 def items_from_messages(
-    messages: list[ChatMessage], include_thinking: bool = False
+    messages: Sequence[ChatMessage], include_thinking: bool = False
 ) -> list[TranscriptItem]:
     """Convert Inspect messages into Claude Code transcript items.
 
@@ -351,7 +352,7 @@ def items_from_messages(
     return items
 
 
-def messages_from_items(items: list[TranscriptItem]) -> list[ChatMessage]:
+def messages_from_items(items: Sequence[TranscriptItem]) -> list[ChatMessage]:
     """Convert Claude Code transcript items into Inspect messages.
 
     Not a lossless inverse of :func:`items_from_messages` — resume from the
@@ -416,7 +417,7 @@ def _error_text(item: ToolResult) -> str:
 
 
 def _as_transcript_items(
-    items: list[TranscriptItem] | list[ChatMessage],
+    items: Sequence[TranscriptItem | ChatMessage],
 ) -> list[TranscriptItem]:
     message_types = (
         ChatMessageSystem,
@@ -426,12 +427,12 @@ def _as_transcript_items(
     )
     is_message = [isinstance(i, message_types) for i in items]
     if not any(is_message):
-        return cast(list[TranscriptItem], items)
+        return cast(list[TranscriptItem], list(items))
     if not all(is_message):
         raise ValueError(
             "`items` must be all ChatMessage or all TranscriptItem, not a mix of both."
         )
-    return items_from_messages(cast(list[ChatMessage], items))
+    return items_from_messages(cast(Sequence[ChatMessage], items))
 
 
 def _user_items(message: ChatMessageUser) -> list[TranscriptItem]:

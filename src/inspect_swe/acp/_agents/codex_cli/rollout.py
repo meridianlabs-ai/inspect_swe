@@ -207,7 +207,7 @@ class ParsedRollout(BaseModel):
 def build_rollout(
     *,
     cwd: str,
-    prior: Sequence[PriorItem] | Sequence[ChatMessage],
+    prior: Sequence[PriorItem | ChatMessage],
     model: str,
     base_instructions: str = _CODEX_BASE_INSTRUCTIONS,
     cli_version: str = "0.130.0",
@@ -284,7 +284,7 @@ def build_rollout(
 def synthesize_rollout(
     *,
     cwd: str,
-    prior: Sequence[PriorItem] | Sequence[ChatMessage],
+    prior: Sequence[PriorItem | ChatMessage],
     codex_home: Path,
     model: str,
     base_instructions: str = _CODEX_BASE_INSTRUCTIONS,
@@ -474,7 +474,7 @@ def messages_from_prior(prior: Sequence[PriorItem]) -> list[ChatMessage]:
 
 
 def _as_prior_items(
-    prior: Sequence[PriorItem] | Sequence[ChatMessage],
+    prior: Sequence[PriorItem | ChatMessage],
 ) -> list[PriorItem]:
     items = list(prior)
     message_types = ChatMessageSystem | ChatMessageUser | ChatMessageAssistant
