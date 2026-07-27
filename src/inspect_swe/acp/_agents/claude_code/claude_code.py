@@ -21,31 +21,25 @@ from .agentbinary import ensure_claude_code_acp_setup
 logger = logging.getLogger(__name__)
 
 
-# claude-agent-sdk (bundled with claude-agent-acp) has three independent
-# watchdogs that abort an in-flight request and re-send it if the SSE stream
-# stalls: Bun fetch requestTimeout (300 s), the SDK client timeout (600 s),
-# and an event-idle stream watchdog (300 s). When a bridge GenerateFilter
-# blocks the model proxy for longer than that — common when the caller does
-# heavy per-request work — the retry replays a stale request through the
-# bridge. Disable / raise all of them by default; user-provided ``env``
-# overrides.
+# Claude Code has several client-side watchdogs that abort an in-flight
+# request and re-send it when the bridged model call stalls. A bridge
+# GenerateFilter that deliberately blocks the model proxy trips them, and
+# the retry replays a stale request. Disable them by default; user ``env``
+# still overrides.
 _BRIDGE_SAFE_ENV: dict[str, str] = {
-    # Bun fetch requestTimeout → timeout:false
+    # Bun fetch requestTimeout
     "API_FORCE_IDLE_TIMEOUT": "0",
-    # Anthropic SDK client timeout (AbortSignal on the request)
-    "API_TIMEOUT_MS": "3600000",
-    # SSE event-idle watchdog (floor-clamped to 300 s, so must disable)
+    # SDK client timeout — no disable sentinel, so use a large value
+    "API_TIMEOUT_MS": "100000000",
+    # SSE event-idle watchdog
     "CLAUDE_ENABLE_STREAM_WATCHDOG": "0",
-    # MCP-tool idle watchdog on bridged tools (300 s for http/SSE transports)
+    # Idle watchdog on bridged MCP tool calls
     "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT": "0",
-    # MCP server connect/init timeouts (defaults 5 s / 30 s). Bridge MCP
-    # servers are proxied over the sandbox exec channel; under many
-    # concurrent samples the first `initialize` round-trip can exceed the
-    # 5 s default and the server is silently dropped from the tool list.
+    # MCP server connect/init handshake (defaults 5 s / 30 s); on timeout the
+    # server is silently dropped and its tools never appear
     "MCP_CONNECT_TIMEOUT_MS": "60000",
     "MCP_TIMEOUT": "60000",
-    # Telemetry, error reporting, model-list probe, update checks — none of
-    # which should reach outside the sandbox
+    # No telemetry or update checks from inside the sandbox
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "DISABLE_AUTOUPDATER": "1",
 }
