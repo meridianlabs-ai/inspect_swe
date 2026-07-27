@@ -80,6 +80,7 @@ def claude_code(
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
     debug: bool | None = None,
+    append_system_prompt: str | None = None,
 ) -> Agent:
     """Claude Code agent.
 
@@ -95,7 +96,10 @@ def claude_code(
     Args:
         name: Agent name (used in multi-agent systems with `as_tool()` and `handoff()`)
         description: Agent description (used in multi-agent systems with `as_tool()` and `handoff()`)
-        system_prompt: Additional system prompt to append to default system prompt.
+        system_prompt: System prompt that replaces Claude Code's built-in system
+            prompt.
+        append_system_prompt: Additional instructions to append to the effective
+            system prompt.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
@@ -313,9 +317,9 @@ def claude_code(
                         # On resume the session already contains system messages, so send
                         # nothing: the bridge round-trips Claude Code's own
                         # system prompt back into state.messages as a
-                        # ChatMessageSystem, and re-passing it via
-                        # --append-system-prompt would duplicate the entire
-                        # system prompt on every resumed turn (the flag is
+                        # ChatMessageSystem. Re-passing either system-prompt flag
+                        # would duplicate
+                        # instructions on every resumed turn (the flags are
                         # applied per-invocation, not persisted anyway).
                         system_args: list[str] = []
                         if not is_resume:
@@ -326,11 +330,9 @@ def claude_code(
                             ]
                             if system_prompt is not None:
                                 system_texts.append(system_prompt)
-                            if system_texts:
-                                system_args = [
-                                    "--append-system-prompt",
-                                    "\n\n".join(system_texts),
-                                ]
+                            system_args = _system_prompt_args(
+                                system_texts, append_system_prompt
+                            )
 
                         # resume previous conversation
                         if is_resume:
@@ -470,6 +472,19 @@ def claude_code(
 
     # return agent with specified name and descritpion
     return agent_with(execute, name=name, description=description)
+
+
+def _system_prompt_args(
+    system_texts: Sequence[str],
+    append_system_prompt: str | None,
+) -> list[str]:
+    args: list[str] = []
+    if system_texts:
+        args.extend(["--system-prompt", "\n\n".join(system_texts)])
+    if append_system_prompt is not None:
+        args.extend(["--append-system-prompt", append_system_prompt])
+
+    return args
 
 
 async def _seed_claude_config(

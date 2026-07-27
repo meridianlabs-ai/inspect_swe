@@ -15,7 +15,8 @@ The following options are supported for customizing the behavior of the agent:
 
 | Option | Description |
 |------------------------------------|------------------------------------|
-| `system_prompt` | Additional system prompt to append to default system prompt. |
+| `system_prompt` | System prompt that replaces Claude Code's built-in prompt. |
+| `append_system_prompt` | Additional instructions to append to the effective system prompt. |
 | `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
 | `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
@@ -37,12 +38,20 @@ The following options are supported for customizing the behavior of the agent:
 
 : {tbl-colwidths=\[25,75\]}
 
-For example, here we specify a custom system prompt and disallow the `{{< meta agent_disallowed_tool >}}` tool:
+For example, here we replace Claude Code's built-in system prompt and disallow the `{{< meta agent_disallowed_tool >}}` tool:
 
 ```python
 {{< meta agent >}}(
     system_prompt="You are an ace system researcher.",
     disallowed_tools=["{{< meta agent_disallowed_tool >}}"]
+)
+```
+
+To preserve Claude Code's built-in system prompt and add instructions, use `append_system_prompt`:
+
+```python
+{{< meta agent >}}(
+    append_system_prompt="You are an ace system researcher.",
 )
 ```
 
