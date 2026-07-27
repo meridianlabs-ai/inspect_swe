@@ -7,7 +7,7 @@ and that ``_resolve_resume_session`` writes the rollout into ``CODEX_HOME``
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import anyio
@@ -19,7 +19,7 @@ from inspect_swe.acp._agents.codex_cli import codex_cli as mod
 from inspect_swe.acp._agents.codex_cli.rollout import RolloutSpec
 from inspect_swe.acp.agent import ACPAgent
 
-_TS = datetime(2026, 6, 11, 12, 30, 0, tzinfo=UTC)
+_TS = datetime(2026, 6, 11, 12, 30, 0, tzinfo=timezone.utc)
 
 
 class _FakeSbox:

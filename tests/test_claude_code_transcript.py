@@ -6,7 +6,7 @@ Anthropic message. These tests pin that layout plus the round-trips.
 """
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +37,7 @@ from inspect_swe.acp._agents.claude_code.transcript import (
     project_slug,
 )
 
-_TS = datetime(2026, 6, 11, 12, 30, 0, tzinfo=UTC)
+_TS = datetime(2026, 6, 11, 12, 30, 0, tzinfo=timezone.utc)
 
 
 def _rows(content: str) -> list[dict[str, Any]]:

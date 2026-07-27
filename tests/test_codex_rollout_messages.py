@@ -5,7 +5,7 @@ Covers ``build_rollout(prior=<messages>)``, ``prior_from_messages`` /
 (non-JSON custom tool input, unmodelled rows, images).
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytest
 from inspect_ai.model import (
@@ -33,7 +33,7 @@ from inspect_swe.acp._agents.codex_cli.rollout import (
     prior_from_messages,
 )
 
-_TS = datetime(2026, 6, 11, 12, 30, 0, tzinfo=UTC)
+_TS = datetime(2026, 6, 11, 12, 30, 0, tzinfo=timezone.utc)
 _ENCRYPTED_KEY = "reasoning_encrypted_content"
 
 

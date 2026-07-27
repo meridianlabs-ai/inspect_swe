@@ -32,7 +32,7 @@ import json
 import re
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
@@ -212,7 +212,7 @@ def build_transcript(
     """
     transcript_items = _as_transcript_items(items)
     session = session_id or str(uuid.uuid4())
-    now = timestamp or datetime.now(UTC)
+    now = timestamp or datetime.now(timezone.utc)
     ts_iso = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
     item_uuids = [str(uuid.uuid4()) for _ in transcript_items]

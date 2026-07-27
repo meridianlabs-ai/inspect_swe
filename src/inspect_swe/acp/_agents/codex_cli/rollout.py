@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
@@ -231,7 +231,7 @@ def build_rollout(
     conversation (when resuming a parsed rollout, pass ``parsed.model``).
     """
     prior_items = _as_prior_items(prior)
-    now = timestamp or datetime.now(UTC)
+    now = timestamp or datetime.now(timezone.utc)
     session_id = str(uuid.uuid4())
     ts_str = now.strftime("%Y-%m-%dT%H-%M-%S")
     ts_iso = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
