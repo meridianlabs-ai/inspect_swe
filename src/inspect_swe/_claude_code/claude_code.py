@@ -15,7 +15,13 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, StopReason
 from inspect_ai.scorer import score
-from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
+from inspect_ai.tool import (
+    MCPServerConfig,
+    MCPServerConfigHTTP,
+    Skill,
+    install_skills,
+    read_skills,
+)
 from inspect_ai.util import (
     ExecRemoteStreamingOptions,
     StoreModel,
@@ -39,6 +45,7 @@ from inspect_swe._claude_code._events.stream import (
     claude_code_event_stream,
 )
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
 from inspect_swe._util.path import join_path
 
 from .._util._async import is_callable_coroutine
@@ -305,6 +312,13 @@ def claude_code(
             static_mcp_servers = list(mcp_servers or [])
             bridged_mcp_servers = bridge.mcp_server_configs
             all_mcp_servers = static_mcp_servers + bridged_mcp_servers
+            # HTTP endpoints we must confirm are live before EVERY launch: the
+            # bridge proxy starts asynchronously, and Claude Code reads
+            # --mcp-config at startup. If the proxy isn't listening yet the
+            # agent comes up with no MCP tools and reports NO error.
+            http_mcp_configs = [
+                c for c in all_mcp_servers if isinstance(c, MCPServerConfigHTTP)
+            ]
             if all_mcp_servers:
                 mcp_server_args, _ = resolve_mcp_servers(all_mcp_servers)
                 cmd.extend(mcp_server_args)
@@ -430,6 +444,16 @@ def claude_code(
                         # left open (e.g. Claude exited mid-Task before the
                         # tool_result), so SpanBegin/End stay balanced.
                         consumer.reset()
+
+                        # Wait for bridge MCP endpoints before (re)launching.
+                        # This loop restarts the Claude Code subprocess with
+                        # --resume; the proxy may not be reachable yet, and a
+                        # resumed session that starts without its MCP tools
+                        # fails SILENTLY -- the agent just sees "No such tool
+                        # available" and its output gets graded as a normal
+                        # (toolless) sample.
+                        if http_mcp_configs:
+                            await wait_for_mcp_endpoints(http_mcp_configs, bridge)
 
                         # launch Claude Code in streaming mode; drain stdout in
                         # real time so the consumer emits agent spans and the

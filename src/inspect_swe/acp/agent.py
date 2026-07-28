@@ -21,6 +21,8 @@ from inspect_ai.tool import MCPServerConfig, MCPServerConfigHTTP
 from inspect_ai.util import ExecRemoteProcess
 from typing_extensions import TypedDict, Unpack
 
+from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
+
 from .client import ACPError, acp_connection, format_acp_failure
 
 logger = logging.getLogger(__name__)
@@ -199,7 +201,7 @@ class ACPAgent(Agent):
                     # synchronously during new_session and will silently
                     # skip tools if the proxy isn't ready yet.
                     if all_configs:
-                        await _wait_for_mcp_endpoints(all_configs, bridge)
+                        await wait_for_mcp_endpoints(all_configs, bridge)
 
                     async with acp_connection(proc) as (conn, feeder, error_info):
                         logger.info("ACP: initializing...")
@@ -236,42 +238,3 @@ class ACPAgent(Agent):
             logger.info("ACPAgent: cancelled, returning partial state")
 
         return state
-
-
-async def _wait_for_mcp_endpoints(
-    configs: list[MCPServerConfigHTTP],
-    bridge: SandboxAgentBridge,
-    timeout: float = 30.0,
-    interval: float = 0.5,
-) -> None:
-    """Wait until bridge MCP HTTP endpoints are reachable from the sandbox.
-
-    The bridge proxy starts asynchronously and may not be listening yet
-    when ``_start_agent`` yields.  This polls the first MCP endpoint
-    until it responds.
-    """
-    from inspect_ai.util import sandbox as sandbox_env
-
-    sbox = sandbox_env()
-    url = configs[0].url
-    elapsed = 0.0
-
-    while elapsed < timeout:
-        result = await sbox.exec(
-            [
-                "bash",
-                "-c",
-                f"curl -sf -o /dev/null --max-time 2 -X POST {url} 2>/dev/null && echo OK || echo FAIL",
-            ],
-        )
-        if "OK" in result.stdout:
-            logger.info("Bridge MCP endpoint ready at %s (%.1fs)", url, elapsed)
-            return
-        await anyio.sleep(interval)
-        elapsed += interval
-
-    logger.warning(
-        "Bridge MCP endpoint at %s not ready after %.0fs — proceeding anyway",
-        url,
-        timeout,
-    )
