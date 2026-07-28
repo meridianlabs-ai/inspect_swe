@@ -1,9 +1,15 @@
+from typing import Any
+
 import pytest
+from inspect_ai.model import Model
 from inspect_swe._codex_cli.config import (
+    GUARDIAN_MODEL_SLUG,
     CodexAutoReview,
+    check_codex_auto_review_version,
     codex_cli_config_overrides,
     codex_config_options,
     resolve_codex_auto_review,
+    resolve_codex_auto_review_model_aliases,
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
@@ -124,3 +130,51 @@ def test_codex_cli_config_overrides_auto_review_off_by_default() -> None:
     overrides = codex_cli_config_overrides("live", True)
     assert "approvals_reviewer" not in overrides
     assert "approval_policy" not in overrides
+
+
+def test_auto_review_model_aliases_none_passthrough() -> None:
+    existing: dict[str, str | Model] = {"alias": "openai/gpt-4o"}
+    assert (
+        resolve_codex_auto_review_model_aliases(CodexAutoReview(), existing) is existing
+    )
+    assert resolve_codex_auto_review_model_aliases(None, existing) is existing
+
+
+def test_auto_review_model_aliases_adds_guardian_string() -> None:
+    # outside a task, model_roles() is {}, so plain strings pass through
+    aliases = resolve_codex_auto_review_model_aliases(
+        CodexAutoReview(model="openai/gpt-4o"), {"alias": "x"}
+    )
+    assert aliases == {"alias": "x", "codex-auto-review": "openai/gpt-4o"}
+    assert GUARDIAN_MODEL_SLUG == "codex-auto-review"
+
+
+def test_auto_review_model_aliases_binds_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    import inspect_swe._codex_cli.config as config_mod
+
+    guardian_model = object()
+
+    def fake_model_roles() -> dict[str, Any]:
+        return {"guardian": object()}
+
+    def fake_get_model(*args: Any, **kwargs: Any) -> Any:
+        assert kwargs.get("role") == "guardian"
+        return guardian_model
+
+    monkeypatch.setattr(config_mod, "model_roles", fake_model_roles)
+    monkeypatch.setattr(config_mod, "get_model", fake_get_model)
+
+    aliases = resolve_codex_auto_review_model_aliases(
+        CodexAutoReview(model="guardian"), None
+    )
+    assert aliases == {"codex-auto-review": guardian_model}
+
+
+def test_check_codex_auto_review_version() -> None:
+    check_codex_auto_review_version("0.137.0")
+    check_codex_auto_review_version("0.145.0")
+    check_codex_auto_review_version(None)  # undetectable: proceed
+    with pytest.raises(RuntimeError, match="0.137.0"):
+        check_codex_auto_review_version("0.136.0")
+    with pytest.raises(RuntimeError, match="0.137.0"):
+        check_codex_auto_review_version("0.99.0")
