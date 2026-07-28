@@ -51,3 +51,8 @@ def test_codex_cli_config_overrides_format_values_for_cli() -> None:
         "web_search": '"cached"',
         "features.goals": "false",
     }
+
+
+def test_to_toml_escapes_control_characters() -> None:
+    toml = to_toml({"policy": 'line one\nline "two"\ttabbed'})
+    assert toml == 'policy = "line one\\nline \\"two\\"\\ttabbed"'

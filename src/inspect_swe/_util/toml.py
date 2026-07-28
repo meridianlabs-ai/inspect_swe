@@ -34,7 +34,13 @@ def _format_value(value: Any) -> str:
     """Format a Python value as TOML."""
     if isinstance(value, str):
         # Escape special characters and quote
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        escaped = (
+            value.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+        )
         return f'"{escaped}"'
     elif isinstance(value, bool):
         return "true" if value else "false"
