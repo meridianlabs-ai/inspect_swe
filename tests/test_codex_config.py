@@ -67,6 +67,15 @@ def test_to_toml_escapes_control_characters() -> None:
     assert toml == 'policy = "line one\\nline \\"two\\"\\ttabbed"'
 
 
+def test_to_toml_escapes_remaining_control_characters() -> None:
+    value = "esc \x1b bell \x07 del \x7f"
+    toml = to_toml({"policy": value})
+    assert toml == 'policy = "esc \\u001B bell \\u0007 del \\u007F"'
+    # round-trip via the stdlib parser (tomllib requires Python >= 3.11)
+    tomllib = pytest.importorskip("tomllib")
+    assert tomllib.loads(toml) == {"policy": value}
+
+
 def test_resolve_codex_auto_review_false_is_none() -> None:
     assert resolve_codex_auto_review(False) is None
 

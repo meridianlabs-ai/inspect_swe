@@ -234,6 +234,11 @@ def interactive_codex_cli(
             with its own ``workspace-write`` sandbox and ``on-request`` approvals,
             with escalations adjudicated by a guardian model. Pass
             :class:`CodexAutoReview` to customize the guardian policy and model.
+            Note: guardian adjudication depends on the codex-core embedded in the
+            ``codex-acp`` adapter honoring ``approvals_reviewer`` (Codex CLI >=
+            0.137.0 behavior); unlike `codex_cli()`, this cannot be version-checked
+            here. If the embedded core instead surfaces an escalation as an ACP
+            permission request, it is auto-approved.
         skills: Additional skills to make available.
         home_dir: Override for ``CODEX_HOME`` directory in the sandbox.
         config_overrides: Extra Codex config.toml key-value pairs.

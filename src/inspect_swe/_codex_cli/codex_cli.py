@@ -205,13 +205,17 @@ def codex_cli(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)
             )
 
+            # resolve the installed codex version once (shared by the
+            # auto_review gate and model alignment below)
+            codex_version = await codex_binary_version(
+                sandbox_env(sandbox), codex_binary, user
+            )
+
             # auto_review requires on-request approval support (>= 0.137.0 for
             # headless exec); the floor is applied in centaur mode too so
             # behavior is consistent across modes
             if resolved_auto_review is not None:
-                check_codex_auto_review_version(
-                    await codex_binary_version(sandbox_env(sandbox), codex_binary, user)
-                )
+                check_codex_auto_review_version(codex_version)
 
             # build system prompt
             system_messages = [
@@ -227,9 +231,7 @@ def codex_cli(
             agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
 
             # align Codex's `--model` slug to the real bridged model
-            codex_model = await resolve_codex_model(
-                model, model_config, sbox, codex_binary, user
-            )
+            codex_model = await resolve_codex_model(model, model_config, codex_version)
 
             # determine CODEX_HOME (default to agent working dir)
             if home_dir is None:
@@ -439,9 +441,7 @@ def codex_cli(
 async def resolve_codex_model(
     model: str | None,
     model_config: str | None,
-    sandbox: SandboxEnvironment,
-    codex_binary: str,
-    user: str | None,
+    codex_version: str | None,
 ) -> str:
     """Resolve the Codex `--model` slug aligned to the real bridged model.
 
@@ -462,7 +462,6 @@ async def resolve_codex_model(
     # service_model_name() (e.g. a custom 'otter' provider -> 'gpt-5.5'); align to
     # that, not the registry name ('otter'), which Codex wouldn't recognize.
     model_name = openai_service_model_name(api, real_model.name)
-    codex_version = await codex_binary_version(sandbox, codex_binary, user)
     codex_catalog = await codex_models_catalog(codex_version)
     resolution = resolve_codex_model_slug(
         model_name,
