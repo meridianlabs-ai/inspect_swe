@@ -204,3 +204,10 @@ def test_interactive_codex_cli_accepts_auto_review(
         model="mockllm/model",
         auto_review=CodexAutoReview(policy="Deny network."),
     )
+
+
+def test_codex_auto_review_exported_from_package_root() -> None:
+    import inspect_swe
+
+    assert inspect_swe.CodexAutoReview is CodexAutoReview
+    assert "CodexAutoReview" in inspect_swe.__all__
