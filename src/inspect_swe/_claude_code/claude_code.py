@@ -451,9 +451,12 @@ def claude_code(
                         # resumed session that starts without its MCP tools
                         # fails SILENTLY -- the agent just sees "No such tool
                         # available" and its output gets graded as a normal
-                        # (toolless) sample.
+                        # (toolless) sample. Raises if unreachable so the
+                        # sample errors instead of being scored.
                         if http_mcp_configs:
-                            await wait_for_mcp_endpoints(http_mcp_configs, bridge)
+                            await wait_for_mcp_endpoints(
+                                http_mcp_configs, bridge, required=True
+                            )
 
                         # launch Claude Code in streaming mode; drain stdout in
                         # real time so the consumer emits agent spans and the

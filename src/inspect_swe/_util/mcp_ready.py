@@ -20,11 +20,23 @@ DEFAULT_MCP_READY_TIMEOUT = 30.0
 DEFAULT_MCP_READY_INTERVAL = 0.5
 
 
+class MCPEndpointsUnreachableError(RuntimeError):
+    """Bridged MCP endpoints never became reachable from the sandbox.
+
+    Raised so the sample ERRORS rather than proceeding. An agent launched
+    without its bridged tools does not fail visibly -- it reports "No such tool
+    available", produces an empty response, and that response gets scored as a
+    normal trajectory. An errored sample is retryable and honest; a scored
+    toolless one silently corrupts results.
+    """
+
+
 async def wait_for_mcp_endpoints(
     configs: list[MCPServerConfigHTTP],
     bridge: SandboxAgentBridge,
     timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     interval: float = DEFAULT_MCP_READY_INTERVAL,
+    required: bool = True,
 ) -> bool:
     """Wait until bridge MCP HTTP endpoints are reachable from the sandbox.
 
@@ -32,9 +44,11 @@ async def wait_for_mcp_endpoints(
     agent subprocess is launched. This polls the first MCP endpoint until it
     responds.
 
-    Returns True if an endpoint became reachable, False on timeout. Callers that
-    can fail loudly should prefer doing so over launching an agent that will
-    silently have no tools.
+    Returns True once an endpoint is reachable. On timeout, raises
+    MCPEndpointsUnreachableError when ``required`` (the default), else returns
+    False. Proceeding past an unreachable endpoint means launching an agent that
+    will silently have no tools, so callers should have a specific reason to
+    pass ``required=False``.
     """
     from inspect_ai.util import sandbox as sandbox_env
 
@@ -59,9 +73,14 @@ async def wait_for_mcp_endpoints(
         await anyio.sleep(interval)
         elapsed += interval
 
-    logger.warning(
-        "Bridge MCP endpoint at %s not ready after %.0fs — proceeding anyway",
-        url,
-        timeout,
+    message = (
+        f"Bridge MCP endpoint at {url} not reachable after {timeout:.0f}s. "
+        "Refusing to launch the agent: it would start with no bridged MCP tools "
+        "and report no error, so its output would be scored as a valid toolless "
+        "trajectory."
     )
+    if required:
+        logger.error(message)
+        raise MCPEndpointsUnreachableError(message)
+    logger.warning("%s Proceeding anyway (required=False).", message)
     return False

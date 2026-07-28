@@ -23,6 +23,7 @@ from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
@@ -252,6 +253,19 @@ def opencode(
                     agent_cmd.append(agent_prompt)
 
                     # run agent
+                    # Bridged MCP endpoints must be live BEFORE launch: this
+                    # agent reads its MCP config at startup, and the bridge
+                    # proxy starts asynchronously. Launching early yields an
+                    # agent with no bridged tools and NO error, whose output is
+                    # then scored as a valid trajectory. Raises if unreachable.
+                    _http_mcp_configs = [
+                        c for c in all_mcp_servers if isinstance(c, MCPServerConfigHTTP)
+                    ]
+                    if _http_mcp_configs:
+                        await wait_for_mcp_endpoints(
+                            _http_mcp_configs, bridge, required=True
+                        )
+
                     result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,

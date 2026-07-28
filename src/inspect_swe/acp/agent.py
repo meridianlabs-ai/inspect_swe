@@ -201,7 +201,7 @@ class ACPAgent(Agent):
                     # synchronously during new_session and will silently
                     # skip tools if the proxy isn't ready yet.
                     if all_configs:
-                        await wait_for_mcp_endpoints(all_configs, bridge)
+                        await wait_for_mcp_endpoints(all_configs, bridge, required=True)
 
                     async with acp_connection(proc) as (conn, feeder, error_info):
                         logger.info("ACP: initializing...")

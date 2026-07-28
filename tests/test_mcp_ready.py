@@ -17,9 +17,12 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import anyio
+import pytest
 from inspect_ai.tool import MCPServerConfigHTTP
-
-from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
+from inspect_swe._util.mcp_ready import (
+    MCPEndpointsUnreachableError,
+    wait_for_mcp_endpoints,
+)
 
 
 def _http_config(url: str = "http://localhost:13337/mcp") -> MCPServerConfigHTTP:
@@ -66,8 +69,13 @@ def test_polls_until_endpoint_becomes_reachable() -> None:
     assert sbox.exec.await_count == 3
 
 
-def test_returns_false_on_timeout_rather_than_hanging() -> None:
-    """A caller that can fail loudly needs to be able to detect the timeout."""
+def test_raises_on_timeout_so_the_sample_errors_instead_of_being_scored() -> None:
+    """The whole point: never proceed into a silently-toolless launch.
+
+    Proceeding is what produced the original bug -- the agent starts without
+    bridged tools, reports no error, and its empty output is scored as a valid
+    trajectory. An errored sample is retryable; a scored toolless one is poison.
+    """
     sbox = AsyncMock()
     sbox.exec = AsyncMock(return_value=_FakeExecResult("FAIL\n"))
 
@@ -75,6 +83,24 @@ def test_returns_false_on_timeout_rather_than_hanging() -> None:
         with patch("inspect_ai.util.sandbox", return_value=sbox):
             return await wait_for_mcp_endpoints(
                 [_http_config()], bridge=AsyncMock(), timeout=0.01, interval=0.001
+            )
+
+    with pytest.raises(MCPEndpointsUnreachableError, match="not reachable"):
+        anyio.run(run)
+
+
+def test_required_false_still_allows_opting_out() -> None:
+    sbox = AsyncMock()
+    sbox.exec = AsyncMock(return_value=_FakeExecResult("FAIL\n"))
+
+    async def run() -> bool:
+        with patch("inspect_ai.util.sandbox", return_value=sbox):
+            return await wait_for_mcp_endpoints(
+                [_http_config()],
+                bridge=AsyncMock(),
+                timeout=0.01,
+                interval=0.001,
+                required=False,
             )
 
     assert anyio.run(run) is False
@@ -119,4 +145,32 @@ def test_claude_code_gates_every_launch_on_mcp_readiness() -> None:
     assert reset_at < wait_at < launch_at, (
         "wait_for_mcp_endpoints must be awaited inside the retry loop, "
         "between consumer.reset() and the exec_remote launch"
+    )
+
+
+def test_every_self_launching_bridged_agent_gates_on_mcp_readiness() -> None:
+    """The narrow-fix guard.
+
+    The original fix covered only claude_code -- the one agent we had a failing
+    transcript for -- while four siblings consumed bridge.mcp_server_configs and
+    launched their own subprocess with the identical exposure. Any new agent that
+    does the same must gate too, so assert it structurally rather than trusting
+    reviewers to notice.
+
+    acp/_agents/* are exempt: their MCP connection happens in the ACP
+    new_session, which acp/agent.py already gates.
+    """
+    root = Path(__file__).parent.parent / "src" / "inspect_swe"
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        if path.name == "mcp_ready.py" or "acp/_agents" in path.as_posix():
+            continue
+        src = path.read_text(encoding="utf-8")
+        if "bridge.mcp_server_configs" not in src:
+            continue
+        if "wait_for_mcp_endpoints" not in src:
+            offenders.append(path.relative_to(root).as_posix())
+    assert not offenders, (
+        "these agents consume bridged MCP configs but never wait for the "
+        f"endpoints to be reachable: {offenders}"
     )
