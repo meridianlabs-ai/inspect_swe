@@ -90,7 +90,12 @@ class CodexCli(ACPAgent):
             state,
             model=None,
             model_aliases=resolve_codex_auto_review_model_aliases(
-                self._auto_review, self.model_map
+                self._auto_review,
+                self.model_map,
+                # the ACP bridge has no fallback model (model=None), so the
+                # guardian slug must be bound explicitly; default guardian
+                # requests to this agent's model
+                default=get_model(self.model),
             ),
             filter=self.filter,
             retry_refusals=self.retry_refusals,

@@ -25,7 +25,8 @@ class CodexAutoReview(BaseModel):
 
     A `str` naming an Inspect model role binds that role; any other string is
     treated as a model name. Defaults to `None`, which serves guardian
-    requests with the task's main model.
+    requests with the model the agent is running with (the task's main model
+    unless the agent's `model` option is set).
     """
 
 
@@ -121,16 +122,24 @@ CODEX_AUTO_REVIEW_MIN_VERSION = "0.137.0"
 def resolve_codex_auto_review_model_aliases(
     auto_review: CodexAutoReview | None,
     model_aliases: dict[str, str | Model] | None,
+    default: str | Model | None = None,
 ) -> dict[str, str | Model] | None:
     """Bind the guardian model slug to the configured auto_review model.
 
     Call within a running task (role resolution reads task context). A `str`
     naming a defined Inspect model role binds via `get_model(role=...)`;
-    other values pass through for the bridge to resolve.
+    other values pass through for the bridge to resolve. `default` is bound
+    when auto_review is enabled but no model is configured — pass it for
+    bridges without a fallback model (e.g. the ACP bridge), where the
+    guardian slug would otherwise fail to resolve.
     """
-    if auto_review is None or auto_review.model is None:
+    if auto_review is None:
         return model_aliases
-    guardian: str | Model = auto_review.model
+    guardian: str | Model | None = (
+        auto_review.model if auto_review.model is not None else default
+    )
+    if guardian is None:
+        return model_aliases
     if isinstance(guardian, str) and guardian in model_roles():
         guardian = get_model(role=guardian)
     return {**(model_aliases or {}), GUARDIAN_MODEL_SLUG: guardian}
