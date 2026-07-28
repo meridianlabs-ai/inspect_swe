@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 from inspect_ai.model import Model
-from inspect_swe import codex_cli
+from inspect_swe import codex_cli, interactive_codex_cli
 from inspect_swe._codex_cli.config import (
     GUARDIAN_MODEL_SLUG,
     CodexAutoReview,
@@ -186,4 +186,21 @@ def test_codex_cli_accepts_auto_review() -> None:
     codex_cli(auto_review=False)
     codex_cli(
         auto_review=CodexAutoReview(policy="Deny package installs.", model="guardian")
+    )
+
+
+def test_interactive_codex_cli_accepts_auto_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # CodexCli (ACPAgent) requires an active sample to construct; this smoke
+    # test only cares that `auto_review` is accepted and threaded through, so
+    # stub the unrelated guard rather than standing up a full sample.
+    import inspect_swe.acp.agent as acp_agent_mod
+
+    monkeypatch.setattr(acp_agent_mod, "sample_active", lambda: object())
+
+    interactive_codex_cli(model="mockllm/model", auto_review=True)
+    interactive_codex_cli(
+        model="mockllm/model",
+        auto_review=CodexAutoReview(policy="Deny network."),
     )
