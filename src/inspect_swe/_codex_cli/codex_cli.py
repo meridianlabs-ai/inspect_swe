@@ -43,10 +43,14 @@ from .agentbinary import (
     codex_models_catalog,
 )
 from .config import (
+    CodexAutoReview,
     CodexDeprecatedArgs,
     CodexWebSearch,
+    check_codex_auto_review_version,
     codex_cli_config_overrides,
     codex_config_options,
+    resolve_codex_auto_review,
+    resolve_codex_auto_review_model_aliases,
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
@@ -74,6 +78,7 @@ def codex_cli(
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     web_search: CodexWebSearch = "live",
     goals: bool = True,
+    auto_review: bool | CodexAutoReview = False,
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
@@ -112,6 +117,12 @@ def codex_cli(
             tools available to the agent running in the sandbox.
         web_search: Web search mode. Use "live" for live web search, "cached" for cached web search, or "disabled" to disable web search. Defaults to "live".
         goals: Enable Codex goal tools (defaults to `True`).
+        auto_review: Enable Codex automated approval review (guardian). When enabled,
+            Codex runs with its own sandbox active (`workspace-write`) and `on-request`
+            approvals; escalation requests (e.g. network access, writes outside the
+            workspace) are adjudicated by a guardian model rather than auto-approved.
+            Pass `CodexAutoReview` to customize the guardian policy and model.
+            Requires Codex CLI >= 0.137.0. Defaults to `False`.
         centaur: Run in 'centaur' mode, which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use (defaults to main model for task).
@@ -153,6 +164,7 @@ def codex_cli(
         cast(dict[str, Any], deprecated_args)
     )
     effective_web_search = resolve_codex_web_search(web_search, disallowed_tools)
+    resolved_auto_review = resolve_codex_auto_review(auto_review)
 
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
@@ -173,7 +185,9 @@ def codex_cli(
             sandbox_agent_bridge(
                 state,
                 model=bridge_model,
-                model_aliases=model_aliases,
+                model_aliases=resolve_codex_auto_review_model_aliases(
+                    resolved_auto_review, model_aliases
+                ),
                 filter=filter,
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
@@ -190,6 +204,12 @@ def codex_cli(
             codex_binary = await ensure_agent_binary_installed(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)
             )
+
+            # auto_review requires codex exec support for on-request approvals
+            if resolved_auto_review is not None:
+                check_codex_auto_review_version(
+                    await codex_binary_version(sandbox_env(sandbox), codex_binary, user)
+                )
 
             # build system prompt
             system_messages = [
@@ -263,9 +283,13 @@ def codex_cli(
                     # selects Codex's system prompt + tool set (see codex_model above)
                     "--model",
                     codex_model,
-                    "--dangerously-bypass-approvals-and-sandbox",
                 ]
             )
+            # with auto_review, approvals/sandbox come from config (on-request +
+            # workspace-write); the bypass flag would force approval_policy=never
+            # at a precedence -c can't beat
+            if resolved_auto_review is None:
+                cmd.append("--dangerously-bypass-approvals-and-sandbox")
 
             # apply config overrides
             if config_overrides:
@@ -274,7 +298,7 @@ def codex_cli(
 
             # apply final Codex config overrides for explicit arguments
             for key, value in codex_cli_config_overrides(
-                effective_web_search, goals
+                effective_web_search, goals, resolved_auto_review
             ).items():
                 cmd.extend(["-c", f"{key}={value}"])
 
@@ -284,7 +308,9 @@ def codex_cli(
             # disable codex analytics (both the chatgpt.com analytics-events
             # sink and the always-on Statsig OTel metrics to ab.chatgpt.com)
             toml_config["analytics"] = {"enabled": False}
-            toml_config.update(codex_config_options(effective_web_search, goals))
+            toml_config.update(
+                codex_config_options(effective_web_search, goals, resolved_auto_review)
+            )
 
             # register mcp servers (combine static configs with bridged tools)
             all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs

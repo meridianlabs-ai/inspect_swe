@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 from inspect_ai.model import Model
+from inspect_swe import codex_cli
 from inspect_swe._codex_cli.config import (
     GUARDIAN_MODEL_SLUG,
     CodexAutoReview,
@@ -178,3 +179,11 @@ def test_check_codex_auto_review_version() -> None:
         check_codex_auto_review_version("0.136.0")
     with pytest.raises(RuntimeError, match="0.137.0"):
         check_codex_auto_review_version("0.99.0")
+
+
+def test_codex_cli_accepts_auto_review() -> None:
+    codex_cli(auto_review=True)
+    codex_cli(auto_review=False)
+    codex_cli(
+        auto_review=CodexAutoReview(policy="Deny package installs.", model="guardian")
+    )
