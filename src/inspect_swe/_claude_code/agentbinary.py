@@ -44,12 +44,12 @@ async def _claude_code_download_base_url() -> str:
     INSTALL_SCRIPT_URL = "https://claude.ai/install.sh"
     script_content = await download_text_file(INSTALL_SCRIPT_URL)
     for pattern in [
-        r'DOWNLOAD_BASE_URL="(https://[^"]+)"',
-        r'GCS_BUCKET="(https://[^"]+)"',
+        r'''(?:^|\n)\s*(?:export\s+)?DOWNLOAD_BASE_URL\s*=\s*(["'])(https://[^"'\s]+)\1''',
+        r'''(?:^|\n)\s*(?:export\s+)?GCS_BUCKET\s*=\s*(["'])(https://[^"'\s]+)\1''',
     ]:
         match = re.search(pattern, script_content)
         if match is not None:
-            return match.group(1)
+            return match.group(2)
     raise RuntimeError("Unable to determine download base URL for claude code.")
 
 
