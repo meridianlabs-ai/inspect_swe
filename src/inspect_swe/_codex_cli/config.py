@@ -71,17 +71,41 @@ def resolve_codex_web_search(
     return cast(CodexWebSearch, web_search)
 
 
-def codex_config_options(web_search: CodexWebSearch, goals: bool) -> dict[str, Any]:
-    return {
+def codex_config_options(
+    web_search: CodexWebSearch,
+    goals: bool,
+    auto_review: CodexAutoReview | None = None,
+) -> dict[str, Any]:
+    options: dict[str, Any] = {
         "web_search": web_search,
         "features.goals": goals,
     }
+    if auto_review is not None:
+        # auto_review only functions with on-request approvals and Codex's own
+        # sandbox engaged (mirrors Codex's "Approve for me" preset)
+        options["approval_policy"] = "on-request"
+        options["sandbox_mode"] = "workspace-write"
+        options["approvals_reviewer"] = "auto_review"
+        options["features.guardian_approval"] = True
+        if auto_review.policy is not None:
+            options["auto_review"] = {"policy": auto_review.policy}
+    return options
 
 
 def codex_cli_config_overrides(
-    web_search: CodexWebSearch, goals: bool
+    web_search: CodexWebSearch,
+    goals: bool,
+    auto_review: CodexAutoReview | None = None,
 ) -> dict[str, str]:
-    return {
+    overrides = {
         "web_search": f'"{web_search}"',
         "features.goals": "true" if goals else "false",
     }
+    if auto_review is not None:
+        overrides["approval_policy"] = '"on-request"'
+        overrides["sandbox_mode"] = '"workspace-write"'
+        overrides["approvals_reviewer"] = '"auto_review"'
+        overrides["features.guardian_approval"] = "true"
+        # auto_review.policy is emitted only via config.toml: -c values are
+        # parsed as TOML and multiline policies don't survive shell quoting
+    return overrides

@@ -75,3 +75,52 @@ def test_resolve_codex_auto_review_true_is_defaults() -> None:
 def test_resolve_codex_auto_review_passes_through_options() -> None:
     options = CodexAutoReview(policy="Deny all network access.")
     assert resolve_codex_auto_review(options) is options
+
+
+def test_codex_config_options_auto_review_off_by_default() -> None:
+    config = codex_config_options("live", True)
+    assert "approvals_reviewer" not in config
+    assert "approval_policy" not in config
+    assert "sandbox_mode" not in config
+
+
+def test_codex_config_options_auto_review_enabled() -> None:
+    config = codex_config_options("live", True, auto_review=CodexAutoReview())
+    assert config["approval_policy"] == "on-request"
+    assert config["sandbox_mode"] == "workspace-write"
+    assert config["approvals_reviewer"] == "auto_review"
+    assert config["features.guardian_approval"] is True
+    assert "auto_review" not in config  # no [auto_review] table without a policy
+    toml = to_toml(config)
+    assert 'approvals_reviewer = "auto_review"' in toml
+    assert 'approval_policy = "on-request"' in toml
+
+
+def test_codex_config_options_auto_review_policy_table() -> None:
+    config = codex_config_options(
+        "live",
+        True,
+        auto_review=CodexAutoReview(policy="Never allow curl.\nAllow pip."),
+    )
+    assert config["auto_review"] == {"policy": "Never allow curl.\nAllow pip."}
+    toml = to_toml(config)
+    assert "[auto_review]" in toml
+    assert 'policy = "Never allow curl.\\nAllow pip."' in toml
+
+
+def test_codex_cli_config_overrides_auto_review() -> None:
+    overrides = codex_cli_config_overrides(
+        "live", True, auto_review=CodexAutoReview(policy="Never allow curl.")
+    )
+    assert overrides["approval_policy"] == '"on-request"'
+    assert overrides["sandbox_mode"] == '"workspace-write"'
+    assert overrides["approvals_reviewer"] == '"auto_review"'
+    assert overrides["features.guardian_approval"] == "true"
+    # policy goes only into config.toml (multiline-safe), never -c
+    assert not any(key.startswith("auto_review") for key in overrides)
+
+
+def test_codex_cli_config_overrides_auto_review_off_by_default() -> None:
+    overrides = codex_cli_config_overrides("live", True)
+    assert "approvals_reviewer" not in overrides
+    assert "approval_policy" not in overrides
