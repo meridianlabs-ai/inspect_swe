@@ -136,6 +136,7 @@ class CodexCli(ACPAgent):
             toml_config: dict[str, Any] = {
                 "model": default_model,
                 "preferred_auth_method": "apikey",
+                # overridden below by codex_config_options() when auto_review is enabled
                 "approval_policy": "never",
                 "sandbox_mode": "danger-full-access",
                 "model_provider": "openai-proxy",

@@ -205,7 +205,9 @@ def codex_cli(
                 codex_cli_binary_source(), version, user, sandbox_env(sandbox)
             )
 
-            # auto_review requires codex exec support for on-request approvals
+            # auto_review requires on-request approval support (>= 0.137.0 for
+            # headless exec); the floor is applied in centaur mode too so
+            # behavior is consistent across modes
             if resolved_auto_review is not None:
                 check_codex_auto_review_version(
                     await codex_binary_version(sandbox_env(sandbox), codex_binary, user)
