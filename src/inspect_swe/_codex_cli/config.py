@@ -1,8 +1,42 @@
 from typing import Any, Literal, Mapping, cast
 
+from inspect_ai.model import Model
+from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
 
 CodexWebSearch = Literal["live", "cached", "disabled"]
+
+
+class CodexAutoReview(BaseModel):
+    """Options for Codex automated approval review (`auto_review`).
+
+    When enabled, Codex runs with its own sandbox active (`workspace-write`)
+    and `approval_policy` set to `on-request`; escalation requests are
+    adjudicated by a guardian model rather than a human.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    policy: str | None = Field(default=None)
+    """Additional policy instructions inserted into the guardian review prompt."""
+
+    model: str | Model | None = Field(default=None)
+    """Model that serves guardian review requests.
+
+    A `str` naming an Inspect model role binds that role; any other string is
+    treated as a model name. Defaults to `None`, which serves guardian
+    requests with the task's main model.
+    """
+
+
+def resolve_codex_auto_review(
+    auto_review: bool | CodexAutoReview,
+) -> CodexAutoReview | None:
+    if auto_review is False:
+        return None
+    if auto_review is True:
+        return CodexAutoReview()
+    return auto_review
 
 
 class CodexDeprecatedArgs(TypedDict, total=False):

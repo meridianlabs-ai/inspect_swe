@@ -1,7 +1,9 @@
 import pytest
 from inspect_swe._codex_cli.config import (
+    CodexAutoReview,
     codex_cli_config_overrides,
     codex_config_options,
+    resolve_codex_auto_review,
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
@@ -56,3 +58,20 @@ def test_codex_cli_config_overrides_format_values_for_cli() -> None:
 def test_to_toml_escapes_control_characters() -> None:
     toml = to_toml({"policy": 'line one\nline "two"\ttabbed'})
     assert toml == 'policy = "line one\\nline \\"two\\"\\ttabbed"'
+
+
+def test_resolve_codex_auto_review_false_is_none() -> None:
+    assert resolve_codex_auto_review(False) is None
+
+
+def test_resolve_codex_auto_review_true_is_defaults() -> None:
+    resolved = resolve_codex_auto_review(True)
+    assert resolved == CodexAutoReview()
+    assert resolved is not None
+    assert resolved.policy is None
+    assert resolved.model is None
+
+
+def test_resolve_codex_auto_review_passes_through_options() -> None:
+    options = CodexAutoReview(policy="Deny all network access.")
+    assert resolve_codex_auto_review(options) is options
