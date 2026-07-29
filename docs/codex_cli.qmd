@@ -59,16 +59,16 @@ By default, the agent runs Codex with `--dangerously-bypass-approvals-and-sandbo
 
 Enabling `auto_review` requires Codex CLI >= 0.137.0.
 
-### How commands are reviewed
+### Behavior
 
-On Linux, Codex enforces the `workspace-write` sandbox by launching each command through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`), which needs a `bwrap` binary in the sandbox and a container that permits the namespace syscalls it uses (see [Running the sandbox in a container](#running-the-sandbox-in-a-container)). What happens then depends on whether that sandbox can start:
+On Linux, Codex enforces the `workspace-write` sandbox by launching each command through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`), which needs a `bwrap` binary in the sandbox and a container that permits the namespace syscalls it uses (see [Configuring Containers](#configuring-containers)). What happens then depends on whether that sandbox can start:
 
 - **OS sandbox active** (both present): commands run sandboxed, and only genuine escalations (network access, out-of-workspace writes) reach the guardian.
 - **OS sandbox unavailable** (the default for most images): `auto_review` still works, but review is model-driven rather than OS-enforced. Each sandboxed command fails before it runs (`bubblewrap is unavailable` when `bwrap` is missing, or `Creating new namespace failed: Operation not permitted` when its syscalls are blocked); Codex does *not* fall back to a review-only mode on its own. A capable model recovers by re-issuing with escalated permissions (`require_escalated`), which the guardian reviews and, if approved, runs unsandboxed, and it typically carries that forward. Review then depends on the model choosing to escalate rather than being enforced by Codex.
 
 Either way, the guardian may deny an escalation, and repeated denials interrupt the turn.
 
-### Workspace boundaries
+### Workspace Boundaries
 
 When the OS sandbox is active, `workspace-write` bounds what a command may do before it needs an approved escalation:
 
@@ -79,7 +79,22 @@ When the OS sandbox is active, `workspace-write` bounds what a command may do be
 
 Actions outside these bounds fail in the sandbox and proceed only with a guardian-approved escalation. To widen them, pass `config_overrides` (applied before the auto_review settings, so they compose), for example `{"sandbox_workspace_write.network_access": "true"}` or `{"sandbox_workspace_write.writable_roots": '["/data"]'}`, and/or set `cwd` so the workspace root matches where the task's files live.
 
-### Running the sandbox in a container
+### Customizing Guardian
+
+Use `CodexAutoReview` to set the guardian policy (extra instructions inserted into the guardian review prompt) and the model that serves guardian requests (an Inspect model role name or a model; defaults to the model the agent is running with):
+
+```python
+from inspect_swe import CodexAutoReview
+
+{{< meta agent >}}(
+    auto_review=CodexAutoReview(
+        policy="Deny anything that installs packages.",
+        model="guardian",  # binds the 'guardian' model role
+    )
+)
+```
+
+### Configuring Containers
 
 To make Codex's `workspace-write` sandbox actually enforce in a Docker sandbox, rather than falling back to the model-driven path above, do both of the following.
 
@@ -118,20 +133,6 @@ A few caveats:
 - The host kernel must support unprivileged user namespaces (standard on modern Linux distributions). `--privileged` also works but grants far more than necessary.
 - On macOS/Windows Docker, containers run in a Linux VM, so these settings apply to the VM's kernel; behavior matches native Linux.
 
-### Customizing the guardian
-
-Use `CodexAutoReview` to set the guardian policy (extra instructions inserted into the guardian review prompt) and the model that serves guardian requests (an Inspect model role name or a model; defaults to the model the agent is running with):
-
-```python
-from inspect_swe import CodexAutoReview
-
-{{< meta agent >}}(
-    auto_review=CodexAutoReview(
-        policy="Deny anything that installs packages.",
-        model="guardian",  # binds the 'guardian' model role
-    )
-)
-```
 
 ## Installation
 
