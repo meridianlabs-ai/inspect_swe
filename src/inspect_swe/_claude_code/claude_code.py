@@ -394,26 +394,22 @@ def claude_code(
                             or cp.attempt == "resume"
                         )
 
-                        # System prompt is sent only when creating the session.
-                        # On resume the session already contains system messages, so send
-                        # nothing: the bridge round-trips Claude Code's own
-                        # system prompt back into state.messages as a
-                        # ChatMessageSystem. Re-passing either system-prompt flag
-                        # would duplicate
-                        # instructions on every resumed turn (the flags are
-                        # applied per-invocation, not persisted anyway).
-                        system_args: list[str] = []
-                        if not is_resume:
-                            system_texts = [
-                                m.text
-                                for m in state.messages
-                                if isinstance(m, ChatMessageSystem)
-                            ]
-                            if system_prompt is not None:
-                                system_texts.append(system_prompt)
-                            system_args = _system_prompt_args(
-                                system_texts, replace_system_prompt
-                            )
+                        # Replacement flags are per-invocation, so re-send them on
+                        # resume. Appended messages are not re-sent because the bridge
+                        # round-trips them into state.messages and appending them again
+                        # would duplicate the effective prompt.
+                        system_texts = [
+                            m.text
+                            for m in state.messages
+                            if isinstance(m, ChatMessageSystem)
+                        ]
+                        if system_prompt is not None:
+                            system_texts.append(system_prompt)
+                        system_args = _system_prompt_args(
+                            system_texts,
+                            replace_system_prompt,
+                            is_resume=is_resume,
+                        )
 
                         # resume previous conversation
                         if is_resume:
@@ -558,11 +554,13 @@ def claude_code(
 def _system_prompt_args(
     system_texts: Sequence[str],
     replace_system_prompt: str | None,
+    *,
+    is_resume: bool,
 ) -> list[str]:
     args: list[str] = []
     if replace_system_prompt is not None:
         args.extend(["--system-prompt", replace_system_prompt])
-    if system_texts:
+    if system_texts and not is_resume:
         args.extend(["--append-system-prompt", "\n\n".join(system_texts)])
 
     return args
