@@ -85,11 +85,13 @@ services:
 
 Reference that compose file from the task's sandbox, e.g. `sandbox=("docker", "compose.yaml")`. With both pieces in place, sandboxed commands run under `bwrap` and only genuine escalations (network access, out-of-workspace writes) reach the guardian — no `bubblewrap is unavailable` failures.
 
+::: callout-warning
+`seccomp=unconfined` removes the outer Inspect container's syscall filtering, widening the kernel attack surface reachable by code the agent runs. Enable it only for sandboxes running trusted or already-isolated workloads. For security-sensitive deployments, prefer a tailored seccomp profile that allowlists only the syscalls bubblewrap needs (`unshare`, `clone`, `mount`, `pivot_root`, `umount2`, `setns`) rather than disabling seccomp wholesale.
+:::
+
 A few caveats:
 
-- `seccomp=unconfined` removes the outer Inspect container's syscall filtering. For security-sensitive deployments, a tailored seccomp profile that allowlists only the syscalls bubblewrap needs (`unshare`, `clone`, `mount`, `pivot_root`, `umount2`, `setns`) is a stricter alternative to disabling seccomp wholesale.
 - The host kernel must support unprivileged user namespaces (standard on modern Linux distributions). `--privileged` also works but grants far more than necessary.
-- You should not need `systempaths=unconfined`: Codex detects a masked `/proc` and retries without mounting a fresh procfs.
 - On macOS/Windows Docker, containers run in a Linux VM, so these settings apply to the VM's kernel; behavior matches native Linux.
 
 Use `CodexAutoReview` to customize the guardian policy (extra instructions inserted into the guardian review prompt) and the model that serves guardian requests (an Inspect model role name or a model; by default guardian requests are served by the model the agent is running with):
