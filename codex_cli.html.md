@@ -192,13 +192,44 @@ By default, the agent runs Codex with `--dangerously-bypass-approvals-and-sandbo
 codex_cli(auto_review=True)
 ```
 
-Enabling `auto_review` requires Codex CLI \>= 0.137.0 and adds constraints on what the agent can do without review. It works whether or not Codex’s own OS-level sandbox is available, but *how* those constraints are enforced differs. On Linux, Codex enforces the `workspace-write` sandbox by launching each command through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`), which needs both a `bwrap` binary in the sandbox and a container configured to permit the namespace operations it requires (see [Running the sandbox in a container](#running-the-sandbox-in-a-container) below). When both are present, commands run under the OS sandbox and only genuine escalations (network access, out-of-workspace writes) reach the guardian.
+Enabling `auto_review` requires Codex CLI \>= 0.137.0.
 
-When `bwrap` is unavailable, which is the case for most sandbox images out of the box, `auto_review` still works, but review is model-driven rather than OS-enforced. Codex cannot start its sandbox, so each sandboxed command fails with a `bubblewrap is unavailable` error returned to the model; Codex does *not* fall back to a review-only mode on its own. A capable model recovers by re-issuing the command with escalated permissions (`require_escalated`), which the guardian then reviews and, if approved, runs outside the sandbox. Models typically carry that escalation forward. The trade-off is that review now depends on the model choosing to escalate (an un-escalated command simply hits the sandbox error again), rather than being enforced by Codex. Either way, the guardian may deny an escalation, and repeated denials interrupt the turn.
+### Behavior
 
-When `bwrap` is available, the `workspace-write` policy defines what a command may do before it needs an approved escalation. The workspace root is the agent’s working directory (the `cwd` option): commands can read the whole filesystem but can only write within the working directory plus `/tmp` and `$TMPDIR`, top-level `.git` and `.agents` directories are read-only even inside the workspace (so e.g. `git commit` requires an approved escalation), and commands have no network access by default. Actions outside these bounds fail in the sandbox and proceed only if the model requests escalation and the guardian approves. If your task layout requires more, pass `config_overrides` (applied before the auto_review settings, so they compose), for example `{"sandbox_workspace_write.network_access": "true"}` or `{"sandbox_workspace_write.writable_roots": '["/data"]'}`, and/or set `cwd` so the workspace root matches where the task’s files live.
+On Linux, Codex enforces the `workspace-write` sandbox by launching each command through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`), which needs a `bwrap` binary in the sandbox and a container that permits the namespace syscalls it uses (see [Running the sandbox in a container](#running-the-sandbox-in-a-container)). What happens then depends on whether that sandbox can start:
 
-### Running the sandbox in a container
+- **OS sandbox active** (both present): commands run sandboxed, and only genuine escalations (network access, out-of-workspace writes) reach the guardian.
+- **OS sandbox unavailable** (the default for most images): `auto_review` still works, but review is model-driven rather than OS-enforced. Each sandboxed command fails before it runs (`bubblewrap is unavailable` when `bwrap` is missing, or `Creating new namespace failed: Operation not permitted` when its syscalls are blocked); Codex does *not* fall back to a review-only mode on its own. A capable model recovers by re-issuing with escalated permissions (`require_escalated`), which the guardian reviews and, if approved, runs unsandboxed, and it typically carries that forward. Review then depends on the model choosing to escalate rather than being enforced by Codex.
+
+Either way, the guardian may deny an escalation, and repeated denials interrupt the turn.
+
+### Workspace Boundaries
+
+When the OS sandbox is active, `workspace-write` bounds what a command may do before it needs an approved escalation:
+
+- **Writes**: only the working directory (the `cwd` option), `/tmp`, and `$TMPDIR`.
+- **Reads**: the whole filesystem.
+- **`.git` and `.agents`**: read-only even inside the workspace, so e.g. `git commit` requires an escalation.
+- **Network**: unavailable by default.
+
+Actions outside these bounds fail in the sandbox and proceed only with a guardian-approved escalation. To widen them, pass `config_overrides` (applied before the auto_review settings, so they compose), for example `{"sandbox_workspace_write.network_access": "true"}` or `{"sandbox_workspace_write.writable_roots": '["/data"]'}`, and/or set `cwd` so the workspace root matches where the task’s files live.
+
+### Customizing Guardian
+
+Use `CodexAutoReview` to set the guardian policy (extra instructions inserted into the guardian review prompt) and the model that serves guardian requests (an Inspect model role name or a model; defaults to the model the agent is running with):
+
+``` python
+from inspect_swe import CodexAutoReview
+
+codex_cli(
+    auto_review=CodexAutoReview(
+        policy="Deny anything that installs packages.",
+        model="guardian",  # binds the 'guardian' model role
+    )
+)
+```
+
+### Configuring Containers
 
 To make Codex’s `workspace-write` sandbox actually enforce in a Docker sandbox, rather than falling back to the model-driven path above, do both of the following.
 
@@ -236,19 +267,6 @@ A few caveats:
 
 - The host kernel must support unprivileged user namespaces (standard on modern Linux distributions). `--privileged` also works but grants far more than necessary.
 - On macOS/Windows Docker, containers run in a Linux VM, so these settings apply to the VM’s kernel; behavior matches native Linux.
-
-Use `CodexAutoReview` to customize the guardian policy (extra instructions inserted into the guardian review prompt) and the model that serves guardian requests (an Inspect model role name or a model; by default guardian requests are served by the model the agent is running with):
-
-``` python
-from inspect_swe import CodexAutoReview
-
-codex_cli(
-    auto_review=CodexAutoReview(
-        policy="Deny anything that installs packages.",
-        model="guardian",  # binds the 'guardian' model role
-    )
-)
-```
 
 ## Installation
 
