@@ -65,7 +65,7 @@ When `bwrap` is available, the `workspace-write` policy defines what a command m
 
 ### Running the sandbox in a container
 
-Most sandbox images (including the default Inspect sandbox image) do not ship bubblewrap, and container runtimes block the syscalls it needs by default. So out of the box, `auto_review` in a Docker sandbox lands in the model-driven degraded path described above. To make Codex's `workspace-write` sandbox actually enforce, do both of the following.
+To make Codex's `workspace-write` sandbox actually enforce in a Docker sandbox — rather than falling back to the model-driven path above — do both of the following.
 
 **1. Provide `bwrap` in the sandbox image.** Codex looks for `bwrap` on the `PATH` (or bundled at `codex-resources/bwrap` next to its binary). Install it in your Dockerfile:
 
