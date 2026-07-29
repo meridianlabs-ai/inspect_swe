@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `inspect_swe` package makes software engineering agents like [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [OpenCode](https://github.com/anomalyco/opencode), and [Mini SWE Agent](https://github.com/SWE-agent/mini-swe-agent). available as standard Inspect agents. For example, here we use the [claude_code()](./reference/index.html.md#claude_code) agent as the solver in an Inspect task:
+The `inspect_swe` package makes software engineering agents like [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), and [Mini SWE Agent](https://github.com/SWE-agent/mini-swe-agent) available as standard Inspect agents. For example, here we use the [claude_code()](./reference/index.html.md#claude_code) agent as the solver in an Inspect task:
 
 ``` python
 from inspect_ai import Task, task
@@ -40,5 +40,6 @@ Then, try out one or more of the available agents:
 | [claude_code()](./claude_code.html.md) | Anthropic’s agentic coding tool [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) |
 | [codex_cli()](./codex_cli.html.md) | OpenAI’s terminal-based coding agent [Codex CLI](https://github.com/openai/codex) |
 | [gemini_cli()](./gemini_cli.html.md) | Google’s open-source AI agent [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
+| [`kimi_code()`](./kimi_code.html.md) | Moonshot AI’s terminal-based coding agent [Kimi Code](https://github.com/MoonshotAI/kimi-code) |
 | [opencode()](./opencode.html.md) | Provider-independent terminal-based coding agent. |
 | [mini_swe_agent()](./mini_swe_agent.html.md) | SWE-agent’s minimal 100-line agent. |

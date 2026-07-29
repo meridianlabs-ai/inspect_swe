@@ -7,7 +7,7 @@
 
 ## Overview
 
-The `inspect_swe` package makes software engineering agents like [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [OpenCode](https://github.com/anomalyco/opencode), and [Mini SWE Agent](https://github.com/SWE-agent/mini-swe-agent). available as standard Inspect agents. For example, here we use the [claude_code()](./reference/index.html.md#claude_code) agent as the solver in an Inspect task:
+The `inspect_swe` package makes software engineering agents like [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), and [Mini SWE Agent](https://github.com/SWE-agent/mini-swe-agent) available as standard Inspect agents. For example, here we use the [claude_code()](./reference/index.html.md#claude_code) agent as the solver in an Inspect task:
 
 ``` python
 from inspect_ai import Task, task
@@ -45,6 +45,7 @@ Then, try out one or more of the available agents:
 | [claude_code()](./claude_code.html.md) | Anthropic’s agentic coding tool [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) |
 | [codex_cli()](./codex_cli.html.md) | OpenAI’s terminal-based coding agent [Codex CLI](https://github.com/openai/codex) |
 | [gemini_cli()](./gemini_cli.html.md) | Google’s open-source AI agent [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
+| [`kimi_code()`](./kimi_code.html.md) | Moonshot AI’s terminal-based coding agent [Kimi Code](https://github.com/MoonshotAI/kimi-code) |
 | [opencode()](./opencode.html.md) | Provider-independent terminal-based coding agent. |
 | [mini_swe_agent()](./mini_swe_agent.html.md) | SWE-agent’s minimal 100-line agent. |
 
@@ -372,6 +373,7 @@ The following options are supported for customizing the behavior of the agent:
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
 | `web_search` | Web search mode. Use `"live"` for live web search, `"cached"` for cached web search, or `"disabled"` to disable web search. Defaults to `"live"`. |
 | `goals` | Enable Codex goal tools. Defaults to `True`. |
+| `auto_review` | Enable Codex [automated approval review](https://developers.openai.com/codex/concepts/sandboxing/auto-review) (see [Auto Review](#auto-review) below for details). Defaults to `False`. |
 | `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended. |
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
@@ -504,6 +506,72 @@ def investigator() -> Task:
 The `name` field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple `BridgedToolsSpec` instances to create separate MCP servers for different tool groups.
 
 See the [Bridged Tools](https://inspect.aisi.org.uk/agent-bridge.html#bridged-tools) documentation for more details on the architecture and how tool execution flows between host and sandbox.
+
+## Auto Review
+
+By default, the agent runs Codex with `--dangerously-bypass-approvals-and-sandbox`: Codex’s internal sandbox and approval prompts are disabled, since the agent already runs inside the Inspect sandbox. The `auto_review` option instead runs Codex the way its own “Approve for me” mode ships: Codex’s `workspace-write` sandbox is active, `approval_policy` is `on-request`, and escalation requests (network access, writes outside the workspace, MCP tool approvals) are adjudicated by an automated “guardian” reviewer model rather than a human:
+
+``` python
+codex_cli(auto_review=True)
+```
+
+Enabling `auto_review` requires Codex CLI \>= 0.137.0 and materially constrains the agent relative to the default. On Linux, Codex enforces the `workspace-write` sandbox by launching each command through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`). This needs both (a) a `bwrap` binary available in the sandbox and (b) a container configured to permit the namespace operations `bwrap` requires — see [Running the sandbox in a container](#running-the-sandbox-in-a-container) below.
+
+When either is missing, Codex cannot start its sandbox: each sandboxed command fails with a `bubblewrap is unavailable` error, which is returned to the model as the command’s output. **Codex does not automatically fall back to a review-only mode.** Recovery is model-driven: a capable model typically reacts to the failure by re-issuing the command with escalated permissions (`require_escalated`) — which the guardian then adjudicates and, if approved, runs outside the sandbox. Typically, models carry that escalation forward on subsequent commands. This degrades gracefully for capable models, but it is not guaranteed by Codex: it costs an extra failed attempt on the first command, depends on the model choosing to escalate, and any command the model does *not* escalate runs in the sandbox triggering another sandbox error. When the sandbox *is* available, the guardian may also deny escalations, and repeated denials interrupt the turn.
+
+Under `workspace-write`, the workspace root is the agent’s working directory (the `cwd` option): commands can read the whole filesystem but can only write within the working directory plus `/tmp` and `$TMPDIR`, top-level `.git` and `.agents` directories are read-only even inside the workspace (so e.g. `git commit` requires an approved escalation), and commands have no network access by default. Actions outside these bounds fail in the sandbox and proceed only if the model requests escalation and the guardian approves. If your task layout requires more, pass `config_overrides` (applied before the auto_review settings, so they compose) — for example `{"sandbox_workspace_write.network_access": "true"}` or `{"sandbox_workspace_write.writable_roots": '["/data"]'}` — and/or set `cwd` so the workspace root matches where the task’s files live.
+
+### Running the sandbox in a container
+
+Most sandbox images (including the default Inspect sandbox image) do not ship bubblewrap, and container runtimes block the syscalls it needs by default. So out of the box, `auto_review` in a Docker sandbox lands in the model-driven degraded path described above. To make Codex’s `workspace-write` sandbox actually enforce, do both of the following.
+
+**1. Provide `bwrap` in the sandbox image.** Codex looks for `bwrap` on the `PATH` (or bundled at `codex-resources/bwrap` next to its binary). Install it in your Dockerfile:
+
+``` dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+**2. Permit namespace creation.** Docker’s default `seccomp` profile blocks the namespace and mount syscalls `bwrap` uses, so it fails with `Creating new namespace failed: Operation not permitted` even when installed. Launch the sandbox container with `seccomp` unconfined via a compose file:
+
+``` yaml
+# compose.yaml
+services:
+  default:
+    build: .
+    command: "tail -f /dev/null"
+    init: true
+    security_opt:
+      - seccomp=unconfined
+```
+
+Reference that compose file from the task’s sandbox, e.g. `sandbox=("docker", "compose.yaml")`. With both pieces in place, sandboxed commands run under `bwrap` and only genuine escalations (network access, out-of-workspace writes) reach the guardian — no `bubblewrap is unavailable` failures.
+
+> **WARNING: Warning**
+>
+> `seccomp=unconfined` removes a layer of the container’s isolation. By default, Docker applies a seccomp profile that blocks the container from making a set of Linux system calls which containerized code rarely needs but which have historically been the vector for kernel-level privilege escalation and container escapes — for example namespace creation, `mount`/`pivot_root`, and the keyring and `bpf` calls. Setting `seccomp=unconfined` lifts that filter, making the kernel’s entire system-call surface reachable from inside the sandbox.
+>
+> Concretely, this removes defense-in-depth against a compromised or adversarial command escaping the container by exploiting a bug in the host kernel: it does not grant an escape on its own, but it removes a mitigation that would otherwise have to be defeated first. (This matters here precisely because `bwrap`’s own sandboxing depends on some of those same namespace/mount syscalls, which is why enabling it requires unblocking them.)
+>
+> Enable it only for sandboxes running trusted or already-isolated workloads, and weigh it against the fact that the agent may run untrusted, model-generated commands. For security-sensitive deployments, prefer a tailored seccomp profile that unblocks *only* the syscalls bubblewrap needs (`unshare`, `clone`, `mount`, `pivot_root`, `umount2`, `setns`) and keeps the rest of the default block-list intact, rather than disabling seccomp wholesale.
+
+A few caveats:
+
+- The host kernel must support unprivileged user namespaces (standard on modern Linux distributions). `--privileged` also works but grants far more than necessary.
+- On macOS/Windows Docker, containers run in a Linux VM, so these settings apply to the VM’s kernel; behavior matches native Linux.
+
+Use `CodexAutoReview` to customize the guardian policy (extra instructions inserted into the guardian review prompt) and the model that serves guardian requests (an Inspect model role name or a model; by default guardian requests are served by the model the agent is running with):
+
+``` python
+from inspect_swe import CodexAutoReview
+
+codex_cli(
+    auto_review=CodexAutoReview(
+        policy="Deny anything that installs packages.",
+        model="guardian",  # binds the 'guardian' model role
+    )
+)
+```
 
 ## Installation
 
@@ -849,6 +917,276 @@ If Gemini CLI doesn’t appear to be working or working as expected, you can tro
 
 ``` bash
 inspect trace dump --filter "Gemini CLI"
+```
+
+
+# Kimi Code – Inspect SWE
+
+## Overview
+
+The `kimi_code()` agent uses the unattended mode of Moonshot AI [Kimi Code](https://github.com/MoonshotAI/kimi-code) to execute agentic tasks within the Inspect sandbox. Model API calls that occur in the sandbox are proxied back to Inspect for handling by the model provider for the current task.
+
+> **NOTE: NoteKimi Code Installation**
+>
+> By default, the agent will download the current stable version of Kimi Code and copy it to the sandbox. You can also exercise more explicit control over which version of Kimi Code is used—see the [Installation](#installation) section below for details.
+
+## Basic Usage
+
+Use the `kimi_code()` agent as you would any Inspect agent. For example, here we use it as the solver in an Inspect task:
+
+``` python
+from inspect_ai import Task, task
+from inspect_ai.dataset import json_dataset
+from inspect_ai.scorer import model_graded_qa
+
+from inspect_swe import kimi_code
+
+@task
+def system_explorer() -> Task:
+    return Task(
+        dataset=json_dataset("dataset.json"),
+        solver=kimi_code(),
+        scorer=model_graded_qa(),
+        sandbox="docker",
+    )
+```
+
+You can also pass the agent as a `--solver` on the command line:
+
+``` bash
+inspect eval ctf.py --solver inspect_swe/kimi_code
+```
+
+If you want to try this out locally, see the [system_explorer](https://github.com/meridianlabs-ai/inspect_swe/tree/main/examples/system_explorer/task.py) example.
+
+## Options
+
+The following options are supported for customizing the behavior of the agent:
+
+| Option | Description |
+|----|----|
+| `system_prompt` | Additional system prompt to append to default system prompt. |
+| `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
+| `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
+| `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
+| `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Kimi Code available to an Inspect `human_cli()` agent rather than running it unattended. |
+| `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
+| `model` | Model name to use for agent (defaults to main model for task). |
+| `max_context_size` | Context window to configure for Kimi. Defaults to the bridged model’s context length from Inspect model metadata; required when that metadata is unavailable. |
+| `filter` | Filter for intercepting bridged model requests. |
+| `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
+| `disallowed_tools` | Tool names to deny via Kimi Code permission rules. |
+| `cwd` | Working directory for Kimi Code session. |
+| `env` | Environment variables to set for Kimi Code. |
+| `version` | Version of Kimi Code to use (see [Installation](#installation) below for details) |
+
+For example, here we specify a custom system prompt:
+
+``` python
+kimi_code(
+    system_prompt="You are an ace system researcher."
+)
+```
+
+## MCP Servers
+
+You can specify one or more [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro) (MCP) servers to provide additional tools to Kimi Code. Servers are specified via the [`MCPServerConfig`](https://inspect.aisi.org.uk/reference/inspect_ai.tool.html#mcpserverconfig) class and its Stdio and HTTP variants.
+
+For example, here is a Dockerfile that makes the `server-memory` MCP server available in the sandbox container:
+
+``` dockerfile
+FROM python:3.12-bookworm
+
+# nodejs (required by mcp server)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# memory mcp server
+RUN npx --yes @modelcontextprotocol/server-memory --version
+
+# run forever
+CMD ["tail", "-f", "/dev/null"]
+```
+
+Note that we run the `npx` server during the build of the Dockerfile so that it is cached for use offline (below we’ll run it with the `--offline` option).
+
+We can then use this MCP server in a task as follows:
+
+``` python
+from inspect_ai import Task, task
+from inspect_ai.dataset import Sample
+from inspect_ai.tool import MCPServerConfigStdio
+from inspect_swe import kimi_code
+
+@task
+def investigator() -> Task:
+    return Task(
+        dataset=[
+            Sample(
+                input="What transport protocols are supported in "
+                + " the 2025-03-26 version of the MCP spec?"
+            )
+        ],
+        solver=kimi_code(
+            system_prompt="Please use the web search tool to "
+            + "research this question and the memory tools "
+            + "to keep track of your research.",
+            mcp_servers=[
+                MCPServerConfigStdio(
+                    name="memory",
+                    command="npx",
+                    args=[
+                        "--offline",
+                        "@modelcontextprotocol/server-memory"
+                    ],
+                )
+            ]
+        ),
+        sandbox=("docker", "Dockerfile"),
+    )
+```
+
+Note that we run the MCP server using the `--offline` option so that it doesn’t require an internet connection (which it would normally use to check for updates to the package).
+
+## Bridged Tools
+
+You can expose host-side Inspect tools to the sandboxed agent via the MCP protocol using the `bridged_tools` parameter. This allows you to run tools on the host (e.g. tools that access host resources, databases, or APIs) but make them available to the agent running inside the sandbox.
+
+Tools are specified via [`BridgedToolsSpec`](https://inspect.aisi.org.uk/reference/inspect_ai.agent.html#bridgedtoolsspec) which wraps a list of Inspect tools:
+
+``` python
+from inspect_ai import Task, task
+from inspect_ai.agent import BridgedToolsSpec
+from inspect_ai.dataset import Sample
+from inspect_ai.tool import tool
+from inspect_swe import kimi_code
+
+@tool
+def search_database():
+    async def execute(query: str) -> str:
+        """Search the internal database.
+
+        Args:
+            query: The search query.
+        """
+        # This runs on the host, not in the sandbox
+        return f"Results for: {query}"
+    return execute
+
+@task
+def investigator() -> Task:
+    return Task(
+        dataset=[
+            Sample(input="Search for information about MCP protocols.")
+        ],
+        solver=kimi_code(
+            system_prompt="Use the search tool to research.",
+            bridged_tools=[
+                BridgedToolsSpec(
+                    name="host_tools",
+                    tools=[search_database()]
+                )
+            ]
+        ),
+        sandbox=("docker", "Dockerfile"),
+    )
+```
+
+The `name` field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple `BridgedToolsSpec` instances to create separate MCP servers for different tool groups.
+
+See the [Bridged Tools](https://inspect.aisi.org.uk/agent-bridge.html#bridged-tools) documentation for more details on the architecture and how tool execution flows between host and sandbox.
+
+## Tool Repetition Reminders
+
+The Kimi Code CLI appends escalating `<system-reminder>` notes to tool results when it detects the same tool call repeated several times in a row. Since re-polling an identical read-only command is often legitimate in long-running tasks (e.g. waiting for a build to finish), the `kimi_code()` agent strips the first two escalation tiers of these reminders before the bridged model sees them (so they also don’t appear in the transcript). The final tier — which instructs the model to write its final response, and precedes Kimi Code force-stopping the turn at 12 repetitions — is passed through unchanged so the model can wrap up gracefully.
+
+## Installation
+
+Kimi Code publishes glibc-only Linux binaries, and the agent runs them via `bash`, so sandbox images must provide glibc and bash (e.g. Debian/Ubuntu based images). musl-based images such as Alpine are not supported and fail at binary resolution time.
+
+By default, the agent will download the current latest version of Kimi Code and copy it to the sandbox. You can override this behaviour using the `version` option:
+
+| Option | Description |
+|----|----|
+| `"auto"` | Use any available version of Kimi Code in the sandbox, otherwise download the latest version. |
+| `"sandbox"` | Use the version of Kimi Code in the sandbox (raises `RuntimeError` if not available in the sandbox) |
+| `"latest"` | Download and use the very latest version. |
+| `"x.x.x"` | Download and use a specific version number. |
+
+If you don’t ever want to rely on automatic downloads of Kimi Code (e.g. if you run your evaluations offline), you can use one of two approaches:
+
+1.  Pre-install the version of Kimi Code you want to use in the sandbox, then use `version="sandbox"`:
+
+    ``` python
+    kimi_code(version="sandbox")
+    ```
+
+2.  Download the version of Kimi Code you want to use into the cache, then specify that version explicitly:
+
+    ``` python
+    # download the agent binary during installation/configuration
+    download_agent_binary("kimi_code", "0.29.0", "linux-x64")
+
+    # reference that version in your task (no download will occur)
+    kimi_code(version="0.29.0")
+    ```
+
+    Note that the 5 most recently downloaded versions are retained in the cache. Use the [cached_agent_binaries()](./reference/index.html.md#cached_agent_binaries) function to list the contents of the cache.
+
+## Centaur Mode
+
+The `kimi_code()` agent can also be run in “centaur” mode which uses the Inspect AI [Human Agent](https://inspect.aisi.org.uk/human-agent.html) as the solver and makes [Kimi Code](https://github.com/MoonshotAI/kimi-code) available to the human user for help with the task. So rather than strictly measuring human vs. model performance, you are able to measure performance of humans working collaboratively with a model.
+
+Enable centaur mode by passing `centaur=True` to the `kimi_code()` agent:
+
+``` python
+from inspect_ai import Task, task
+from inspect_ai.dataset import json_dataset
+from inspect_ai.scorer import model_graded_qa
+
+from inspect_swe import kimi_code
+
+@task
+def system_explorer() -> Task:
+    return Task(
+        dataset=json_dataset("dataset.json"),
+        solver=kimi_code(centaur=True),
+        scorer=model_graded_qa(),
+        sandbox="docker",
+    )
+```
+
+You can also enable centaur mode from the CLI using a solver arg (`-S`):
+
+``` bash
+inspect eval ctf.py --solver inspect_swe/kimi_code -S centaur=true
+```
+
+You can also pass `CentaurOptions` to further customize the behavior of the human agent. For example:
+
+``` python
+from inspect_swe import CentaurOptions
+
+Task(
+    dataset=json_dataset("dataset.json"),
+    solver=kimi_code(centaur=CentaurOptions(answer=False)),
+    scorer=model_graded_qa(),
+    sandbox="docker",
+)
+```
+
+See the [human_cli()](https://inspect.aisi.org.uk/reference/inspect_ai.agent.html#human_cli) documentation for details on available options.
+
+## Troubleshooting
+
+If Kimi Code doesn’t appear to be working or working as expected, you can troubleshoot by dumping the Kimi Code debug log after an evaluation task is complete. You can do this with:
+
+``` bash
+inspect trace dump --filter "Kimi Code"
 ```
 
 

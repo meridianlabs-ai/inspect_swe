@@ -14,40 +14,39 @@ Use `disallowed_tools` to control access to tools. See [Tools available to Claud
 
 Use the `attempts` option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/_claude_code/claude_code.py#L52)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_claude_code/claude_code.py#L102)
 
 ``` python
-@agent
 def claude_code(
-    name: str = "Claude Code",
-    description: str = dedent("""
-       Autonomous coding agent capable of writing, testing, debugging,
-       and iterating on code across multiple languages.
-    """),
-    system_prompt: str | None = None,
-    skills: Sequence[str | Path | Skill] | None = None,
-    mcp_servers: Sequence[MCPServerConfig] | None = None,
-    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
-    disallowed_tools: list[str] | None = None,
-    centaur: bool | CentaurOptions = False,
-    attempts: int | AgentAttempts = 1,
-    model: str | None = None,
-    model_config: str | None = None,
-    model_aliases: dict[str, str | Model] | None = None,
-    opus_model: str | None = None,
-    sonnet_model: str | None = None,
-    haiku_model: str | None = None,
-    subagent_model: str | None = None,
-    filter: GenerateFilter | None = None,
-    auto_mode: bool = False,
-    retry_refusals: int | None = 3,
-    retry_uncaught_errors: int | None = 3,
-    cwd: str | None = None,
-    env: dict[str, str] | None = None,
-    user: str | None = None,
-    sandbox: str | None = None,
-    version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
-    debug: bool | None = None,
+    name: str = ...,
+    description: str = ...,
+    system_prompt: str | None = ...,
+    skills: Sequence[str | Path | Skill] | None = ...,
+    mcp_servers: Sequence[MCPServerConfig] | None = ...,
+    bridged_tools: Sequence[BridgedToolsSpec] | None = ...,
+    disallowed_tools: list[str] | None = ...,
+    centaur: bool | CentaurOptions = ...,
+    attempts: int | AgentAttempts = ...,
+    model: str | None = ...,
+    model_config: str | None = ...,
+    model_aliases: dict[str, str | Model] | None = ...,
+    opus_model: str | None = ...,
+    sonnet_model: str | None = ...,
+    haiku_model: str | None = ...,
+    subagent_model: str | None = ...,
+    filter: GenerateFilter | None = ...,
+    permission_mode: ClaudeCodePermissionMode | None = ...,
+    retry_refusals: int | None = ...,
+    retry_uncaught_errors: int | None = ...,
+    cwd: str | None = ...,
+    env: dict[str, str] | None = ...,
+    user: str | None = ...,
+    sandbox: str | None = ...,
+    version: Literal['auto', 'sandbox', 'stable', 'latest'] | str = ...,
+    debug: bool | None = ...,
+    allowlist_mcp_tools: bool = ...,
+    *,
+    auto_mode: bool = ...,
 ) -> Agent
 ```
 
@@ -102,8 +101,8 @@ The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). De
 `filter` GenerateFilter \| None  
 Filter for intercepting bridged model requests.
 
-`auto_mode` bool  
-Use `auto` permission mode rather than `--dangerously-skip-permissions`. Note that this can result in rejected tool calls so only enable if your evaluation can tolerate this.
+`permission_mode` ClaudeCodePermissionMode \| None  
+Claude Code `--permission-mode`. The complete CLI set is `"acceptEdits"`, `"auto"`, `"bypassPermissions"`, `"default"`, `"dontAsk"`, and `"plan"`. `"bypassPermissions"` is near-equivalent to the default `--dangerously-skip-permissions` path, and `"dontAsk"` is also now reachable. `--allowed-tools` is consulted in every mode except `"bypassPermissions"`. In unattended runs, tools excluded from `--allowed-tools` cannot be prompted for and are denied; `"auto"` is the only mode where otherwise-unapproved calls are adjudicated by Claude Code’s first-party classifier rather than denied unconditionally.
 
 `retry_refusals` int \| None  
 Should refusals be retried? Defaults to retrying up to 3 times.
@@ -129,6 +128,11 @@ Version of claude code to use. One of: - “auto”: Use any available version o
 `debug` bool \| None  
 Add `--debug` cli flag and trace all debug output.
 
+`allowlist_mcp_tools` bool  
+Whether to add static caller-provided MCP tools to `--allowed-tools` (default `True`). It matters in every permission mode except `"bypassPermissions"`: in unattended runs, excluded static tools are denied without prompting. Set `False` with `permission_mode="auto"` when Claude Code’s first-party classifier should adjudicate those tools. Bridged Inspect tools remain allowlisted because an evaluation may depend on them being callable.
+
+`auto_mode` bool  
+
 ### codex_cli
 
 Codex CLI.
@@ -137,7 +141,7 @@ Agent that uses OpenAI [Codex CLI](https://github.com/openai/codex) running in a
 
 Use the `attempts` option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/_codex_cli/codex_cli.py#L63)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_codex_cli/codex_cli.py#L67)
 
 ``` python
 def codex_cli(
@@ -150,6 +154,7 @@ def codex_cli(
     bridged_tools: Sequence[BridgedToolsSpec] | None = ...,
     web_search: CodexWebSearch = ...,
     goals: bool = ...,
+    auto_review: bool | CodexAutoReview = ...,
     centaur: bool | CentaurOptions = ...,
     attempts: int | AgentAttempts = ...,
     model: str | None = ...,
@@ -195,6 +200,9 @@ Web search mode. Use “live” for live web search, “cached” for cached web
 
 `goals` bool  
 Enable Codex goal tools (defaults to `True`).
+
+`auto_review` bool \| CodexAutoReview  
+Enable Codex automated approval review (guardian). When enabled, Codex runs with its own sandbox active (`workspace-write`) and `on-request` approvals; escalation requests (e.g. network access, writes outside the workspace) are adjudicated by a guardian model rather than auto-approved. Pass `CodexAutoReview` to customize the guardian policy and model. Requires Codex CLI \>= 0.137.0. Defaults to `False`.
 
 `centaur` bool \| CentaurOptions  
 Run in ‘centaur’ mode, which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended.
@@ -248,7 +256,7 @@ Agent that uses Google [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 
 Use the `attempts` option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/_gemini_cli/gemini_cli.py#L34)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_gemini_cli/gemini_cli.py#L34)
 
 ``` python
 @agent
@@ -343,7 +351,7 @@ Agent that uses [OpenCode](https://github.com/anomalyco/opencode) running in a s
 
 Use the `attempts` option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/_opencode/opencode.py#L33)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_opencode/opencode.py#L33)
 
 ``` python
 @agent
@@ -443,7 +451,7 @@ Use `attempts` to enable additional submissions if initial submission(s) are inc
 
 This agent does not handle compaction natively. Use `compaction` to specify a compaction strategy.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/_mini_swe_agent/mini_swe_agent.py#L49)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_mini_swe_agent/mini_swe_agent.py#L49)
 
 ``` python
 @agent
@@ -528,7 +536,7 @@ Download an agent binary. This version will be added to the cache of downloaded 
 
 Use this if you need to ensure that a specific version of an agent binary is downloaded in advance (e.g. if you are going to run your evaluations offline). After downloading, explicit requests for the downloaded version (e.g. `claude_code(version="1.0.98")`) will not require network access.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/_tools/download.py#L53)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_tools/download.py#L53)
 
 ``` python
 def download_agent_binary(
@@ -551,7 +559,7 @@ Target platform (“linux-x64”, “linux-arm64”, “linux-x64-musl”, or �
 
 List the agent binaries which have been cached on this system.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/_tools/download.py#L80)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_tools/download.py#L80)
 
 ``` python
 def cached_agent_binaries(
@@ -571,7 +579,7 @@ Download all wheels for a package and its dependencies.
 
 Downloads wheels from PyPI for the specified platform and Python version, then bundles them into a tarball for offline installation in sandbox. Downloaded wheels are cached locally (retaining 5 most recent versions).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/_util/agentwheel.py#L304)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_util/agentwheel.py#L304)
 
 ``` python
 def download_wheels_tarball(
@@ -598,7 +606,7 @@ Python version without dots (e.g., “312”)
 
 Agent binary.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/_tools/download.py#L15)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_tools/download.py#L15)
 
 ``` python
 class AgentBinary(NamedTuple)
@@ -619,7 +627,7 @@ Agent version.
 
 Target platform identifier for sandbox binary and wheel downloads.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/_util/sandbox.py#L9)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_util/sandbox.py#L9)
 
 ``` python
 SandboxPlatform: TypeAlias = Literal[
@@ -635,7 +643,7 @@ Claude Code agent via ACP.
 
 Uses the `claude-agent-acp` adapter in a sandbox. Supports multi-turn sessions and mid-turn interrupts.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/acp/_agents/claude_code/claude_code.py#L167)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/_agents/claude_code/claude_code.py#L167)
 
 ``` python
 def interactive_claude_code(
@@ -706,13 +714,14 @@ Codex CLI agent via ACP.
 
 Uses the `codex-acp` adapter in a sandbox. Supports multi-turn sessions and mid-turn interrupts.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/acp/_agents/codex_cli/codex_cli.py#L197)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/_agents/codex_cli/codex_cli.py#L212)
 
 ``` python
 def interactive_codex_cli(
     *,
     web_search: CodexWebSearch = ...,
     goals: bool = ...,
+    auto_review: bool | CodexAutoReview = ...,
     skills: list[str | Path | Skill] | None = ...,
     home_dir: str | None = ...,
     config_overrides: dict[str, str] | None = ...,
@@ -725,6 +734,9 @@ Web search mode. Use `"live"` for live web search, `"cached"` for cached web sea
 
 `goals` bool  
 Enable Codex goal tools.
+
+`auto_review` bool \| CodexAutoReview  
+Enable Codex automated approval review (guardian): Codex runs with its own `workspace-write` sandbox and `on-request` approvals, with escalations adjudicated by a guardian model. Pass :class:`CodexAutoReview` to customize the guardian policy and model. Note: guardian adjudication depends on the codex-core embedded in the `codex-acp` adapter honoring `approvals_reviewer` (Codex CLI \>= 0.137.0 behavior); unlike [codex_cli()](../reference/index.html.md#codex_cli), this cannot be version-checked here. If the embedded core instead surfaces an escalation as an ACP permission request, it is auto-approved.
 
 `skills` list\[str \| Path \| Skill\] \| None  
 Additional skills to make available.
@@ -743,7 +755,7 @@ Gemini CLI agent via ACP.
 
 Uses gemini’s native `--experimental-acp` flag in a sandbox. Supports multi-turn sessions and mid-turn interrupts.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/acp/_agents/gemini_cli/gemini_cli.py#L166)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/_agents/gemini_cli/gemini_cli.py#L166)
 
 ``` python
 def interactive_gemini_cli(
@@ -800,7 +812,7 @@ Run gemini-cli with `--debug` and `GEMINI_DEBUG_LOG_FILE` set to `$HOME/gemini-d
 
 Convert bridge `MCPServerConfigHTTP` objects to ACP `HttpMcpServer`.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/acp/agent.py#L29)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/agent.py#L29)
 
 ``` python
 def bridge_mcp_to_acp(configs: list[MCPServerConfigHTTP]) -> list[HttpMcpServer]
@@ -816,7 +828,7 @@ Manages the ACP lifecycle (connection, session, MCP announcement, cleanup). Subc
 
 Sets up the ACP lifecycle, exposes `.conn` and `.session_id`, signals `.ready`, then blocks until the task is cancelled. The caller drives all prompts via `conn.prompt()` / `conn.cancel()`.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/acp/agent.py#L76)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/agent.py#L76)
 
 ``` python
 class ACPAgent(Agent)
@@ -826,7 +838,7 @@ class ACPAgent(Agent)
 
 Keyword arguments accepted by :class:[ACPAgent](../reference/index.html.md#acpagent).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/acp/agent.py#L45)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/agent.py#L45)
 
 ``` python
 class ACPAgentParams(TypedDict, total=False)
@@ -849,7 +861,7 @@ Usage::
         session = await conn.new_session(...)
         await conn.prompt(...)
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/e0b83497f3c7f8126652e06c50069b5d756c5f6f/src/inspect_swe/acp/client.py#L255)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/client.py#L269)
 
 ``` python
 @contextlib.asynccontextmanager

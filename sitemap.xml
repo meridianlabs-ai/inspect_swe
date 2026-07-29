@@ -2,34 +2,38 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://meridianlabs-ai.github.io/inspect_swe/reference/index.html</loc>
-    <lastmod>2026-05-23T17:14:11.153Z</lastmod>
+    <lastmod>2026-06-29T17:49:10.954Z</lastmod>
   </url>
   <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/gemini_cli.html</loc>
-    <lastmod>2026-02-20T07:29:20.244Z</lastmod>
-  </url>
-  <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/opencode.html</loc>
-    <lastmod>2026-05-09T13:55:45.899Z</lastmod>
-  </url>
-  <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/CHANGELOG.html</loc>
-    <lastmod>2026-07-05T15:43:57.589Z</lastmod>
-  </url>
-  <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/claude_code.html</loc>
-    <lastmod>2026-06-04T17:18:42.579Z</lastmod>
-  </url>
-  <url>
-    <loc>https://meridianlabs-ai.github.io/inspect_swe/index.html</loc>
-    <lastmod>2026-05-09T13:58:27.418Z</lastmod>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/kimi_code.html</loc>
+    <lastmod>2026-07-28T17:08:59.483Z</lastmod>
   </url>
   <url>
     <loc>https://meridianlabs-ai.github.io/inspect_swe/codex_cli.html</loc>
-    <lastmod>2026-05-31T17:35:16.099Z</lastmod>
+    <lastmod>2026-07-29T14:29:53.499Z</lastmod>
+  </url>
+  <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/index.html</loc>
+    <lastmod>2026-07-28T17:08:59.483Z</lastmod>
+  </url>
+  <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/claude_code.html</loc>
+    <lastmod>2026-06-29T17:49:10.953Z</lastmod>
+  </url>
+  <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/CHANGELOG.html</loc>
+    <lastmod>2026-07-15T13:26:40.741Z</lastmod>
+  </url>
+  <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/opencode.html</loc>
+    <lastmod>2026-06-29T17:49:10.953Z</lastmod>
+  </url>
+  <url>
+    <loc>https://meridianlabs-ai.github.io/inspect_swe/gemini_cli.html</loc>
+    <lastmod>2026-03-05T02:07:01.001Z</lastmod>
   </url>
   <url>
     <loc>https://meridianlabs-ai.github.io/inspect_swe/mini_swe_agent.html</loc>
-    <lastmod>2026-02-27T13:31:50.263Z</lastmod>
+    <lastmod>2026-03-05T02:07:01.002Z</lastmod>
   </url>
 </urlset>

@@ -11,6 +11,7 @@
 - [Claude Code](https://meridianlabs-ai.github.io/inspect_swe/claude_code.html.md)
 - [Codex CLI](https://meridianlabs-ai.github.io/inspect_swe/codex_cli.html.md)
 - [Gemini CLI](https://meridianlabs-ai.github.io/inspect_swe/gemini_cli.html.md)
+- [Kimi Code](https://meridianlabs-ai.github.io/inspect_swe/kimi_code.html.md)
 - [OpenCode](https://meridianlabs-ai.github.io/inspect_swe/opencode.html.md)
 - [Mini SWE Agent](https://meridianlabs-ai.github.io/inspect_swe/mini_swe_agent.html.md)
 
