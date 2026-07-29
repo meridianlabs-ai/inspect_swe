@@ -37,5 +37,5 @@ def test_append_and_replace_system_prompts_are_mutually_exclusive() -> None:
     ):
         claude_code(
             system_prompt="Additional prompt",
-            replace_system_prompt="Replacement prompt",  # type: ignore[call-overload]
+            replace_system_prompt="Replacement prompt",
         )

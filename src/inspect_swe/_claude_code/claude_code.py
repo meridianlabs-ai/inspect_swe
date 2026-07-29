@@ -2,7 +2,7 @@ import shlex
 import uuid
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Literal, Mapping, Sequence, cast, overload
+from typing import Any, Literal, Mapping, Sequence, cast
 
 from inspect_ai.agent import (
     Agent,
@@ -97,80 +97,6 @@ def resolve_claude_code_permission_mode(
                 "permission_mode must be one of 'acceptEdits', 'auto', "
                 "'bypassPermissions', 'default', 'dontAsk', or 'plan'."
             )
-
-
-@overload
-def claude_code(
-    name: str = "Claude Code",
-    description: str = dedent("""
-       Autonomous coding agent capable of writing, testing, debugging,
-       and iterating on code across multiple languages.
-    """),
-    system_prompt: str = ...,
-    skills: Sequence[str | Path | Skill] | None = None,
-    mcp_servers: Sequence[MCPServerConfig] | None = None,
-    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
-    disallowed_tools: list[str] | None = None,
-    centaur: bool | CentaurOptions = False,
-    attempts: int | AgentAttempts = 1,
-    model: str | None = None,
-    model_config: str | None = None,
-    model_aliases: dict[str, str | Model] | None = None,
-    opus_model: str | None = None,
-    sonnet_model: str | None = None,
-    haiku_model: str | None = None,
-    subagent_model: str | None = None,
-    filter: GenerateFilter | None = None,
-    permission_mode: ClaudeCodePermissionMode | None = None,
-    retry_refusals: int | None = 3,
-    retry_uncaught_errors: int | None = 3,
-    cwd: str | None = None,
-    env: dict[str, str] | None = None,
-    user: str | None = None,
-    sandbox: str | None = None,
-    version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
-    debug: bool | None = None,
-    replace_system_prompt: None = None,
-    allowlist_mcp_tools: bool = True,
-    **deprecated_args: Unpack[ClaudeCodeDeprecatedArgs],
-) -> Agent: ...
-
-
-@overload
-def claude_code(
-    name: str = "Claude Code",
-    description: str = dedent("""
-       Autonomous coding agent capable of writing, testing, debugging,
-       and iterating on code across multiple languages.
-    """),
-    system_prompt: None = None,
-    skills: Sequence[str | Path | Skill] | None = None,
-    mcp_servers: Sequence[MCPServerConfig] | None = None,
-    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
-    disallowed_tools: list[str] | None = None,
-    centaur: bool | CentaurOptions = False,
-    attempts: int | AgentAttempts = 1,
-    model: str | None = None,
-    model_config: str | None = None,
-    model_aliases: dict[str, str | Model] | None = None,
-    opus_model: str | None = None,
-    sonnet_model: str | None = None,
-    haiku_model: str | None = None,
-    subagent_model: str | None = None,
-    filter: GenerateFilter | None = None,
-    permission_mode: ClaudeCodePermissionMode | None = None,
-    retry_refusals: int | None = 3,
-    retry_uncaught_errors: int | None = 3,
-    cwd: str | None = None,
-    env: dict[str, str] | None = None,
-    user: str | None = None,
-    sandbox: str | None = None,
-    version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
-    debug: bool | None = None,
-    replace_system_prompt: str | None = None,
-    allowlist_mcp_tools: bool = True,
-    **deprecated_args: Unpack[ClaudeCodeDeprecatedArgs],
-) -> Agent: ...
 
 
 @agent
