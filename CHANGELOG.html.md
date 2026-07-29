@@ -1,5 +1,19 @@
 # changelog – Inspect SWE
 
+## [0.2.67](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.66...0.2.67) (2026-07-29)
+
+### Features
+
+- **claude_code:** add `permission_mode` option (deprecates `auto_mode`) ([5cc9e6d](https://github.com/meridianlabs-ai/inspect_swe/commit/5cc9e6d9a92ed71efc9d72d075528c598b4498d4))
+- **claude_code:** control static MCP allowlisting ([\#91](https://github.com/meridianlabs-ai/inspect_swe/issues/91)) ([5cc9e6d](https://github.com/meridianlabs-ai/inspect_swe/commit/5cc9e6d9a92ed71efc9d72d075528c598b4498d4))
+- **codex_cli:** add auto_review option for automated approval review ([\#102](https://github.com/meridianlabs-ai/inspect_swe/issues/102)) ([cc854fd](https://github.com/meridianlabs-ai/inspect_swe/commit/cc854fd00f6939f40d2004eb6e7d077283d8af18))
+- **kimi:** add `kimi_code()` agent with Inspect bridging, MCP, skills, and Centaur support ([\#73](https://github.com/meridianlabs-ai/inspect_swe/issues/73)) ([7fca27f](https://github.com/meridianlabs-ai/inspect_swe/commit/7fca27f4481a02e39122efd0fd98b306274251bb))
+
+### Bug Fixes
+
+- **claude_code:** correct “all” tools MCP allowlist wildcard to ([5cc9e6d](https://github.com/meridianlabs-ai/inspect_swe/commit/5cc9e6d9a92ed71efc9d72d075528c598b4498d4))
+- **codex_cli:** refresh bundled model catalog snapshot to track live latest ([\#95](https://github.com/meridianlabs-ai/inspect_swe/issues/95)) ([596be22](https://github.com/meridianlabs-ai/inspect_swe/commit/596be229bb3efb47adaab0edbb2997b7ae3c7d68))
+
 ## [0.2.66](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.65...0.2.66) (2026-07-14)
 
 ### Bug Fixes
