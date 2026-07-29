@@ -45,6 +45,10 @@ For example, here we specify a custom system prompt and  disable the web search 
 )
 ```
 
+{{< include _snippets/agent_mcp_servers.md >}}
+
+{{< include _snippets/agent_bridged_tools.md >}}
+
 ## Auto Review
 
 By default, the agent runs Codex with `--dangerously-bypass-approvals-and-sandbox`: Codex's internal sandbox and approval prompts are disabled, since the agent already runs inside the Inspect sandbox. The `auto_review` option instead runs Codex the way its own "Approve for me" mode ships: Codex's `workspace-write` sandbox is active, `approval_policy` is `on-request`, and escalation requests (network access, writes outside the workspace, MCP tool approvals) are adjudicated by an automated "guardian" reviewer model rather than a human:
@@ -110,10 +114,6 @@ from inspect_swe import CodexAutoReview
     )
 )
 ```
-
-{{< include _snippets/agent_mcp_servers.md >}}
-
-{{< include _snippets/agent_bridged_tools.md >}}
 
 ## Installation
 
