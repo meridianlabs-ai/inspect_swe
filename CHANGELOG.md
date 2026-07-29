@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- Claude Code: Add `replace_system_prompt` for replacing Claude Code's built-in system prompt. The existing `system_prompt` option continues to append instructions.
-
 ## [0.2.67](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.66...0.2.67) (2026-07-29)
 
 
