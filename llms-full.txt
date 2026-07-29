@@ -515,15 +515,15 @@ By default, the agent runs Codex with `--dangerously-bypass-approvals-and-sandbo
 codex_cli(auto_review=True)
 ```
 
-Enabling `auto_review` requires Codex CLI \>= 0.137.0 and materially constrains the agent relative to the default. On Linux, Codex enforces the `workspace-write` sandbox by launching each command through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`). This needs both (a) a `bwrap` binary available in the sandbox and (b) a container configured to permit the namespace operations `bwrap` requires — see [Running the sandbox in a container](#running-the-sandbox-in-a-container) below.
+Enabling `auto_review` requires Codex CLI \>= 0.137.0 and adds constraints on what the agent can do without review. It works whether or not Codex’s own OS-level sandbox is available — but *how* those constraints are enforced differs. On Linux, Codex enforces the `workspace-write` sandbox by launching each command through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`), which needs both (a) a `bwrap` binary in the sandbox and (b) a container configured to permit the namespace operations `bwrap` requires — see [Running the sandbox in a container](#running-the-sandbox-in-a-container) below. When both are present, commands run under the OS sandbox and only genuine escalations (network access, out-of-workspace writes) reach the guardian.
 
-When either is missing, Codex cannot start its sandbox: each sandboxed command fails with a `bubblewrap is unavailable` error, which is returned to the model as the command’s output. **Codex does not automatically fall back to a review-only mode.** Recovery is model-driven: a capable model typically reacts to the failure by re-issuing the command with escalated permissions (`require_escalated`) — which the guardian then adjudicates and, if approved, runs outside the sandbox. Typically, models carry that escalation forward on subsequent commands. This degrades gracefully for capable models, but it is not guaranteed by Codex: it costs an extra failed attempt on the first command, depends on the model choosing to escalate, and any command the model does *not* escalate runs in the sandbox triggering another sandbox error. When the sandbox *is* available, the guardian may also deny escalations, and repeated denials interrupt the turn.
+When `bwrap` is unavailable — the case for most sandbox images out of the box — `auto_review` still works, but review is model-driven rather than OS-enforced. Codex cannot start its sandbox, so each sandboxed command fails with a `bubblewrap is unavailable` error returned to the model; Codex does *not* fall back to a review-only mode on its own. A capable model recovers by re-issuing the command with escalated permissions (`require_escalated`), which the guardian then reviews and, if approved, runs outside the sandbox — and it typically carries that escalation forward. The trade-off is that review now depends on the model choosing to escalate (an un-escalated command simply hits the sandbox error again), rather than being enforced by Codex. Either way, the guardian may deny an escalation, and repeated denials interrupt the turn.
 
-Under `workspace-write`, the workspace root is the agent’s working directory (the `cwd` option): commands can read the whole filesystem but can only write within the working directory plus `/tmp` and `$TMPDIR`, top-level `.git` and `.agents` directories are read-only even inside the workspace (so e.g. `git commit` requires an approved escalation), and commands have no network access by default. Actions outside these bounds fail in the sandbox and proceed only if the model requests escalation and the guardian approves. If your task layout requires more, pass `config_overrides` (applied before the auto_review settings, so they compose) — for example `{"sandbox_workspace_write.network_access": "true"}` or `{"sandbox_workspace_write.writable_roots": '["/data"]'}` — and/or set `cwd` so the workspace root matches where the task’s files live.
+When `bwrap` is available, the `workspace-write` policy defines what a command may do before it needs an approved escalation. The workspace root is the agent’s working directory (the `cwd` option): commands can read the whole filesystem but can only write within the working directory plus `/tmp` and `$TMPDIR`, top-level `.git` and `.agents` directories are read-only even inside the workspace (so e.g. `git commit` requires an approved escalation), and commands have no network access by default. Actions outside these bounds fail in the sandbox and proceed only if the model requests escalation and the guardian approves. If your task layout requires more, pass `config_overrides` (applied before the auto_review settings, so they compose) — for example `{"sandbox_workspace_write.network_access": "true"}` or `{"sandbox_workspace_write.writable_roots": '["/data"]'}` — and/or set `cwd` so the workspace root matches where the task’s files live.
 
 ### Running the sandbox in a container
 
-Most sandbox images (including the default Inspect sandbox image) do not ship bubblewrap, and container runtimes block the syscalls it needs by default. So out of the box, `auto_review` in a Docker sandbox lands in the model-driven degraded path described above. To make Codex’s `workspace-write` sandbox actually enforce, do both of the following.
+To make Codex’s `workspace-write` sandbox actually enforce in a Docker sandbox — rather than falling back to the model-driven path above — do both of the following.
 
 **1. Provide `bwrap` in the sandbox image.** Codex looks for `bwrap` on the `PATH` (or bundled at `codex-resources/bwrap` next to its binary). Install it in your Dockerfile:
 
@@ -1615,7 +1615,7 @@ Use `disallowed_tools` to control access to tools. See [Tools available to Claud
 
 Use the `attempts` option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_claude_code/claude_code.py#L102)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/_claude_code/claude_code.py#L102)
 
 ``` python
 def claude_code(
@@ -1742,7 +1742,7 @@ Agent that uses OpenAI [Codex CLI](https://github.com/openai/codex) running in a
 
 Use the `attempts` option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_codex_cli/codex_cli.py#L67)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/_codex_cli/codex_cli.py#L67)
 
 ``` python
 def codex_cli(
@@ -1857,7 +1857,7 @@ Agent that uses Google [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 
 Use the `attempts` option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_gemini_cli/gemini_cli.py#L34)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/_gemini_cli/gemini_cli.py#L34)
 
 ``` python
 @agent
@@ -1952,7 +1952,7 @@ Agent that uses [OpenCode](https://github.com/anomalyco/opencode) running in a s
 
 Use the `attempts` option to enable additional submissions if the initial submission(s) are incorrect (by default, no additional attempts are permitted).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_opencode/opencode.py#L33)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/_opencode/opencode.py#L33)
 
 ``` python
 @agent
@@ -2052,7 +2052,7 @@ Use `attempts` to enable additional submissions if initial submission(s) are inc
 
 This agent does not handle compaction natively. Use `compaction` to specify a compaction strategy.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_mini_swe_agent/mini_swe_agent.py#L49)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/_mini_swe_agent/mini_swe_agent.py#L49)
 
 ``` python
 @agent
@@ -2137,7 +2137,7 @@ Download an agent binary. This version will be added to the cache of downloaded 
 
 Use this if you need to ensure that a specific version of an agent binary is downloaded in advance (e.g. if you are going to run your evaluations offline). After downloading, explicit requests for the downloaded version (e.g. `claude_code(version="1.0.98")`) will not require network access.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_tools/download.py#L53)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/_tools/download.py#L53)
 
 ``` python
 def download_agent_binary(
@@ -2160,7 +2160,7 @@ Target platform (“linux-x64”, “linux-arm64”, “linux-x64-musl”, or �
 
 List the agent binaries which have been cached on this system.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_tools/download.py#L80)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/_tools/download.py#L80)
 
 ``` python
 def cached_agent_binaries(
@@ -2180,7 +2180,7 @@ Download all wheels for a package and its dependencies.
 
 Downloads wheels from PyPI for the specified platform and Python version, then bundles them into a tarball for offline installation in sandbox. Downloaded wheels are cached locally (retaining 5 most recent versions).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_util/agentwheel.py#L304)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/_util/agentwheel.py#L304)
 
 ``` python
 def download_wheels_tarball(
@@ -2207,7 +2207,7 @@ Python version without dots (e.g., “312”)
 
 Agent binary.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_tools/download.py#L15)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/_tools/download.py#L15)
 
 ``` python
 class AgentBinary(NamedTuple)
@@ -2228,7 +2228,7 @@ Agent version.
 
 Target platform identifier for sandbox binary and wheel downloads.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/_util/sandbox.py#L9)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/_util/sandbox.py#L9)
 
 ``` python
 SandboxPlatform: TypeAlias = Literal[
@@ -2244,7 +2244,7 @@ Claude Code agent via ACP.
 
 Uses the `claude-agent-acp` adapter in a sandbox. Supports multi-turn sessions and mid-turn interrupts.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/_agents/claude_code/claude_code.py#L167)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/acp/_agents/claude_code/claude_code.py#L167)
 
 ``` python
 def interactive_claude_code(
@@ -2315,7 +2315,7 @@ Codex CLI agent via ACP.
 
 Uses the `codex-acp` adapter in a sandbox. Supports multi-turn sessions and mid-turn interrupts.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/_agents/codex_cli/codex_cli.py#L212)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/acp/_agents/codex_cli/codex_cli.py#L212)
 
 ``` python
 def interactive_codex_cli(
@@ -2356,7 +2356,7 @@ Gemini CLI agent via ACP.
 
 Uses gemini’s native `--experimental-acp` flag in a sandbox. Supports multi-turn sessions and mid-turn interrupts.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/_agents/gemini_cli/gemini_cli.py#L166)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/acp/_agents/gemini_cli/gemini_cli.py#L166)
 
 ``` python
 def interactive_gemini_cli(
@@ -2413,7 +2413,7 @@ Run gemini-cli with `--debug` and `GEMINI_DEBUG_LOG_FILE` set to `$HOME/gemini-d
 
 Convert bridge `MCPServerConfigHTTP` objects to ACP `HttpMcpServer`.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/agent.py#L29)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/acp/agent.py#L29)
 
 ``` python
 def bridge_mcp_to_acp(configs: list[MCPServerConfigHTTP]) -> list[HttpMcpServer]
@@ -2429,7 +2429,7 @@ Manages the ACP lifecycle (connection, session, MCP announcement, cleanup). Subc
 
 Sets up the ACP lifecycle, exposes `.conn` and `.session_id`, signals `.ready`, then blocks until the task is cancelled. The caller drives all prompts via `conn.prompt()` / `conn.cancel()`.
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/agent.py#L76)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/acp/agent.py#L76)
 
 ``` python
 class ACPAgent(Agent)
@@ -2439,7 +2439,7 @@ class ACPAgent(Agent)
 
 Keyword arguments accepted by :class:[ACPAgent](../reference/index.html.md#acpagent).
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/agent.py#L45)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/acp/agent.py#L45)
 
 ``` python
 class ACPAgentParams(TypedDict, total=False)
@@ -2462,7 +2462,7 @@ Usage::
         session = await conn.new_session(...)
         await conn.prompt(...)
 
-[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/05747958fdf215ec3282ec8b26a8e10283383102/src/inspect_swe/acp/client.py#L269)
+[Source](https://github.com/meridianlabs-ai/inspect_swe/blob/b403ba31e15a1d0daf6f2f8952d170f0d1edc77d/src/inspect_swe/acp/client.py#L269)
 
 ``` python
 @contextlib.asynccontextmanager
