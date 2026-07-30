@@ -147,6 +147,7 @@ def claude_code(
     debug: bool | None = None,
     replace_system_prompt: str | None = None,
     allowlist_mcp_tools: bool = True,
+    allowlist_bridged_tools: bool = True,
     **deprecated_args: Unpack[ClaudeCodeDeprecatedArgs],
 ) -> Agent:
     """Claude Code agent.
@@ -223,8 +224,23 @@ def claude_code(
             mode except `"bypassPermissions"`: in unattended runs, excluded
             static tools are denied without prompting. Set `False` with
             `permission_mode="auto"` when Claude Code's first-party classifier
-            should adjudicate those tools. Bridged Inspect tools remain allowlisted
-            because an evaluation may depend on them being callable.
+            should adjudicate those tools. Bridged Inspect tools are governed
+            separately by `allowlist_bridged_tools`.
+        allowlist_bridged_tools: Whether to add bridged Inspect tools to
+            `--allowed-tools` (default `True`, preserving the behavior every
+            existing caller gets). Bridged tools are allowlisted by default
+            because an evaluation may depend on them being callable, and in
+            every mode except `"auto"` a tool left off `--allowed-tools` is
+            denied without prompting in an unattended run.
+
+            Set `False` ONLY with `permission_mode="auto"`, where an excluded
+            tool is adjudicated by the classifier rather than denied. This is
+            required for an evaluation that measures Claude Code's own auto-mode
+            classifier acting on bridged tools: an allow rule resolves at step 1
+            of the permission flow, BEFORE the classifier, so an allowlisted
+            bridged call is never reviewed. Left `True` under `"auto"`, a run
+            whose entire tool surface is bridged produces ZERO adjudications and
+            looks clean while being wholly unreviewed.
         **deprecated_args: Supports the deprecated `auto_mode` argument. Set
             `auto_mode=True` maps to `permission_mode="auto"`.
     """
@@ -350,6 +366,7 @@ def claude_code(
                         static_mcp_servers,
                         bridged_mcp_servers,
                         allowlist_mcp_tools,
+                        allowlist_bridged_tools,
                     )
                 )
 
@@ -679,13 +696,18 @@ def resolve_allowed_mcp_tools(
     static_mcp_servers: Sequence[MCPServerConfig],
     bridged_mcp_servers: Sequence[MCPServerConfig],
     allowlist_mcp_tools: bool,
+    allowlist_bridged_tools: bool = True,
 ) -> list[str]:
     static_allowed_tools = (
         resolve_mcp_server_allowed_tools(static_mcp_servers)
         if allowlist_mcp_tools
         else []
     )
-    bridged_allowed_tools = resolve_mcp_server_allowed_tools(bridged_mcp_servers)
+    bridged_allowed_tools = (
+        resolve_mcp_server_allowed_tools(bridged_mcp_servers)
+        if allowlist_bridged_tools
+        else []
+    )
     return [*static_allowed_tools, *bridged_allowed_tools]
 
 
