@@ -8,10 +8,18 @@ empty response, and the sample is scored as an ordinary toolless trajectory with
 no error field set. Measured in production: 209 samples across six collection
 arms, with a session restart preceding every one.
 
+The gate probes ``tools/list`` rather than merely opening a connection, because
+reachability and readiness are different facts here: the in-sandbox proxy serves
+``/mcp/{name}`` immediately, but only ``tools/list`` crosses to the host, and the
+proxy answers an unknown JSON-RPC method with a well-formed error over HTTP 200.
+A status-code probe therefore passes while the agent still receives nothing. The
+tests below pin that distinction.
+
 These drive coroutines via ``anyio.run`` rather than a pytest async plugin, so
 they need no new test dependency or pytest configuration.
 """
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -25,8 +33,36 @@ from inspect_swe._util.mcp_ready import (
 )
 
 
-def _http_config(url: str = "http://localhost:13337/mcp") -> MCPServerConfigHTTP:
-    return MCPServerConfigHTTP(type="http", name="taiga-mcp", url=url)
+def _http_config(
+    url: str = "http://localhost:13337/mcp/taiga-mcp", name: str = "taiga-mcp"
+) -> MCPServerConfigHTTP:
+    return MCPServerConfigHTTP(type="http", name=name, url=url)
+
+
+def _tools_listing(*names: str) -> str:
+    """A JSON-RPC tools/list success response advertising the given tools."""
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"tools": [{"name": n, "inputSchema": {}} for n in names]},
+        }
+    )
+
+
+def _jsonrpc_error_over_http_200() -> str:
+    """What the bridge proxy actually returns for a probe it cannot service.
+
+    This is the shape that made the original status-code gate useless: the proxy
+    replies 200 with a JSON-RPC error body, so `curl -f` reports success.
+    """
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32601, "message": "Unknown method: None"},
+        }
+    )
 
 
 class _FakeExecResult:
@@ -44,8 +80,8 @@ def _sandbox_returning(*stdouts: str) -> Any:
     return sbox
 
 
-def test_returns_true_once_endpoint_is_reachable() -> None:
-    sbox = _sandbox_returning("OK\n")
+def test_returns_true_once_endpoint_serves_tools() -> None:
+    sbox = _sandbox_returning(_tools_listing("browser", "read_file"))
 
     async def run() -> bool:
         with patch("inspect_ai.util.sandbox", return_value=sbox):
@@ -55,9 +91,91 @@ def test_returns_true_once_endpoint_is_reachable() -> None:
     assert sbox.exec.await_count == 1
 
 
-def test_polls_until_endpoint_becomes_reachable() -> None:
-    """The proxy is not up on the first probe -- this is the restart case."""
-    sbox = _sandbox_returning("FAIL\n", "FAIL\n", "OK\n")
+def test_probe_sends_a_real_tools_list_request() -> None:
+    """The probe must exercise the host round trip, not just the local proxy.
+
+    `tools/list` is the only method that crosses back to the host; `initialize`
+    is answered inside the sandbox and proves nothing about whether the agent
+    will receive tools.
+    """
+    sbox = _sandbox_returning(_tools_listing("browser"))
+
+    async def run() -> bool:
+        with patch("inspect_ai.util.sandbox", return_value=sbox):
+            return await wait_for_mcp_endpoints([_http_config()], bridge=AsyncMock())
+
+    assert anyio.run(run) is True
+    sent = sbox.exec.await_args.kwargs["input"]
+    assert json.loads(sent)["method"] == "tools/list"
+
+
+def test_jsonrpc_error_over_http_200_is_not_ready() -> None:
+    """The bug this gate exists to catch, in its exact wire form.
+
+    The proxy returns JSON-RPC errors with HTTP 200, so the previous
+    `curl -sf -X POST` probe (no body, unknown method) always succeeded and
+    declared the endpoint ready while `tools/list` would still have failed. The
+    agent then launched, got nothing, and was scored as a toolless trajectory.
+    """
+    sbox = AsyncMock()
+    sbox.exec = AsyncMock(return_value=_FakeExecResult(_jsonrpc_error_over_http_200()))
+
+    async def run() -> bool:
+        with patch("inspect_ai.util.sandbox", return_value=sbox):
+            return await wait_for_mcp_endpoints(
+                [_http_config()], bridge=AsyncMock(), timeout=0.01, interval=0.001
+            )
+
+    with pytest.raises(MCPEndpointsUnreachableError, match="served no tools"):
+        anyio.run(run)
+
+
+def test_empty_tool_listing_is_not_ready() -> None:
+    """An endpoint that answers with zero tools is not ready either.
+
+    This is the shape a healthy-looking-but-unprovisioned bridge produces, and
+    it is precisely what must not reach an agent launch.
+    """
+    sbox = AsyncMock()
+    sbox.exec = AsyncMock(return_value=_FakeExecResult(_tools_listing()))
+
+    async def run() -> bool:
+        with patch("inspect_ai.util.sandbox", return_value=sbox):
+            return await wait_for_mcp_endpoints(
+                [_http_config()], bridge=AsyncMock(), timeout=0.01, interval=0.001
+            )
+
+    with pytest.raises(MCPEndpointsUnreachableError, match="served no tools"):
+        anyio.run(run)
+
+
+def test_readiness_placeholder_alone_is_not_ready() -> None:
+    """A listing of only agent-side placeholders is not an environment."""
+    sbox = AsyncMock()
+    sbox.exec = AsyncMock(
+        return_value=_FakeExecResult(_tools_listing("WaitForMcpServers"))
+    )
+
+    async def run() -> bool:
+        with patch("inspect_ai.util.sandbox", return_value=sbox):
+            return await wait_for_mcp_endpoints(
+                [_http_config()], bridge=AsyncMock(), timeout=0.01, interval=0.001
+            )
+
+    with pytest.raises(MCPEndpointsUnreachableError, match="none usable"):
+        anyio.run(run)
+
+
+def test_polls_until_endpoint_serves_tools() -> None:
+    """The proxy is up but the host cannot answer yet -- the restart case.
+
+    Empty body, then a JSON-RPC error, then a real listing. Only the last one
+    is ready, and the gate must wait rather than launching on either of the
+    first two.
+    """
+    sbox = _sandbox_returning(
+        "", _jsonrpc_error_over_http_200(), _tools_listing("browser")
+    )
 
     async def run() -> bool:
         with patch("inspect_ai.util.sandbox", return_value=sbox):
@@ -69,6 +187,52 @@ def test_polls_until_endpoint_becomes_reachable() -> None:
     assert sbox.exec.await_count == 3
 
 
+def test_non_json_body_is_not_ready() -> None:
+    """A proxy error page or partial write must not be read as a listing."""
+    sbox = AsyncMock()
+    sbox.exec = AsyncMock(return_value=_FakeExecResult("<html>502 Bad Gateway</html>"))
+
+    async def run() -> bool:
+        with patch("inspect_ai.util.sandbox", return_value=sbox):
+            return await wait_for_mcp_endpoints(
+                [_http_config()], bridge=AsyncMock(), timeout=0.01, interval=0.001
+            )
+
+    with pytest.raises(MCPEndpointsUnreachableError, match="served no tools"):
+        anyio.run(run)
+
+
+def test_every_configured_endpoint_must_serve_tools() -> None:
+    """Gating only the first config leaves later servers silently toolless.
+
+    The previous implementation probed ``configs[0]`` only, so a second bridged
+    server could serve nothing and the agent would still launch.
+    """
+
+    def exec_for(cmd: list[str], **kwargs: Any) -> _FakeExecResult:
+        # Dispatch on the endpoint under probe: 'a' is ready, 'b' never is.
+        body = _tools_listing("browser") if "/mcp/a" in cmd[-1] else _tools_listing()
+        return _FakeExecResult(body)
+
+    sbox = AsyncMock()
+    sbox.exec = AsyncMock(side_effect=exec_for)
+
+    async def run() -> bool:
+        with patch("inspect_ai.util.sandbox", return_value=sbox):
+            return await wait_for_mcp_endpoints(
+                [
+                    _http_config(url="http://localhost:1/mcp/a", name="a"),
+                    _http_config(url="http://localhost:1/mcp/b", name="b"),
+                ],
+                bridge=AsyncMock(),
+                timeout=0.005,
+                interval=0.001,
+                required=False,
+            )
+
+    assert anyio.run(run) is False
+
+
 def test_raises_on_timeout_so_the_sample_errors_instead_of_being_scored() -> None:
     """The whole point: never proceed into a silently-toolless launch.
 
@@ -77,7 +241,7 @@ def test_raises_on_timeout_so_the_sample_errors_instead_of_being_scored() -> Non
     trajectory. An errored sample is retryable; a scored toolless one is poison.
     """
     sbox = AsyncMock()
-    sbox.exec = AsyncMock(return_value=_FakeExecResult("FAIL\n"))
+    sbox.exec = AsyncMock(return_value=_FakeExecResult(""))
 
     async def run() -> bool:
         with patch("inspect_ai.util.sandbox", return_value=sbox):
@@ -85,13 +249,13 @@ def test_raises_on_timeout_so_the_sample_errors_instead_of_being_scored() -> Non
                 [_http_config()], bridge=AsyncMock(), timeout=0.01, interval=0.001
             )
 
-    with pytest.raises(MCPEndpointsUnreachableError, match="not reachable"):
+    with pytest.raises(MCPEndpointsUnreachableError, match="served no tools"):
         anyio.run(run)
 
 
 def test_required_false_still_allows_opting_out() -> None:
     sbox = AsyncMock()
-    sbox.exec = AsyncMock(return_value=_FakeExecResult("FAIL\n"))
+    sbox.exec = AsyncMock(return_value=_FakeExecResult(""))
 
     async def run() -> bool:
         with patch("inspect_ai.util.sandbox", return_value=sbox):
