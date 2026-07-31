@@ -31,14 +31,27 @@ _BRIDGE_SAFE_ENV: dict[str, str] = {
     "API_FORCE_IDLE_TIMEOUT": "0",
     # SDK client timeout — no disable sentinel, so use a large value
     "API_TIMEOUT_MS": "100000000",
-    # SSE event-idle watchdog
+    # SSE event-idle watchdog (dead code as of CC 2.1.220 — the chunk-idle
+    # byte watchdog below replaced it; kept for older CC versions)
     "CLAUDE_ENABLE_STREAM_WATCHDOG": "0",
+    # SSE chunk-idle byte watchdog (~180 s default, remotely tunable via a
+    # feature gate). Currently only arms on first-party base URLs, so it does
+    # not fire behind the bridge's localhost ANTHROPIC_BASE_URL — disabled
+    # explicitly rather than relying on that implementation detail
+    "CLAUDE_ENABLE_BYTE_WATCHDOG": "0",
     # Idle watchdog on bridged MCP tool calls
     "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT": "0",
+    # Block the first model call until MCP servers are connected; otherwise a
+    # slow bridge handshake yields a first call with no bridged tools (only a
+    # WaitForMcpServers placeholder) and the sample silently proceeds toolless.
+    # Inverted polarity: unset and "1" both mean non-blocking; only an explicit
+    # falsy token ("0"/"false"/"no"/"off") blocks
+    "MCP_CONNECTION_NONBLOCKING": "0",
     # MCP server connect/init handshake (defaults 5 s / 30 s); on timeout the
-    # server is silently dropped and its tools never appear
-    "MCP_CONNECT_TIMEOUT_MS": "60000",
-    "MCP_TIMEOUT": "60000",
+    # server is silently dropped and its tools never appear. 300 s to cover
+    # slow sandbox backends under many-concurrent-samples startup contention
+    "MCP_CONNECT_TIMEOUT_MS": "300000",
+    "MCP_TIMEOUT": "300000",
     # No telemetry or update checks from inside the sandbox
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "DISABLE_AUTOUPDATER": "1",
