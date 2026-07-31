@@ -313,12 +313,15 @@ def claude_code(
             static_mcp_servers = list(mcp_servers or [])
             bridged_mcp_servers = bridge.mcp_server_configs
             all_mcp_servers = static_mcp_servers + bridged_mcp_servers
-            # HTTP endpoints we must confirm are live before EVERY launch: the
-            # bridge proxy starts asynchronously, and Claude Code reads
-            # --mcp-config at startup. If the proxy isn't listening yet the
-            # agent comes up with no MCP tools and reports NO error.
+            # BRIDGED HTTP endpoints we must confirm are live before EVERY
+            # launch: the bridge proxy starts asynchronously, and Claude Code
+            # reads --mcp-config at startup. If the proxy isn't listening yet
+            # the agent comes up with no MCP tools and reports NO error.
+            # Static caller-provided servers are NOT probed: they may require
+            # auth headers the probe does not carry, and their availability is
+            # the caller's contract, not the bridge's.
             http_mcp_configs = [
-                c for c in all_mcp_servers if isinstance(c, MCPServerConfigHTTP)
+                c for c in bridged_mcp_servers if isinstance(c, MCPServerConfigHTTP)
             ]
             if all_mcp_servers:
                 mcp_server_args, _ = resolve_mcp_servers(all_mcp_servers)

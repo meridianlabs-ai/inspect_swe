@@ -116,22 +116,41 @@ async def wait_for_mcp_endpoints(
     sbox = sandbox_env()
     request = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     pending = {config.name: config.url for config in configs}
-    elapsed = 0.0
     last_seen: dict[str, str] = {}
 
-    while elapsed < timeout:
+    # Wall-clock deadline: each probe's own runtime (up to _PROBE_MAX_TIME while
+    # curl waits on a cold endpoint) counts against the budget. Accumulating the
+    # sleep interval instead would let a "120s" timeout stretch to roughly
+    # timeout/interval * _PROBE_MAX_TIME of real time when probes hang.
+    start = anyio.current_time()
+    deadline = start + timeout
+
+    while True:
+        remaining = deadline - anyio.current_time()
+        if remaining <= 0:
+            break
         for name, url in list(pending.items()):
+            probe_budget = max(1, min(_PROBE_MAX_TIME, int(remaining)))
+            # No shell: the URL is passed as a plain argv element, so query
+            # strings or metacharacters in a config URL cannot alter the
+            # command. -f is deliberately omitted: the proxy returns JSON-RPC
+            # errors over HTTP 200, so the status code carries no information
+            # and the body is what has to be read.
             result = await sbox.exec(
                 [
-                    "bash",
-                    "-c",
-                    # -f is deliberately omitted: the proxy returns JSON-RPC
-                    # errors over HTTP 200, so the status code carries no
-                    # information and the body is what has to be read.
-                    f"curl -s --max-time {_PROBE_MAX_TIME}"
-                    f" -H 'Content-Type: application/json'"
-                    f" -H 'Accept: application/json, text/event-stream'"
-                    f" -X POST --data-binary @- {url} 2>/dev/null",
+                    "curl",
+                    "-s",
+                    "--max-time",
+                    str(probe_budget),
+                    "-H",
+                    "Content-Type: application/json",
+                    "-H",
+                    "Accept: application/json, text/event-stream",
+                    "-X",
+                    "POST",
+                    "--data-binary",
+                    "@-",
+                    url,
                 ],
                 input=request,
             )
@@ -148,13 +167,12 @@ async def wait_for_mcp_endpoints(
                 name,
                 url,
                 len(environment_tools),
-                elapsed,
+                anyio.current_time() - start,
             )
             del pending[name]
         if not pending:
             return True
         await anyio.sleep(interval)
-        elapsed += interval
 
     unready = ", ".join(
         f"{name} ({last_seen.get(name, 'never answered')})" for name in pending

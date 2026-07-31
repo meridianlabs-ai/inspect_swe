@@ -19,6 +19,7 @@ These drive coroutines via ``anyio.run`` rather than a pytest async plugin, so
 they need no new test dependency or pytest configuration.
 """
 
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -325,16 +326,81 @@ def test_every_self_launching_bridged_agent_gates_on_mcp_readiness() -> None:
     new_session, which acp/agent.py already gates.
     """
     root = Path(__file__).parent.parent / "src" / "inspect_swe"
+
+    def has_awaited_gate(tree: ast.AST) -> bool:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Await) and isinstance(node.value, ast.Call):
+                func = node.value.func
+                name = (
+                    func.attr
+                    if isinstance(func, ast.Attribute)
+                    else (func.id if isinstance(func, ast.Name) else None)
+                )
+                if name == "wait_for_mcp_endpoints":
+                    return True
+        return False
+
+    def consumes_bridged_configs(tree: ast.AST) -> bool:
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr == "mcp_server_configs"
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "bridge"
+            ):
+                return True
+        return False
+
     offenders: list[str] = []
     for path in root.rglob("*.py"):
         if path.name == "mcp_ready.py" or "acp/_agents" in path.as_posix():
             continue
-        src = path.read_text(encoding="utf-8")
-        if "bridge.mcp_server_configs" not in src:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if not consumes_bridged_configs(tree):
             continue
-        if "wait_for_mcp_endpoints" not in src:
+        # An AST-level awaited call is required: a comment, docstring, or unused
+        # import mentioning the gate does not satisfy this (substring checks did).
+        if not has_awaited_gate(tree):
             offenders.append(path.relative_to(root).as_posix())
     assert not offenders, (
-        "these agents consume bridged MCP configs but never wait for the "
-        f"endpoints to be reachable: {offenders}"
+        "these agents consume bridged MCP configs but never await "
+        f"wait_for_mcp_endpoints: {offenders}"
+    )
+
+
+def test_slow_probes_count_against_the_wall_clock_timeout() -> None:
+    """The timeout is a wall-clock deadline, not a count of sleep intervals.
+
+    The original loop accumulated only the poll interval, so time spent inside
+    a hanging probe (up to curl's --max-time per attempt) was free: a "0.2s"
+    timeout with 0.05s probes and a tiny interval could poll for minutes. The
+    deadline must include probe time, so with probes that each burn 0.05s of
+    real time this must raise after ~0.2s and, decisively, after only a
+    handful of probe attempts rather than dozens.
+    """
+    calls = 0
+
+    async def slow_never_ready(*args: Any, **kwargs: Any) -> "_FakeExecResult":
+        nonlocal calls
+        calls += 1
+        await anyio.sleep(0.05)
+        return _FakeExecResult("")
+
+    sbox = AsyncMock()
+    sbox.exec = AsyncMock(side_effect=slow_never_ready)
+
+    async def run() -> bool:
+        with patch("inspect_ai.util.sandbox", return_value=sbox):
+            return await wait_for_mcp_endpoints(
+                [_http_config()], bridge=AsyncMock(), timeout=0.2, interval=0.001
+            )
+
+    with pytest.raises(MCPEndpointsUnreachableError):
+        anyio.run(run)
+    # Interval-counting semantics would need ~200 sleeps of 0.001s to trip the
+    # timeout, taking ~200 probes; deadline semantics trips after ~4 probes
+    # (0.05s each). Allow generous headroom while still failing the old loop.
+    assert calls <= 20, (
+        f"timeout ignored probe duration: {calls} probes ran, wall-clock "
+        "deadline should have stopped after ~4"
     )

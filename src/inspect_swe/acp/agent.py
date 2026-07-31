@@ -195,13 +195,22 @@ class ACPAgent(Agent):
                     all_configs.extend(bridge.mcp_server_configs)
                     acp_mcp_servers = bridge_mcp_to_acp(all_configs)
 
-                    # Wait for the bridge proxy MCP endpoints to be
-                    # reachable before starting the ACP session.  Some
-                    # agents (e.g. gemini CLI) connect to MCP servers
-                    # synchronously during new_session and will silently
-                    # skip tools if the proxy isn't ready yet.
-                    if all_configs:
-                        await wait_for_mcp_endpoints(all_configs, bridge, required=True)
+                    # Wait for the BRIDGE proxy MCP endpoints to be ready
+                    # before starting the ACP session. Some agents (e.g.
+                    # gemini CLI) connect to MCP servers synchronously during
+                    # new_session and will silently skip tools if the proxy
+                    # isn't ready yet. Static caller-provided servers are not
+                    # probed: they may require auth headers the probe does not
+                    # carry, and their availability is the caller's contract.
+                    bridged_http_configs = [
+                        c
+                        for c in bridge.mcp_server_configs
+                        if isinstance(c, MCPServerConfigHTTP)
+                    ]
+                    if bridged_http_configs:
+                        await wait_for_mcp_endpoints(
+                            bridged_http_configs, bridge, required=True
+                        )
 
                     async with acp_connection(proc) as (conn, feeder, error_info):
                         logger.info("ACP: initializing...")

@@ -360,7 +360,9 @@ def codex_cli(
                     # agent with no bridged tools and NO error, whose output is
                     # then scored as a valid trajectory. Raises if unreachable.
                     _http_mcp_configs = [
-                        c for c in all_mcp_servers if isinstance(c, MCPServerConfigHTTP)
+                        c
+                        for c in bridge.mcp_server_configs
+                        if isinstance(c, MCPServerConfigHTTP)
                     ]
                     if _http_mcp_configs:
                         await wait_for_mcp_endpoints(
