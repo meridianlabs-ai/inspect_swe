@@ -54,6 +54,7 @@ from .._util.messages import build_user_prompt
 from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
+from .env import claude_code_agent_env
 from .model import resolve_claude_code_models
 
 ClaudeCodePermissionMode = Literal[
@@ -352,19 +353,9 @@ def claude_code(
                 await install_skills(resolved_skills, sbox, user, skills_dir)
 
             # define agent env
-            agent_env = {
-                "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
-                "ANTHROPIC_AUTH_TOKEN": "sk-ant-api03-DOq5tyLPrk9M4hPE",
-                "ANTHROPIC_MODEL": models.presented,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": models.opus,
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": models.sonnet,
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": models.haiku,
-                "CLAUDE_CODE_SUBAGENT_MODEL": models.subagent,
-                "ANTHROPIC_SMALL_FAST_MODEL": models.haiku,
-                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
-                "IS_SANDBOX": "1",
-            } | (env or {})
+            agent_env = claude_code_agent_env(
+                bridge_port=bridge.port, models=models, env=env
+            )
 
             # Claude Code 2.1.37 reports "has Authorization header: false"
             # despite ANTHROPIC_AUTH_TOKEN being set in the environment,
