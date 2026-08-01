@@ -21,6 +21,7 @@ The following options are supported for customizing the behavior of the agent:
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
 | `web_search` | Web search mode. Use `"live"` for live web search, `"cached"` for cached web search, or `"disabled"` to disable web search. Defaults to `"live"`. |
 | `goals` | Enable Codex goal tools. Defaults to `True`. |
+| `auto_review` | Enable Codex [automated approval review](https://developers.openai.com/codex/concepts/sandboxing/auto-review) (see [Auto Review](#auto-review) below for details). Defaults to `False`. |
 | `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended. | 
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
@@ -44,10 +45,94 @@ For example, here we specify a custom system prompt and  disable the web search 
 )
 ```
 
-
 {{< include _snippets/agent_mcp_servers.md >}}
 
 {{< include _snippets/agent_bridged_tools.md >}}
+
+## Auto Review
+
+By default, the agent runs Codex with `--dangerously-bypass-approvals-and-sandbox`: Codex's internal sandbox and approval prompts are disabled, since the agent already runs inside the Inspect sandbox. The `auto_review` option instead runs Codex the way its own "Approve for me" mode ships: Codex's `workspace-write` sandbox is active, `approval_policy` is `on-request`, and escalation requests (network access, writes outside the workspace, MCP tool approvals) are adjudicated by an automated "guardian" reviewer model rather than a human:
+
+```python
+{{< meta agent >}}(auto_review=True)
+```
+
+Enabling `auto_review` requires Codex CLI >= 0.137.0.
+
+### Behavior
+
+On Linux, Codex enforces the `workspace-write` sandbox by launching each command through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`), which needs a `bwrap` binary in the sandbox and a container that permits the namespace syscalls it uses (see [Configuring Containers](#configuring-containers)). What happens then depends on whether that sandbox can start:
+
+- **OS sandbox active** (both present): commands run sandboxed, and only genuine escalations (network access, out-of-workspace writes) reach the guardian.
+- **OS sandbox unavailable** (the default for most images): `auto_review` still works, but review is model-driven rather than OS-enforced. Each sandboxed command fails before it runs (`bubblewrap is unavailable` when `bwrap` is missing, or `Creating new namespace failed: Operation not permitted` when its syscalls are blocked); Codex does *not* fall back to a review-only mode on its own. A capable model recovers by re-issuing with escalated permissions (`require_escalated`), which the guardian reviews and, if approved, runs unsandboxed, and it typically carries that forward. Review then depends on the model choosing to escalate rather than being enforced by Codex.
+
+Either way, the guardian may deny an escalation, and repeated denials interrupt the turn.
+
+### Workspace Boundaries
+
+When the OS sandbox is active, `workspace-write` bounds what a command may do before it needs an approved escalation:
+
+- **Writes**: only the working directory (the `cwd` option), `/tmp`, and `$TMPDIR`.
+- **Reads**: the whole filesystem.
+- **`.git` and `.agents`**: read-only even inside the workspace, so e.g. `git commit` requires an escalation.
+- **Network**: unavailable by default.
+
+Actions outside these bounds fail in the sandbox and proceed only with a guardian-approved escalation. To widen them, pass `config_overrides` (applied before the auto_review settings, so they compose), for example `{"sandbox_workspace_write.network_access": "true"}` or `{"sandbox_workspace_write.writable_roots": '["/data"]'}`, and/or set `cwd` so the workspace root matches where the task's files live.
+
+### Customizing Guardian
+
+Use `CodexAutoReview` to set the guardian policy (extra instructions inserted into the guardian review prompt) and the model that serves guardian requests (an Inspect model role name or a model; defaults to the model the agent is running with):
+
+```python
+from inspect_swe import CodexAutoReview
+
+{{< meta agent >}}(
+    auto_review=CodexAutoReview(
+        policy="Deny anything that installs packages.",
+        model="guardian",  # binds the 'guardian' model role
+    )
+)
+```
+
+### Configuring Containers
+
+To make Codex's `workspace-write` sandbox actually enforce in a Docker sandbox, rather than falling back to the model-driven path above, do both of the following.
+
+**1. Provide `bwrap` in the sandbox image.** Codex looks for `bwrap` on the `PATH` (or bundled at `codex-resources/bwrap` next to its binary). Install it in your Dockerfile:
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+**2. Permit namespace creation.** Docker's default `seccomp` profile blocks the namespace and mount syscalls `bwrap` uses, so it fails with `Creating new namespace failed: Operation not permitted` even when installed. Launch the sandbox container with `seccomp` unconfined via a compose file:
+
+```yaml
+# compose.yaml
+services:
+  default:
+    build: .
+    command: "tail -f /dev/null"
+    init: true
+    security_opt:
+      - seccomp=unconfined
+```
+
+Reference that compose file from the task's sandbox, e.g. `sandbox=("docker", "compose.yaml")`. With both pieces in place, sandboxed commands run under `bwrap` and only genuine escalations (network access, out-of-workspace writes) reach the guardian, with no `bubblewrap is unavailable` failures.
+
+::: callout-warning
+`seccomp=unconfined` removes a layer of the container's isolation. By default, Docker applies a seccomp profile that blocks the container from making a set of Linux system calls which containerized code rarely needs but which have historically been the vector for kernel-level privilege escalation and container escapes (for example namespace creation, `mount`/`pivot_root`, and the keyring and `bpf` calls). Setting `seccomp=unconfined` lifts that filter, making the kernel's entire system-call surface reachable from inside the sandbox.
+
+Concretely, this removes defense-in-depth against a compromised or adversarial command escaping the container by exploiting a bug in the host kernel: it does not grant an escape on its own, but it removes a mitigation that would otherwise have to be defeated first. (This matters here precisely because `bwrap`'s own sandboxing depends on some of those same namespace/mount syscalls, which is why enabling it requires unblocking them.)
+
+Enable it only for sandboxes running trusted or already-isolated workloads, and weigh it against the fact that the agent may run untrusted, model-generated commands. For security-sensitive deployments, prefer a tailored seccomp profile that unblocks *only* the syscalls bubblewrap needs (`unshare`, `clone`, `mount`, `pivot_root`, `umount2`, `setns`) and keeps the rest of the default block-list intact, rather than disabling seccomp wholesale.
+:::
+
+A few caveats:
+
+- The host kernel must support unprivileged user namespaces (standard on modern Linux distributions). `--privileged` also works but grants far more than necessary.
+- On macOS/Windows Docker, containers run in a Linux VM, so these settings apply to the VM's kernel; behavior matches native Linux.
+
 
 ## Installation
 
