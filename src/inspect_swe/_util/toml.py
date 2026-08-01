@@ -1,5 +1,10 @@
+import re
 from datetime import date, datetime, time
 from typing import Any, Dict, List
+
+# TOML basic strings forbid all unescaped control characters; those without a
+# shorthand escape (\n, \r, \t handle the common ones) must use \uXXXX
+_TOML_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 def to_toml(data: Dict[str, Any]) -> str:
@@ -34,7 +39,14 @@ def _format_value(value: Any) -> str:
     """Format a Python value as TOML."""
     if isinstance(value, str):
         # Escape special characters and quote
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        escaped = (
+            value.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+        )
+        escaped = _TOML_CONTROL_CHARS.sub(lambda m: f"\\u{ord(m.group()):04X}", escaped)
         return f'"{escaped}"'
     elif isinstance(value, bool):
         return "true" if value else "false"
