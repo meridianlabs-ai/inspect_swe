@@ -1,0 +1,42 @@
+---
+title: Antigravity
+agent: antigravity
+agent_provider: "Google"
+agent_name: "Antigravity"
+agent_url: "https://pypi.org/project/google-antigravity/"
+---
+
+Runs Google's Antigravity SDK (`google-antigravity`, which bundles the `localharness` engine) headless inside an Inspect sandbox. Model calls are routed through the sandbox agent bridge: the SDK's native connection speaks the Gemini `generateContent` wire directly to the bridge via a `GeminiAPIEndpoint` `base_url` override (no OpenAI translation), so only a placeholder API key ever enters the sandbox.
+
+## Options
+
+The following options are supported for customizing the behavior of the agent:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Additional system prompt to append to default system prompt. |
+| `mcp_servers` | MCP servers to make available to the agent (HTTP configs; localharness reaches servers over streamable HTTP). |
+| `bridged_tools` | Host-side Inspect tools to expose via MCP. |
+| `model` | Model name to use for agent (defaults to main model for task). |
+| `model_aliases` | Mapping of model names to Model instances/strings; alias keys resolve against `endpoint_model`. |
+| `filter` | Filter for intercepting bridged model requests (Model-first `GenerateFilter` form only). |
+| `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
+| `user` | Sandbox user to run the SDK as (defaults to the sandbox default user). |
+| `cwd` | Working directory for the SDK (defaults to the user's home directory). |
+| `version` | Version of the `google-antigravity` SDK to provision when not already present in the image. |
+| `endpoint_model` | Model name the SDK client presents to the bridge endpoint. |
+| `debug` | Trace the full runner output. |
+
+: {tbl-colwidths=\[25,75\]}
+
+## Tool Confinement
+
+The agent confines the model's tool surface to the configured MCP servers: the SDK's builtin capabilities are delegated off via its own configuration (`enabled_tools=[]`), and the residual engine tools that the SDK's typed configuration cannot disable are stripped from the model's tool declaration by a `GenerateFilter`. Tool calls dispatch through localharness's `call_mcp_tool` wrapper, gated by an execution policy that only allows the configured servers. If a future SDK version declares tools outside the known surface, the agent drops them (fail closed) and logs a warning naming the drifted tools.
+
+## Installation
+
+If the `google-antigravity` SDK is already importable in the sandbox image (recommended for sandboxes without network egress), it is used directly. Otherwise the agent provisions the pinned SDK version into a dedicated virtual environment inside the sandbox, which requires network egress.
+
+## Conversation Resumption
+
+On re-invocation (handoff back, operator follow-up) the agent resumes the SDK conversation recorded from the previous run. If the transcript already contains assistant turns but no saved conversation exists for the sample, the agent raises rather than silently dropping prior context.

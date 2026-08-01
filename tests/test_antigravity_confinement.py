@@ -11,7 +11,10 @@ tests lock that in: the model must only ever be offered ``call_mcp_tool``.
 from __future__ import annotations
 
 import asyncio
+import logging
 
+import anyio
+import pytest
 from inspect_ai.model import (
     ChatMessage,
     GenerateConfig,
@@ -73,3 +76,27 @@ def test_confine_preserves_user_filter_short_circuit() -> None:
     confine = _confine_declared_tools(user_filter)
     result = asyncio.run(_apply_filter(confine, _tools(["call_mcp_tool", "schedule"])))
     assert result is substitute
+
+
+def test_confine_warns_once_on_unrecognized_declared_tools(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SDK drift (a tool outside allowlist + known engine tools) is loud."""
+    confined_filter = _confine_declared_tools(None)
+
+    async def _run() -> None:
+        tools = _tools(["call_mcp_tool", "brand_new_engine_tool"])
+        with caplog.at_level(logging.WARNING):
+            first = await confined_filter(_MODEL, [], tools, None, GenerateConfig())
+            second = await confined_filter(_MODEL, [], tools, None, GenerateConfig())
+        assert isinstance(first, GenerateInput)
+        assert [tool.name for tool in first.tools] == ["call_mcp_tool"]
+        assert isinstance(second, GenerateInput)
+        drift_warnings = [
+            record
+            for record in caplog.records
+            if "brand_new_engine_tool" in record.message
+        ]
+        assert len(drift_warnings) == 1, "drift warning should fire once per name"
+
+    anyio.run(_run)

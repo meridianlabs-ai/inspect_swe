@@ -28,8 +28,13 @@ _CANDIDATE_PYTHONS: tuple[str, ...] = (
     "python",
 )
 _IMPORT_CHECK = "import google.antigravity"
-# Pin to the version validated end-to-end (3/3). Newer releases (e.g. 0.1.8) are
-# not yet validated against the native bridge path.
+# Runner processes execute with PYTHONNOUSERSITE=1 (sdk_execution_spec), so the
+# presence probe and post-install verify must run under the same isolation: a
+# user-site-only install would otherwise pass the probe here and then die with
+# ModuleNotFoundError in the runner.
+_RUNNER_IMPORT_ENV: Final = {"PYTHONNOUSERSITE": "1"}
+# Default pin: the version validated end-to-end (3/3). Newer releases (e.g.
+# 0.1.8) are not yet validated against the native bridge path.
 _SDK_VERSION: Final = "0.1.7"
 # Dedicated venv for the runtime-provisioned SDK on egress images. /var/tmp is
 # world-writable so the unprivileged agent user can create it (mirrors the uv
@@ -40,6 +45,7 @@ _SDK_VENV_DIR: Final = "/var/tmp/.antigravity-sdk-venv"
 async def ensure_antigravity_sdk(
     sandbox: SandboxEnvironment,
     user: str | None = None,
+    version: str = _SDK_VERSION,
 ) -> str:
     """Return the path to a sandbox python that can import ``google.antigravity``.
 
@@ -48,7 +54,7 @@ async def ensure_antigravity_sdk(
     python = await _python_with_sdk(sandbox, user)
     if python is not None:
         return python
-    return await _provision_antigravity_sdk(sandbox, user)
+    return await _provision_antigravity_sdk(sandbox, user, version)
 
 
 async def _python_with_sdk(
@@ -56,7 +62,9 @@ async def _python_with_sdk(
     user: str | None,
 ) -> str | None:
     for python in _CANDIDATE_PYTHONS:
-        result = await sandbox.exec([python, "-c", _IMPORT_CHECK], user=user)
+        result = await sandbox.exec(
+            [python, "-c", _IMPORT_CHECK], user=user, env=_RUNNER_IMPORT_ENV
+        )
         if result.success:
             return python
     return None
@@ -65,6 +73,7 @@ async def _python_with_sdk(
 async def _provision_antigravity_sdk(
     sandbox: SandboxEnvironment,
     user: str | None,
+    version: str,
 ) -> str:
     """Install the pinned ``google-antigravity`` into a dedicated venv (egress-only).
 
@@ -87,7 +96,7 @@ async def _provision_antigravity_sdk(
                 "-c",
                 f'set -e; "{base_python}" -m venv "{_SDK_VENV_DIR}"; '
                 f'"{venv_python}" -m pip install --disable-pip-version-check '
-                f'--no-input "google-antigravity=={_SDK_VERSION}"',
+                f'--no-input "google-antigravity=={version}"',
             ],
             user=user,
         )
@@ -97,11 +106,13 @@ async def _provision_antigravity_sdk(
                 "Bake it into the image for no-egress sandboxes, or ensure the "
                 f"sandbox has network egress. stderr:\n{install.stderr.strip()}"
             )
-        verify = await sandbox.exec([venv_python, "-c", _IMPORT_CHECK], user=user)
+        verify = await sandbox.exec(
+            [venv_python, "-c", _IMPORT_CHECK], user=user, env=_RUNNER_IMPORT_ENV
+        )
         if not verify.success:
             raise RuntimeError(
-                "google-antigravity installed but is not importable: "
-                f"{verify.stderr.strip()}"
+                "google-antigravity installed but is not importable under the "
+                f"runner's import isolation: {verify.stderr.strip()}"
             )
         return venv_python
 

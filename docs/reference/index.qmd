@@ -11,6 +11,7 @@ reference: inspect_swe
 ### gemini_cli
 ### opencode
 ### mini_swe_agent
+### antigravity
 
 ## Binaries
 
