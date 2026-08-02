@@ -1,7 +1,9 @@
 import pytest
+from inspect_ai.tool import MCPServerConfig
 from inspect_swe._codex_cli.config import (
     codex_cli_config_overrides,
     codex_config_options,
+    codex_mcp_server_config,
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
@@ -51,3 +53,26 @@ def test_codex_cli_config_overrides_format_values_for_cli() -> None:
         "web_search": '"cached"',
         "features.goals": "false",
     }
+
+
+def test_bridged_mcp_server_is_marked_required() -> None:
+    server = MCPServerConfig(
+        type="http", name="bridged-tools", url="http://localhost:9000/mcp"
+    )
+
+    config = codex_mcp_server_config(server, {"bridged-tools"})
+
+    assert config["required"] is True
+    assert "name" not in config
+    assert "tools" not in config
+    assert "required = true" in to_toml({"mcp_servers.bridged-tools": config})
+
+
+def test_static_mcp_server_is_not_marked_required() -> None:
+    server = MCPServerConfig(
+        type="http", name="caller-tools", url="http://localhost:9001/mcp"
+    )
+
+    config = codex_mcp_server_config(server, {"bridged-tools"})
+
+    assert "required" not in config

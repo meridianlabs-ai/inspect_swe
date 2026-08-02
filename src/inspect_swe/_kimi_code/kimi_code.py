@@ -331,6 +331,15 @@ def kimi_code(
                             _http_mcp_configs, bridge, required=True
                         )
 
+                    # NOTE: endpoint readiness is the strongest guarantee
+                    # available for kimi: it connects MCP servers via an
+                    # unawaited asyncio task in every mode (documented as by
+                    # design) and exposes no config to block the first turn on
+                    # client connect, so a slow initialize can still race the
+                    # first model call. Claude Code closes this via
+                    # BLOCKING_MCP_ENV and codex via required=true; kimi has
+                    # no equivalent knob.
+
                     result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,

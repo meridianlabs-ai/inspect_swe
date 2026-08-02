@@ -54,6 +54,7 @@ from .config import (
     CodexWebSearch,
     codex_cli_config_overrides,
     codex_config_options,
+    codex_mcp_server_config,
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
@@ -293,14 +294,16 @@ def codex_cli(
             toml_config["analytics"] = {"enabled": False}
             toml_config.update(codex_config_options(effective_web_search, goals))
 
-            # register mcp servers (combine static configs with bridged tools)
+            # register mcp servers (combine static configs with bridged tools);
+            # bridged servers are marked required so a failed MCP startup fails
+            # the launch loudly instead of running the turn without tools (see
+            # codex_mcp_server_config)
+            bridged_server_names = {s.name for s in bridge.mcp_server_configs}
             all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
             if all_mcp_servers:
                 for mcp_server in all_mcp_servers:
                     toml_config[f"mcp_servers.{mcp_server.name}"] = (
-                        mcp_server.model_dump(
-                            exclude={"name", "tools"}, exclude_none=True
-                        )
+                        codex_mcp_server_config(mcp_server, bridged_server_names)
                     )
 
             # model provider (use a custom provider name so we can set

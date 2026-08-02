@@ -1,5 +1,7 @@
+from collections.abc import Set as AbstractSet
 from typing import Any, Literal, Mapping, cast
 
+from inspect_ai.tool import MCPServerConfig
 from typing_extensions import TypedDict
 
 CodexWebSearch = Literal["live", "cached", "disabled"]
@@ -51,3 +53,23 @@ def codex_cli_config_overrides(
         "web_search": f'"{web_search}"',
         "features.goals": "true" if goals else "false",
     }
+
+
+def codex_mcp_server_config(
+    mcp_server: MCPServerConfig, bridged_server_names: AbstractSet[str]
+) -> dict[str, Any]:
+    """TOML table for one `mcp_servers.<name>` entry in codex config.
+
+    Bridged servers are marked `required = true`: codex >= 0.119.0 then blocks
+    session init on their initialize+tools/list and `codex exec` exits non-zero
+    if one fails to come up, closing the client-connect half of the first-turn
+    race (`wait_for_mcp_endpoints` covers the endpoint half; Claude Code's
+    equivalent is `BLOCKING_MCP_ENV`). Older codex versions ignore the key
+    (serde tolerates unknown fields in the `mcp_servers` table). Static
+    caller-provided servers stay optional: their availability is the caller's
+    contract, mirroring the readiness-gate scoping.
+    """
+    server_config = mcp_server.model_dump(exclude={"name", "tools"}, exclude_none=True)
+    if mcp_server.name in bridged_server_names:
+        server_config["required"] = True
+    return server_config
