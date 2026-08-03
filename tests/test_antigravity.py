@@ -19,7 +19,7 @@ from inspect_swe._antigravity.antigravity import (
     _reported_conversation_id,
     sdk_execution_spec,
 )
-from inspect_swe._antigravity.sdk_runner import load_payload
+from inspect_swe._antigravity.sdk_runner import _confine_to_dir, load_payload
 from pydantic import ValidationError
 
 
@@ -249,3 +249,17 @@ def test_ensure_sdk_does_not_reuse_a_stale_venv_version() -> None:
     anyio.run(_run)
     assert fake.install_count == 2
     assert fake.installed_version == "0.1.8"
+
+
+def test_view_file_predicate_confines_to_the_data_dir() -> None:
+    """view_file may only read localharness's offloaded results, nothing else."""
+    within = _confine_to_dir("/home/model/.antigravity")
+    assert within({"AbsolutePath": "/home/model/.antigravity/brain/x/out.txt"})
+    assert within({"AbsolutePath": "/home/model/.antigravity"})
+    assert within({"AbsolutePath": "/home/model/.antigravity/a/../b"})
+    assert not within({"AbsolutePath": "/home/model/.antigravity/../secrets.txt"})
+    assert not within({"AbsolutePath": "/home/model/.antigravity-evil/out.txt"})
+    assert not within({"AbsolutePath": "/workspace/repo/grading/regular.py"})
+    assert not within({"AbsolutePath": ""})
+    assert not within({"AbsolutePath": 42})
+    assert not within({})

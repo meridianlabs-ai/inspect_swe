@@ -47,17 +47,24 @@ async def _apply_filter(
 def test_confine_strips_engine_tools_to_allowlist() -> None:
     confine = _confine_declared_tools(None)
     tools = _tools(
-        ["call_mcp_tool", "list_resources", "read_resource", "manage_task", "schedule"]
+        [
+            "call_mcp_tool",
+            "view_file",
+            "list_resources",
+            "read_resource",
+            "manage_task",
+            "schedule",
+        ]
     )
     result = asyncio.run(_apply_filter(confine, tools))
     assert isinstance(result, GenerateInput)
-    assert [tool.name for tool in result.tools] == ["call_mcp_tool"]
-    assert set(_ALLOWED_TOOL_NAMES) == {"call_mcp_tool"}
+    assert [tool.name for tool in result.tools] == ["call_mcp_tool", "view_file"]
+    assert set(_ALLOWED_TOOL_NAMES) == {"call_mcp_tool", "view_file"}
 
 
 def test_confine_is_noop_when_already_confined() -> None:
     confine = _confine_declared_tools(None)
-    result = asyncio.run(_apply_filter(confine, _tools(["call_mcp_tool"])))
+    result = asyncio.run(_apply_filter(confine, _tools(["call_mcp_tool", "view_file"])))
     assert result is None
 
 

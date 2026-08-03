@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
 
@@ -10,6 +12,27 @@ from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
     from google.antigravity import LocalAgentConfig
+
+
+def _confine_to_dir(directory: str) -> Callable[[dict[str, Any]], bool]:
+    """Policy predicate limiting view_file to paths inside ``directory``.
+
+    view_file exists ONLY to read back localharness's offloaded tool results,
+    which live under the agent's own app_data_dir. Paths are lexically
+    normalized first so ``..`` traversal cannot escape the prefix, and the
+    prefix match is segment-aware so a sibling like ``<dir>-evil`` does not
+    match. Host-testable: no SDK import.
+    """
+    confined = posixpath.normpath(directory)
+
+    def _within(args: dict[str, Any]) -> bool:
+        raw = args.get("AbsolutePath")
+        if not isinstance(raw, str) or not raw:
+            return False
+        resolved = posixpath.normpath(raw)
+        return resolved == confined or resolved.startswith(confined + "/")
+
+    return _within
 
 
 class McpServerEntry(TypedDict):
@@ -102,6 +125,14 @@ def build_config(payload: RunnerPayload) -> "LocalAgentConfig":
     naming a tool outside the allowlist). Tool RESULTS come back as
     functionResponse parts inside model-role turns, which the host bridge
     converter re-roles into tool messages (requires inspect_ai >= 0.3.250).
+
+    VIEW_FILE is the one builtin the model keeps: localharness offloads any
+    large MCP tool result to a file and returns only a file:// pointer, so
+    without a read-back path every tool observation above its internal cap
+    (~4KB) is silently lost. A policy predicate confines view_file to the
+    agent's own app_data_dir, where localharness writes offloaded results; it
+    cannot read task files, the workspace, or grading ground truth elsewhere
+    in the sandbox.
     """
     from google.antigravity import LocalAgentConfig, types
     from google.antigravity.hooks import policy
@@ -150,13 +181,19 @@ def build_config(payload: RunnerPayload) -> "LocalAgentConfig":
         models=[bridge_model],
         system_instructions=payload["system_instructions"],
         capabilities=types.CapabilitiesConfig(
-            enabled_tools=[],
+            # VIEW_FILE is the read-back path for offloaded MCP tool results
+            # (see the docstring); everything else stays delegated/denied.
+            enabled_tools=[types.BuiltinTools.VIEW_FILE],
             enable_subagents=False,
         ),
         mcp_servers=mcp_servers,
         policies=[
             policy.deny_all(),
             policy.allow("call_mcp_tool", when=_targets_configured_server),
+            policy.allow(
+                types.BuiltinTools.VIEW_FILE.value,
+                when=_confine_to_dir(payload["app_data_dir"]),
+            ),
             *server_policies,
         ],
         workspaces=[],

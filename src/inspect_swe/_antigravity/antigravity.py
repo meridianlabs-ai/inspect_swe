@@ -91,10 +91,18 @@ _SANDBOX_DUMMY_API_KEY: Final = "inspect-bridge-unused"
 # allow-list before it reaches the model (the analog of the claude_code/codex CLIs'
 # --disallowed-tools), via Inspect's GenerateFilter hook. Agent-scoped; no change
 # to the shared bridge. Note this supplements capability delegation rather than
-# replacing it: `enabled_tools=[]` already delegates all 13 nameable builtins to
-# the harness config; the filter covers only the residual engine tools the SDK's
-# closed enum cannot express.
-_ALLOWED_TOOL_NAMES: Final = frozenset({"call_mcp_tool"})
+# replacing it: the near-empty ``enabled_tools`` already delegates the nameable
+# builtins to the harness config; the filter covers only the residual engine
+# tools the SDK's closed enum cannot express.
+#
+# view_file is allow-listed alongside call_mcp_tool because localharness
+# offloads any large MCP tool result to a file and returns the model only a
+# file:// pointer ("The output was large and was saved to: ..."). Without a
+# read-back path the offloaded payload is unrecoverable, so tool observations
+# above localharness's internal cap (~4KB) never reach the model -- which on
+# injection tasks silently suppresses the very content under test. view_file is
+# that read-back path; the runner confines it to the agent's own app_data_dir.
+_ALLOWED_TOOL_NAMES: Final = frozenset({"call_mcp_tool", "view_file"})
 # Engine tools known to ride the declaration on the pinned SDK; anything outside
 # allowlist + this set means the SDK's tool surface drifted, which should be a
 # visible event rather than a silent drop.
