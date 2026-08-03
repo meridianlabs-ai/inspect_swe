@@ -40,6 +40,7 @@ _SDK_VERSION: Final = "0.1.7"
 # world-writable so the unprivileged agent user can create it (mirrors the uv
 # bundle path in _util/agentwheel.py).
 _SDK_VENV_DIR: Final = "/var/tmp/.antigravity-sdk-venv"
+_SDK_VENV_PYTHON: Final = f"{_SDK_VENV_DIR}/bin/python"
 
 
 async def ensure_antigravity_sdk(
@@ -51,15 +52,24 @@ async def ensure_antigravity_sdk(
 
     Skips work when the SDK is already present; otherwise provisions it.
     """
-    python = await _python_with_sdk(sandbox, user)
+    python = await _python_with_sdk(sandbox, user, version)
     if python is not None:
         return python
     return await _provision_antigravity_sdk(sandbox, user, version)
 
 
+def _version_check_code(version: str) -> str:
+    return (
+        "import google.antigravity, importlib.metadata; "
+        "assert importlib.metadata.version('google-antigravity') "
+        f"== {version!r}"
+    )
+
+
 async def _python_with_sdk(
     sandbox: SandboxEnvironment,
     user: str | None,
+    version: str,
 ) -> str | None:
     for python in _CANDIDATE_PYTHONS:
         result = await sandbox.exec(
@@ -67,6 +77,18 @@ async def _python_with_sdk(
         )
         if result.success:
             return python
+    # A venv provisioned by an earlier call (previous agent turn, concurrent
+    # sample) is reused rather than reinstalled -- but only when it holds the
+    # requested version, so a configurable `version` can never be silently
+    # satisfied by a stale install; a mismatch falls through to provisioning,
+    # which pip-installs the requested pin into the same venv.
+    result = await sandbox.exec(
+        [_SDK_VENV_PYTHON, "-c", _version_check_code(version)],
+        user=user,
+        env=_RUNNER_IMPORT_ENV,
+    )
+    if result.success:
+        return _SDK_VENV_PYTHON
     return None
 
 
@@ -84,12 +106,12 @@ async def _provision_antigravity_sdk(
     """
     async with concurrency("antigravity-sdk-install", 1, visible=False):
         # Re-check under the lock in case a concurrent sample installed it.
-        python = await _python_with_sdk(sandbox, user)
+        python = await _python_with_sdk(sandbox, user, version)
         if python is not None:
             return python
 
         base_python = await _base_python(sandbox, user)
-        venv_python = f"{_SDK_VENV_DIR}/bin/python"
+        venv_python = _SDK_VENV_PYTHON
         install = await sandbox.exec(
             [
                 "bash",
@@ -106,8 +128,12 @@ async def _provision_antigravity_sdk(
                 "Bake it into the image for no-egress sandboxes, or ensure the "
                 f"sandbox has network egress. stderr:\n{install.stderr.strip()}"
             )
+        # Version-checked verify: catches both a broken install and any drift
+        # between the requested pin and what pip resolved.
         verify = await sandbox.exec(
-            [venv_python, "-c", _IMPORT_CHECK], user=user, env=_RUNNER_IMPORT_ENV
+            [venv_python, "-c", _version_check_code(version)],
+            user=user,
+            env=_RUNNER_IMPORT_ENV,
         )
         if not verify.success:
             raise RuntimeError(

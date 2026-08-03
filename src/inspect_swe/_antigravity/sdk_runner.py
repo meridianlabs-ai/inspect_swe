@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 class McpServerEntry(TypedDict):
     name: str
     url: str
+    headers: dict[str, str] | None
+    tools: list[str] | None
 
 
 class RunnerPayload(TypedDict):
@@ -34,6 +36,8 @@ class _McpServerModel(BaseModel):
 
     name: str
     url: str
+    headers: dict[str, str] | None
+    tools: list[str] | None
 
 
 class _RunnerPayloadModel(BaseModel):
@@ -66,7 +70,15 @@ def load_payload(config_path: Path) -> RunnerPayload:
         "bridge_base_url": parsed.bridge_base_url,
         "endpoint_model": parsed.endpoint_model,
         "api_key": parsed.api_key,
-        "mcp_servers": [{"name": s.name, "url": s.url} for s in parsed.mcp_servers],
+        "mcp_servers": [
+            {
+                "name": s.name,
+                "url": s.url,
+                "headers": s.headers,
+                "tools": list(s.tools) if s.tools is not None else None,
+            }
+            for s in parsed.mcp_servers
+        ],
         "app_data_dir": parsed.app_data_dir,
         "save_dir": parsed.save_dir,
         "conversation_id": parsed.conversation_id,
@@ -82,7 +94,12 @@ def build_config(payload: RunnerPayload) -> "LocalAgentConfig":
     agent at the bridge via GOOGLE_GEMINI_BASE_URL plus a placeholder api key.
     localharness dispatches configured MCP tools through its ``call_mcp_tool``
     wrapper (with ServerName/ToolName in the args), so the policy must allow that
-    dispatcher for every configured server. Tool RESULTS come back as
+    dispatcher for every configured server. Inspect's per-server ``tools``
+    allowlist is enforced at three layers, all fail-closed: ``enabled_tools`` on
+    the server config (limits what the SDK declares), per-tool APPROVE policies
+    (``policy.allow(server, mcp_tools=...)`` instead of the server-wide
+    wildcard), and the dispatcher predicate (rejects ``call_mcp_tool`` calls
+    naming a tool outside the allowlist). Tool RESULTS come back as
     functionResponse parts inside model-role turns, which the host bridge
     converter re-roles into tool messages (requires inspect_ai >= 0.3.250).
     """
@@ -90,13 +107,27 @@ def build_config(payload: RunnerPayload) -> "LocalAgentConfig":
     from google.antigravity.hooks import policy
 
     mcp_servers = [
-        types.McpStreamableHttpServer(name=server["name"], url=server["url"])
+        types.McpStreamableHttpServer(
+            name=server["name"],
+            url=server["url"],
+            headers=server["headers"],
+            enabled_tools=server["tools"],
+        )
         for server in payload["mcp_servers"]
     ]
-    configured_names = {server["name"] for server in payload["mcp_servers"]}
+    allowed_tools: dict[str, frozenset[str] | None] = {
+        server["name"]: (
+            frozenset(server["tools"]) if server["tools"] is not None else None
+        )
+        for server in payload["mcp_servers"]
+    }
 
     def _targets_configured_server(args: dict[str, Any]) -> bool:
-        return args.get("ServerName") in configured_names
+        server_name = args.get("ServerName")
+        if server_name not in allowed_tools:
+            return False
+        server_allowed = allowed_tools[server_name]
+        return server_allowed is None or args.get("ToolName") in server_allowed
 
     # Setting base_url makes GeminiAPIEndpoint.validate_endpoint() short-circuit
     # the real-key requirement; the placeholder api_key rides the localharness
@@ -111,7 +142,9 @@ def build_config(payload: RunnerPayload) -> "LocalAgentConfig":
         ),
     )
     server_policies = [
-        allowed for server in mcp_servers for allowed in policy.allow(server)
+        allowed
+        for entry, server in zip(payload["mcp_servers"], mcp_servers, strict=False)
+        for allowed in policy.allow(server, mcp_tools=entry["tools"])
     ]
     return LocalAgentConfig(
         models=[bridge_model],

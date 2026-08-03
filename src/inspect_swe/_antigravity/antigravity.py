@@ -42,6 +42,8 @@ logger = getLogger(__file__)
 class McpServerEntry(TypedDict):
     name: str
     url: str
+    headers: dict[str, str] | None
+    tools: list[str] | None
 
 
 class RunnerPayload(TypedDict):
@@ -172,12 +174,19 @@ def sdk_execution_spec(
     runner_path: str,
     config_path: str,
     cwd: str,
+    home: str,
     user: str | None,
     api_key: str = _SANDBOX_DUMMY_API_KEY,
 ) -> SDKExecutionSpec:
-    """Describe the unprivileged process that runs the SDK and localharness."""
+    """Describe the unprivileged process that runs the SDK and localharness.
+
+    ``cwd`` is the agent's working directory (typically the evaluated
+    workspace); ``home`` is the sandbox user's home directory, where SDK state
+    lives. They are distinct on purpose: pointing HOME at the workspace would
+    present the evaluated repository as the user's home.
+    """
     env = {
-        "HOME": cwd,
+        "HOME": home,
         "NO_PROXY": "127.0.0.1,localhost",
         "PYTHONNOUSERSITE": "1",
         "no_proxy": "127.0.0.1,localhost",
@@ -195,7 +204,12 @@ def _mcp_server_entries(configs: Sequence[MCPServerConfig]) -> list[McpServerEnt
     """Convert configured MCP servers to runner payload entries.
 
     localharness reaches MCP servers over streamable HTTP, so every configured
-    server (static or bridged) must be an HTTP config with a URL.
+    server (static or bridged) must be an HTTP config with a URL. The SDK has
+    no SSE client (``types.McpStreamableHttpServer`` is its only HTTP server),
+    so ``type="sse"`` configs are rejected rather than silently reconstructed
+    as streamable HTTP. Inspect's per-server ``tools`` allowlist and ``headers``
+    ride the entry so the runner can enforce and forward them (a ``tools`` list
+    dropped here would silently expose every tool on the server).
     """
     entries: list[McpServerEntry] = []
     for config in configs:
@@ -204,7 +218,20 @@ def _mcp_server_entries(configs: Sequence[MCPServerConfig]) -> list[McpServerEnt
                 f"antigravity requires HTTP MCP server configs with a URL; "
                 f"server {config.name!r} is {type(config).__name__}."
             )
-        entries.append({"name": config.name, "url": config.url})
+        if config.type == "sse":
+            raise ValueError(
+                f"antigravity does not support SSE MCP servers (the SDK speaks "
+                f"streamable HTTP only); server {config.name!r} declares "
+                f'type="sse".'
+            )
+        entries.append(
+            {
+                "name": config.name,
+                "url": config.url,
+                "headers": config.headers,
+                "tools": list(config.tools) if isinstance(config.tools, list) else None,
+            }
+        )
     return entries
 
 
@@ -282,7 +309,16 @@ def antigravity(
 
             # resolve working directory (home dir if sandbox default is '/')
             agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
-            data_dir = join_path(agent_cwd, _DATA_DIRECTORY_NAME)
+
+            # SDK state (runner, request, session store, HOME) lives in the
+            # sandbox user's home, not the working directory: with an explicit
+            # cwd the working directory is typically the evaluated workspace,
+            # and writing .antigravity/ there (or presenting it as HOME) would
+            # leak agent state into the repository under evaluation. Same
+            # detection as gemini_cli.
+            home_result = await sbox.exec(["sh", "-c", "echo $HOME"], user=user)
+            sandbox_home = home_result.stdout.strip() or "/root"
+            data_dir = join_path(sandbox_home, _DATA_DIRECTORY_NAME)
             runner_path = join_path(data_dir, _RUNNER_FILE)
             config_path = join_path(data_dir, _CONFIG_FILE)
 
@@ -347,6 +383,7 @@ def antigravity(
                 runner_path=runner_path,
                 config_path=config_path,
                 cwd=agent_cwd,
+                home=sandbox_home,
                 user=user,
             )
             result = await sbox.exec_remote(
