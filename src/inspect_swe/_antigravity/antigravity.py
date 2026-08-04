@@ -66,7 +66,17 @@ class RunnerPayload(TypedDict):
     conversation_id: str | None
 
 
+# The harness's own data directory (app_data_dir): localharness writes offloaded
+# tool results here, and view_file is confined to it so the model can read them
+# back. Nothing WE write may live here -- see _STATE_DIRECTORY_NAME.
 _DATA_DIRECTORY_NAME: Final = ".antigravity"
+# Our state directory, deliberately a SIBLING of the harness data directory and
+# outside view_file's readable tree. request.json serializes the MCP server
+# configs including their `headers` (an authenticated server's Authorization
+# token), so a model that could read it could exfiltrate that credential. The
+# SDK's session store lives here too: what the compiled harness persists under
+# save_dir is not inspectable, and it may serialize the same configuration.
+_STATE_DIRECTORY_NAME: Final = ".antigravity-state"
 _RUNNER_FILE: Final = "runner.py"
 _CONFIG_FILE: Final = "request.json"
 _BRIDGE_PORT_KEY: Final = "antigravity_bridge_port"
@@ -327,8 +337,9 @@ def antigravity(
             home_result = await sbox.exec(["sh", "-c", "echo $HOME"], user=user)
             sandbox_home = home_result.stdout.strip() or "/root"
             data_dir = join_path(sandbox_home, _DATA_DIRECTORY_NAME)
-            runner_path = join_path(data_dir, _RUNNER_FILE)
-            config_path = join_path(data_dir, _CONFIG_FILE)
+            state_dir = join_path(sandbox_home, _STATE_DIRECTORY_NAME)
+            runner_path = join_path(state_dir, _RUNNER_FILE)
+            config_path = join_path(state_dir, _CONFIG_FILE)
 
             server_entries = _mcp_server_entries(
                 [*(mcp_servers or []), *bridge.mcp_server_configs]
@@ -365,20 +376,24 @@ def antigravity(
                 "api_key": _SANDBOX_DUMMY_API_KEY,
                 "mcp_servers": server_entries,
                 "app_data_dir": data_dir,
-                "save_dir": join_path(data_dir, "session"),
+                "save_dir": join_path(state_dir, "session"),
                 "conversation_id": conversation_id,
             }
 
-            # The runner and its request live in the agent user's own data
-            # directory and run AS that user: file ownership hardening would be
-            # ineffective (unlink rights come from the directory) and the agent
-            # process is model-controlled anyway, so none is attempted.
-            mkdir = await sbox.exec(["mkdir", "-p", "-m", "0700", data_dir], user=user)
-            if not mkdir.success:
-                raise RuntimeError(
-                    f"Failed to create antigravity data directory: "
-                    f"{mkdir.stderr.strip()}"
+            # Both directories run AS the agent user, so file ownership
+            # hardening would be ineffective (unlink rights come from the
+            # directory) and the agent process is model-controlled anyway; none
+            # is attempted. What matters is the split: view_file is confined to
+            # data_dir, and everything we write goes to state_dir.
+            for directory, label in ((data_dir, "data"), (state_dir, "state")):
+                mkdir = await sbox.exec(
+                    ["mkdir", "-p", "-m", "0700", directory], user=user
                 )
+                if not mkdir.success:
+                    raise RuntimeError(
+                        f"Failed to create antigravity {label} directory: "
+                        f"{mkdir.stderr.strip()}"
+                    )
             await sbox.write_file(
                 runner_path, Path(__file__).with_name("sdk_runner.py").read_bytes()
             )
@@ -424,6 +439,20 @@ def antigravity(
                     f"Antigravity SDK exited {result.returncode}: {detail}"
                 )
 
+            # Report view_file path-argument drift. The runner cannot warn
+            # usefully itself: its stderr only reaches the host with debug=True
+            # or on failure, and drift makes view_file deny-all on an otherwise
+            # successful run -- offloaded results unreadable, silently.
+            drifted_arg_keys = _reported_view_file_arg_drift(result.stdout)
+            if drifted_arg_keys:
+                logger.warning(
+                    "antigravity: view_file was called without the expected "
+                    f"path argument; the harness sent {drifted_arg_keys} "
+                    "instead. Offloaded tool results are being denied, so large "
+                    "tool output is not reaching the model -- the SDK's tool "
+                    "argument surface has drifted from the pinned version."
+                )
+
             # persist the SDK conversation id for resume on re-invocation
             reported_id = _reported_conversation_id(result.stdout)
             if reported_id is not None:
@@ -454,3 +483,28 @@ def _reported_conversation_id(stdout: str) -> str | None:
             return conversation_id
         return None
     return None
+
+
+def _runner_result_line(stdout: str) -> dict[str, object] | None:
+    """Parse the runner's JSON result line (the last JSON object it printed)."""
+    for line in reversed(stdout.strip().splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _reported_view_file_arg_drift(stdout: str) -> list[str]:
+    """Argument keys seen when view_file was called without its path argument."""
+    parsed = _runner_result_line(stdout)
+    if parsed is None:
+        return []
+    drifted = parsed.get("view_file_unexpected_arg_keys")
+    if not isinstance(drifted, list):
+        return []
+    return [str(key) for key in drifted]

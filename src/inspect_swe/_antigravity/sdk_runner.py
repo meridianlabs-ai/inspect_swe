@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import posixpath
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Final, TypedDict
 
 import anyio
 from pydantic import BaseModel, ConfigDict
@@ -14,23 +13,63 @@ if TYPE_CHECKING:
     from google.antigravity import LocalAgentConfig
 
 
-def _confine_to_dir(directory: str) -> Callable[[dict[str, Any]], bool]:
+# view_file argument key the pinned harness sends. Recorded rather than assumed:
+# if the harness renames or URI-wraps it, the confinement predicate would reject
+# every call and view_file would silently become deny-all -- offloaded results
+# unreadable again, this time through denial rather than loss. Drift is reported
+# to the host in the runner's result line (see run()).
+_VIEW_FILE_PATH_ARG: Final = "AbsolutePath"
+
+
+def _resolve_strictly(path: str) -> Path | None:
+    """Canonicalize a path, resolving symlinks. None means fail closed.
+
+    Mirrors the SDK's own ``hooks/policy._secure_normalize_path``:
+    ``Path.resolve()`` without ``strict`` (a file to be created need not exist)
+    and an ``OSError`` -- unresolvable, a symlink loop -- denies the call.
+    """
+    try:
+        return Path(path).resolve()
+    except OSError:
+        return None
+
+
+def _confine_to_dir(
+    directory: str, observed_arg_keys: set[str] | None = None
+) -> Callable[[dict[str, Any]], bool]:
     """Policy predicate limiting view_file to paths inside ``directory``.
 
     view_file exists ONLY to read back localharness's offloaded tool results,
-    which live under the agent's own app_data_dir. Paths are lexically
-    normalized first so ``..`` traversal cannot escape the prefix, and the
-    prefix match is segment-aware so a sibling like ``<dir>-evil`` does not
-    match. Host-testable: no SDK import.
+    which live under the agent's own app_data_dir; everything this agent writes
+    (runner, request, session store) lives in a sibling state directory outside
+    it. Both sides are canonicalized with symlinks resolved, because the
+    directory is writable by the model user: a lexical check alone would accept
+    ``<dir>/link/secret`` where ``link`` points outside. Containment is compared
+    on resolved path parts, so a sibling like ``<dir>-evil`` does not match.
+
+    This confines view_file to the directory; it is not an absolute guarantee
+    about what localharness can open, since the predicate runs in the SDK
+    process while the open happens in the harness.
+
+    When ``observed_arg_keys`` is given, the argument keys of any call missing
+    the expected path argument are recorded there for host-visible drift
+    reporting. Host-testable: no SDK import.
     """
-    confined = posixpath.normpath(directory)
+    confined = _resolve_strictly(directory)
 
     def _within(args: dict[str, Any]) -> bool:
-        raw = args.get("AbsolutePath")
+        raw = args.get(_VIEW_FILE_PATH_ARG)
         if not isinstance(raw, str) or not raw:
+            if observed_arg_keys is not None:
+                observed_arg_keys.update(str(key) for key in args)
             return False
-        resolved = posixpath.normpath(raw)
-        return resolved == confined or resolved.startswith(confined + "/")
+        if confined is None:
+            return False
+        resolved = _resolve_strictly(raw)
+        if resolved is None:
+            return False
+        confined_parts = confined.parts
+        return resolved.parts[: len(confined_parts)] == confined_parts
 
     return _within
 
@@ -108,7 +147,9 @@ def load_payload(config_path: Path) -> RunnerPayload:
     }
 
 
-def build_config(payload: RunnerPayload) -> "LocalAgentConfig":
+def build_config(
+    payload: RunnerPayload, observed_arg_keys: set[str] | None = None
+) -> "LocalAgentConfig":
     """Create the confined native-Gemini SDK configuration for one bridged sample.
 
     The SDK's native localharness backend speaks the Gemini generateContent wire
@@ -130,9 +171,11 @@ def build_config(payload: RunnerPayload) -> "LocalAgentConfig":
     large MCP tool result to a file and returns only a file:// pointer, so
     without a read-back path every tool observation above its internal cap
     (~4KB) is silently lost. A policy predicate confines view_file to the
-    agent's own app_data_dir, where localharness writes offloaded results; it
-    cannot read task files, the workspace, or grading ground truth elsewhere
-    in the sandbox.
+    agent's own app_data_dir, where localharness writes the offloaded results.
+    Everything this agent writes -- runner, request.json (which serializes the
+    MCP configs including their auth headers), and the session store -- lives in
+    a sibling state directory outside that tree, so the model cannot read its
+    own configuration or a server credential back.
     """
     from google.antigravity import LocalAgentConfig, types
     from google.antigravity.hooks import policy
@@ -192,7 +235,7 @@ def build_config(payload: RunnerPayload) -> "LocalAgentConfig":
             policy.allow("call_mcp_tool", when=_targets_configured_server),
             policy.allow(
                 types.BuiltinTools.VIEW_FILE.value,
-                when=_confine_to_dir(payload["app_data_dir"]),
+                when=_confine_to_dir(payload["app_data_dir"], observed_arg_keys),
             ),
             *server_policies,
         ],
@@ -207,7 +250,12 @@ async def run(payload: RunnerPayload) -> None:
     """Run one SDK Agent turn (resuming a saved conversation when given one)."""
     from google.antigravity import Agent
 
-    async with Agent(build_config(payload)) as sdk_agent:
+    # Drift in view_file's path argument is reported on the result line rather
+    # than logged: this runner's stderr only reaches the host when debug=True or
+    # the run fails, so an in-sandbox warning would be invisible on a normal run
+    # -- exactly the case where view_file has silently become deny-all.
+    observed_arg_keys: set[str] = set()
+    async with Agent(build_config(payload, observed_arg_keys)) as sdk_agent:
         response = await sdk_agent.chat(payload["prompt"])
         final_text = await response.text()
         print(
@@ -217,6 +265,7 @@ async def run(payload: RunnerPayload) -> None:
                     "final_text": final_text,
                     "steps": len(sdk_agent.conversation.history),
                     "turn_count": sdk_agent.conversation.turn_count,
+                    "view_file_unexpected_arg_keys": sorted(observed_arg_keys),
                 },
                 sort_keys=True,
             )

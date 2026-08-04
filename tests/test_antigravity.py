@@ -17,6 +17,7 @@ from inspect_swe._antigravity.antigravity import (
     _SANDBOX_DUMMY_API_KEY,
     _mcp_server_entries,
     _reported_conversation_id,
+    _reported_view_file_arg_drift,
     sdk_execution_spec,
 )
 from inspect_swe._antigravity.sdk_runner import _confine_to_dir, load_payload
@@ -159,7 +160,7 @@ def test_load_payload_round_trips_the_host_payload(tmp_path: Path) -> None:
             }
         ],
         "app_data_dir": "/home/model/.antigravity",
-        "save_dir": "/home/model/.antigravity/session",
+        "save_dir": "/home/model/.antigravity-state/session",
         "conversation_id": None,
     }
     config = tmp_path / "request.json"
@@ -251,15 +252,81 @@ def test_ensure_sdk_does_not_reuse_a_stale_venv_version() -> None:
     assert fake.installed_version == "0.1.8"
 
 
-def test_view_file_predicate_confines_to_the_data_dir() -> None:
+def test_view_file_predicate_confines_to_the_data_dir(tmp_path: Path) -> None:
     """view_file may only read localharness's offloaded results, nothing else."""
-    within = _confine_to_dir("/home/model/.antigravity")
-    assert within({"AbsolutePath": "/home/model/.antigravity/brain/x/out.txt"})
-    assert within({"AbsolutePath": "/home/model/.antigravity"})
-    assert within({"AbsolutePath": "/home/model/.antigravity/a/../b"})
-    assert not within({"AbsolutePath": "/home/model/.antigravity/../secrets.txt"})
-    assert not within({"AbsolutePath": "/home/model/.antigravity-evil/out.txt"})
-    assert not within({"AbsolutePath": "/workspace/repo/grading/regular.py"})
+    data_dir = tmp_path / ".antigravity"
+    (data_dir / "brain").mkdir(parents=True)
+    (data_dir / "brain" / "out.txt").write_text("offloaded", encoding="utf-8")
+    (tmp_path / ".antigravity-evil").mkdir()
+    within = _confine_to_dir(str(data_dir))
+    assert within({"AbsolutePath": str(data_dir / "brain" / "out.txt")})
+    assert within({"AbsolutePath": str(data_dir)})
+    assert within({"AbsolutePath": str(data_dir / "a" / ".." / "b")})
+    assert not within({"AbsolutePath": str(data_dir / ".." / "secrets.txt")})
+    assert not within({"AbsolutePath": str(tmp_path / ".antigravity-evil" / "x")})
+    assert not within({"AbsolutePath": str(tmp_path / "grading" / "regular.py")})
     assert not within({"AbsolutePath": ""})
     assert not within({"AbsolutePath": 42})
     assert not within({})
+
+
+def test_view_file_predicate_rejects_symlink_escape(tmp_path: Path) -> None:
+    """A model-planted symlink inside the tree must not reach outside it."""
+    data_dir = tmp_path / ".antigravity"
+    data_dir.mkdir()
+    outside = tmp_path / "grading"
+    outside.mkdir()
+    (outside / "regular.py").write_text("ground truth", encoding="utf-8")
+    (data_dir / "offload").symlink_to(outside, target_is_directory=True)
+    within = _confine_to_dir(str(data_dir))
+    # lexically inside the allowed tree, but resolves outside it
+    assert not within({"AbsolutePath": str(data_dir / "offload" / "regular.py")})
+    assert not within({"AbsolutePath": str(data_dir / "offload")})
+
+
+def test_view_file_predicate_cannot_read_the_request_or_session_state(
+    tmp_path: Path,
+) -> None:
+    """request.json carries MCP auth headers, so it must be out of reach."""
+    data_dir = tmp_path / ".antigravity"
+    data_dir.mkdir()
+    state_dir = tmp_path / ".antigravity-state"
+    (state_dir / "session").mkdir(parents=True)
+    request = state_dir / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "mcp_servers": [
+                    {
+                        "name": "secrets",
+                        "url": "http://x/mcp/s",
+                        "headers": {"Authorization": "Bearer super-secret"},
+                        "tools": None,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    within = _confine_to_dir(str(data_dir))
+    assert not within({"AbsolutePath": str(request)})
+    assert not within({"AbsolutePath": str(state_dir / "runner.py")})
+    assert not within({"AbsolutePath": str(state_dir / "session" / "conv.json")})
+    assert not within({"AbsolutePath": str(state_dir)})
+
+
+def test_view_file_predicate_records_path_argument_drift() -> None:
+    """A renamed path argument must be reportable, not silently deny-all."""
+    observed: set[str] = set()
+    within = _confine_to_dir("/home/model/.antigravity", observed)
+    assert not within({"FilePath": "/home/model/.antigravity/out.txt"})
+    assert observed == {"FilePath"}
+
+
+def test_reported_view_file_arg_drift_reads_the_result_line() -> None:
+    stdout = json.dumps(
+        {"conversation_id": "c1", "view_file_unexpected_arg_keys": ["FilePath"]}
+    )
+    assert _reported_view_file_arg_drift(stdout) == ["FilePath"]
+    assert _reported_view_file_arg_drift(json.dumps({"conversation_id": "c1"})) == []
+    assert _reported_view_file_arg_drift("no json") == []
