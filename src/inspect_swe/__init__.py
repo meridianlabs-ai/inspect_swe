@@ -1,3 +1,4 @@
+from ._antigravity.antigravity import antigravity
 from ._claude_code.claude_code import claude_code
 from ._codex_cli.codex_cli import codex_cli
 from ._codex_cli.config import CodexAutoReview
@@ -25,6 +26,7 @@ __all__ = [
     "ACPAgentParams",
     "acp_connection",
     "bridge_mcp_to_acp",
+    "antigravity",
     "claude_code",
     "codex_cli",
     "gemini_cli",

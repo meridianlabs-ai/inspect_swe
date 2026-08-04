@@ -106,3 +106,11 @@ mypy_path = "src"
 namespace_packages = true
 explicit_package_bases = true
 python_executable = ".venv/bin/python"
+
+# google-antigravity is a sandbox-only runtime dependency (the SDK runs inside the
+# Inspect sandbox, not on the host), so it is intentionally not a project dependency
+# and ships no py.typed marker. sdk_runner.py imports it only in-sandbox; tell mypy
+# not to require types for it on the host.
+[[tool.mypy.overrides]]
+module = ["google.antigravity.*"]
+ignore_missing_imports = true
