@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.68](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.67...0.2.68) (2026-08-04)
+
+
+### Features
+
+* **antigravity:** add native Antigravity SDK agent ([#94](https://github.com/meridianlabs-ai/inspect_swe/issues/94)) ([7d85ee9](https://github.com/meridianlabs-ai/inspect_swe/commit/7d85ee9bacc9955068c4333018067d726b7ce2c9))
+* support replacing Claude Code system prompt ([#98](https://github.com/meridianlabs-ai/inspect_swe/issues/98)) ([58638bc](https://github.com/meridianlabs-ai/inspect_swe/commit/58638bcb4cef191fd5bff7b1a961792f0d16e190))
+
 ## [0.2.67](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.66...0.2.67) (2026-07-29)
 
 
