@@ -15,7 +15,7 @@ The following options are supported for customizing the behavior of the agent:
 | Option | Description |
 |------------------------------------|------------------------------------|
 | `system_prompt` | Additional system prompt to append to default system prompt. |
-| `mcp_servers` | MCP servers to make available to the agent (HTTP configs; localharness reaches servers over streamable HTTP). |
+| `mcp_servers` | MCP servers to make available to the agent. localharness reaches servers over streamable HTTP, so `type="http"` configs are required and `type="sse"` is rejected rather than silently reconnected. |
 | `bridged_tools` | Host-side Inspect tools to expose via MCP. |
 | `model` | Model name to use for agent (defaults to main model for task). |
 | `model_aliases` | Mapping of model names to Model instances/strings; alias keys resolve against `endpoint_model`. |
@@ -31,7 +31,9 @@ The following options are supported for customizing the behavior of the agent:
 
 ## Tool Confinement
 
-The agent confines the model's tool surface to the configured MCP servers: the SDK's builtin capabilities are delegated off via its own configuration (`enabled_tools=[]`), and the residual engine tools that the SDK's typed configuration cannot disable are stripped from the model's tool declaration by a `GenerateFilter`. Tool calls dispatch through localharness's `call_mcp_tool` wrapper, gated by an execution policy that only allows the configured servers. If a future SDK version declares tools outside the known surface, the agent drops them (fail closed) and logs a warning naming the drifted tools.
+The agent confines the model's tool surface to the configured MCP servers and one read-back builtin. The SDK's builtin capabilities are delegated off via its own configuration (`enabled_tools=[BuiltinTools.VIEW_FILE]`), and the residual engine tools that the SDK's typed configuration cannot disable are stripped from the model's tool declaration by a `GenerateFilter`. Tool calls dispatch through localharness's `call_mcp_tool` wrapper, gated by an execution policy that only allows the configured servers, and a per-server `tools` allowlist is carried through to `enabled_tools` and to per-tool policies so a server exposes only what Inspect declared. If a future SDK version declares tools outside the known surface, the agent drops them (fail closed) and logs a warning naming the drifted tools.
+
+`view_file` is the one builtin left enabled, because localharness offloads any large MCP tool result to a file and returns the model only a `file://` pointer. Without a read-back path every tool observation above its internal cap (~4KB) is silently lost. A policy predicate confines `view_file` to the agent's own `app_data_dir`, where those offloaded results are written, so it cannot read the workspace, task files, or anything else in the sandbox; paths are normalized first so `..` cannot escape the prefix.
 
 ## Installation
 
