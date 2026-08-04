@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 from inspect_ai.model import Model
-from inspect_ai.tool import MCPServerConfig
+from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_swe import codex_cli, interactive_codex_cli
 from inspect_swe._codex_cli.config import (
     GUARDIAN_MODEL_SLUG,
@@ -241,7 +241,7 @@ def test_codex_auto_review_exported_from_package_root() -> None:
 
 
 def test_bridged_mcp_server_is_marked_required() -> None:
-    server = MCPServerConfig(
+    server = MCPServerConfigHTTP(
         type="http", name="bridged-tools", url="http://localhost:9000/mcp"
     )
 
@@ -254,7 +254,7 @@ def test_bridged_mcp_server_is_marked_required() -> None:
 
 
 def test_static_mcp_server_is_not_marked_required() -> None:
-    server = MCPServerConfig(
+    server = MCPServerConfigHTTP(
         type="http", name="caller-tools", url="http://localhost:9001/mcp"
     )
 
