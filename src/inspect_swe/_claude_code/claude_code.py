@@ -64,6 +64,7 @@ from .model import resolve_claude_code_models
 ClaudeCodePermissionMode = Literal[
     "acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"
 ]
+ClaudeCodeEffort = Literal["low", "medium", "high", "xhigh", "max"]
 
 
 class ClaudeCodeDeprecatedArgs(TypedDict, total=False):
@@ -128,6 +129,7 @@ def claude_code(
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     model_config: str | None = None,
+    effort: ClaudeCodeEffort | None = None,
     model_aliases: dict[str, str | Model] | None = None,
     opus_model: str | None = None,
     sonnet_model: str | None = None,
@@ -185,6 +187,7 @@ def claude_code(
             bridged to the served Inspect model regardless. (Claude Code renders
             the genuine name/cutoff for recognized Anthropic ids and shows other
             ids verbatim.)
+        effort: Claude Code reasoning effort. ``None`` leaves the CLI default.
         model_aliases: Optional mapping of model names to Model instances or model name strings.
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
@@ -317,11 +320,7 @@ def claude_code(
                 if effective_permission_mode is not None
                 else ["--dangerously-skip-permissions"]
             )
-            cmd = [
-                *permission_flag,
-                "--model",
-                models.presented,
-            ]
+            cmd = claude_code_command(permission_flag, models.presented, effort)
 
             # add interactive options if not running as centaur
             if centaur is False:
@@ -615,6 +614,18 @@ def _system_prompt_args(
         args.extend(["--append-system-prompt", "\n\n".join(system_texts)])
 
     return args
+
+
+def claude_code_effort_args(effort: ClaudeCodeEffort | None) -> list[str]:
+    if effort is None:
+        return []
+    return ["--effort", effort]
+
+
+def claude_code_command(
+    permission_flag: list[str], model: str, effort: ClaudeCodeEffort | None
+) -> list[str]:
+    return [*permission_flag, "--model", model, *claude_code_effort_args(effort)]
 
 
 async def _seed_claude_config(
