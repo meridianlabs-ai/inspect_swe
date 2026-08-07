@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import anyio
 import pytest
+from inspect_ai.util import SandboxEnvironment
 from inspect_swe._util import agentbinary
 from inspect_swe._util.agentbinary import (
     AgentBinarySource,
@@ -15,7 +16,6 @@ from inspect_swe._util.agentbinary import (
     download_agent_binary_async,
     ensure_agent_binary_installed,
 )
-from inspect_ai.util import SandboxEnvironment
 from inspect_swe._util.sandbox import SANDBOX_INSTALL_DIR
 
 
