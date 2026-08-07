@@ -23,6 +23,10 @@ class AgentBinaryVersion(NamedTuple):
     version: str
     expected_checksum: str
     download_url: str
+    # the artifact is a package archive (extracted in the sandbox) rather than
+    # a single binary. requires the source to define package_entrypoint and
+    # cached_package_path.
+    package: bool = False
 
 
 @dataclass
@@ -37,6 +41,11 @@ class AgentBinarySource:
     list_cached_binaries: Callable[[], list[Path]]
     post_download: Callable[[bytes], bytes] | None
     post_install: str | None
+    # package-archive support: relative path of the agent binary within the
+    # extracted package (e.g. "bin/codex") and the cache location for package
+    # archives. required when resolve_version can return package=True.
+    package_entrypoint: str | None = None
+    cached_package_path: Callable[[str, SandboxPlatform], Path] | None = None
 
 
 # In-process cache for version resolution results. When many samples run
@@ -82,31 +91,60 @@ async def ensure_agent_binary_installed(
 
     # use concurrency so multiple samples don't attempt the same download all at once
     async with concurrency(f"{source.binary}-install", 1, visible=False):
-        # if a specific version is requested, first try to read it directly from the cache
+        # if a specific version is requested, first try to read it directly from
+        # the cache (package archive first, then single binary)
+        binary_bytes: bytes | None = None
+        package = False
         if version not in ["stable", "latest"]:
-            binary_bytes: bytes | None = read_cached_binary(
-                source, version, platform, None
-            )
+            if source.cached_package_path is not None:
+                binary_bytes = read_cached_file(
+                    source.cached_package_path(version, platform), None
+                )
+                package = binary_bytes is not None
+            if binary_bytes is None:
+                binary_bytes = read_cached_binary(source, version, platform, None)
             if binary_bytes is not None:
                 trace(f"Used {source.agent} binary from cache: {version} ({platform})")
-        else:
-            binary_bytes = None
 
         # download the binary
         if binary_bytes is None:
-            binary_bytes, resolved_version = await download_agent_binary_async(
+            binary_bytes, resolved = await download_agent_binary_async(
                 source, version, platform, trace
             )
+            resolved_version = resolved.version
+            package = resolved.package
         else:
             # If we got it from cache, version is already the resolved version
             resolved_version = version
 
         # write it into the container and return it
-        binary_path = (
+        install_path = (
             f"{SANDBOX_INSTALL_DIR}/{source.binary}-{resolved_version}-{platform}"
         )
-        await sandbox.write_file(binary_path, binary_bytes)
-        await sandbox_exec(sandbox, f"chmod +x {binary_path}", user="root")
+        if package:
+            if source.package_entrypoint is None:
+                raise RuntimeError(
+                    f"{source.agent} resolved a package archive but the source "
+                    "does not define a package_entrypoint"
+                )
+            binary_path = f"{install_path}/{source.package_entrypoint}"
+            # skip write + extract if this version's package is already installed
+            probe = await sandbox.exec(bash_command(f"test -x {binary_path}"))
+            if not probe.success:
+                archive_path = f"{install_path}.tar.gz"
+                await sandbox.write_file(archive_path, binary_bytes)
+                await sandbox_exec(
+                    sandbox,
+                    f"mkdir -p {install_path} && "
+                    f"tar -xzf {archive_path} -C {install_path} && "
+                    f"rm -f {archive_path} && "
+                    f"chmod +x {binary_path}",
+                    user="root",
+                )
+        else:
+            binary_path = install_path
+            await sandbox.write_file(binary_path, binary_bytes)
+            await sandbox_exec(sandbox, f"chmod +x {binary_path}", user="root")
         if source.post_install:
             await sandbox_exec(
                 sandbox, f"{binary_path} {source.post_install}", user=user
@@ -119,7 +157,7 @@ async def download_agent_binary_async(
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform,
     logger: Callable[[str], None] | None = None,
-) -> tuple[bytes, str]:
+) -> tuple[bytes, AgentBinaryVersion]:
     # resolve logger
     logger = logger or print
 
@@ -134,11 +172,24 @@ async def download_agent_binary_async(
         resolved = await source.resolve_version(version, platform)
         with _resolve_version_lock:
             _resolved_versions[cache_key] = resolved
-    version, expected_checksum, download_url = resolved
+    version, expected_checksum, download_url = resolved[:3]
 
-    # check the cache (if post_download is used, don't verify checksum since cached is processed)
-    cache_checksum = None if source.post_download else expected_checksum
-    binary_data = read_cached_binary(source, version, platform, cache_checksum)
+    # resolve the cache location (package archives are cached verbatim, so
+    # their checksum stays verifiable; single binaries transformed by
+    # post_download can't be verified against the download checksum)
+    if resolved.package:
+        if source.cached_package_path is None:
+            raise RuntimeError(
+                f"{source.agent} resolved a package archive but the source "
+                "does not define a cached_package_path"
+            )
+        cache_path = source.cached_package_path(version, platform)
+        cache_checksum: str | None = expected_checksum
+    else:
+        cache_path = source.cached_binary_path(version, platform)
+        cache_checksum = None if source.post_download else expected_checksum
+
+    binary_data = read_cached_file(cache_path, cache_checksum)
     if binary_data is None:
         # not in cache, download and verify checksum
         binary_data = await download_file(download_url)
@@ -146,11 +197,11 @@ async def download_agent_binary_async(
             raise ValueError("Checksum verification failed")
 
         # apply post-download processing if provided (e.g., extract from tar.gz)
-        if source.post_download is not None:
+        if not resolved.package and source.post_download is not None:
             binary_data = source.post_download(binary_data)
 
         # save to cache
-        write_cached_binary(source, binary_data, version, platform)
+        write_cached_file(source, binary_data, cache_path)
 
         # trace
         logger(f"Downloaded {source.agent} binary: {version} ({platform})")
@@ -158,7 +209,7 @@ async def download_agent_binary_async(
         logger(f"Used {source.agent} binary from cache: {version} ({platform})")
 
     # return data and resolved version
-    return binary_data, version
+    return binary_data, resolved
 
 
 def read_cached_binary(
@@ -167,8 +218,13 @@ def read_cached_binary(
     platform: SandboxPlatform,
     expected_checksum: str | None,
 ) -> bytes | None:
-    # no cached binary
-    cache_path = source.cached_binary_path(version, platform)
+    return read_cached_file(
+        source.cached_binary_path(version, platform), expected_checksum
+    )
+
+
+def read_cached_file(cache_path: Path, expected_checksum: str | None) -> bytes | None:
+    # no cached file
     if not cache_path.exists():
         return None
 
@@ -184,15 +240,12 @@ def read_cached_binary(
         return None
 
 
-def write_cached_binary(
+def write_cached_file(
     source: AgentBinarySource,
     binary_data: bytes,
-    version: str,
-    platform: SandboxPlatform,
+    cache_path: Path,
 ) -> None:
-    binary_path = source.cached_binary_path(version, platform)
-
-    with open(binary_path, "wb") as f:
+    with open(cache_path, "wb") as f:
         f.write(binary_data)
 
     _cleanup_binary_cache(source, keep_count=3)

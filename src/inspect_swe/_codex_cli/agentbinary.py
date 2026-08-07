@@ -30,15 +30,25 @@ def codex_cli_binary_source() -> AgentBinarySource:
         # Get release information
         release = await _fetch_release_assets(version)
 
-        # Get the platform-specific asset
+        # Get the platform-specific asset. Prefer the full package archive
+        # (ships companion executables codex needs at runtime, e.g.
+        # codex-code-mode-host, which gpt-5.6+ models require for execution;
+        # first published with rust-v0.133.0) and fall back to the single
+        # codex binary for older releases.
         arch = _platform_to_codex_arch(platform)
-        asset_name = f"codex-{arch}.tar.gz"
+        candidates = [
+            (f"codex-package-{arch}.tar.gz", True),
+            (f"codex-{arch}.tar.gz", False),
+        ]
 
         # Find the matching asset
+        assets = {a["name"]: a for a in release.get("assets", [])}
         asset = None
-        for a in release.get("assets", []):
-            if a["name"] == asset_name:
-                asset = a
+        package = False
+        for asset_name, is_package in candidates:
+            asset = assets.get(asset_name)
+            if asset is not None:
+                package = is_package
                 break
 
         if asset is None:
@@ -55,13 +65,20 @@ def codex_cli_binary_source() -> AgentBinarySource:
         # Get download URL
         download_url = asset["browser_download_url"]
 
-        return AgentBinaryVersion(version, expected_checksum, download_url)
+        return AgentBinaryVersion(version, expected_checksum, download_url, package)
 
     def cached_binary_path(version: str, platform: SandboxPlatform) -> Path:
         return cached_binary_dir / f"codex-{version}-{platform}"
 
+    def cached_package_path(version: str, platform: SandboxPlatform) -> Path:
+        return cached_binary_dir / f"codex-package-{version}-{platform}.tar.gz"
+
     def list_cached_binaries() -> list[Path]:
-        return list(cached_binary_dir.glob("codex-*"))
+        return [
+            f
+            for f in cached_binary_dir.glob("codex-*")
+            if not f.name.endswith("-models.json")
+        ]
 
     return AgentBinarySource(
         agent="codex cli",
@@ -71,6 +88,8 @@ def codex_cli_binary_source() -> AgentBinarySource:
         list_cached_binaries=list_cached_binaries,
         post_download=extract_tarball,
         post_install=None,
+        package_entrypoint="bin/codex",
+        cached_package_path=cached_package_path,
     )
 
 
