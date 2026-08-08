@@ -59,6 +59,13 @@ def static_root_classifier(
 
 
 def is_legacy_str_filter(fn: GenerateFilter) -> bool:
+    """True when `fn`'s first parameter is annotated `str` (legacy dispatch).
+
+    Inherited limitation (mirrors inspect_ai's own dispatch intentionally):
+    modules using `from __future__ import annotations` stringize all
+    annotations, so a legacy filter's `str` annotation reads back as the
+    string `"str"` rather than the `str` type and is classified Model-first.
+    """
     first = next(iter(inspect.signature(fn).parameters.values()), None)
     return first is not None and first.annotation is str
 
@@ -72,10 +79,15 @@ def classify_filter(
     `AgentBridgeContext` via `set_agent_bridge_context` before delegating to
     `user_filter` (if any). The classification happens first so that the
     context is visible to `user_filter` and to anything downstream in the
-    request task. Classification failures are logged and swallowed rather
-    than propagated, since a broken classifier should never break generation.
+    request task. If `classify` raises, the failure is logged (once per
+    distinct error, to avoid a broken classifier warning on every request)
+    and swallowed rather than propagated: the request proceeds under
+    whatever `AgentBridgeContext` the bridge's ambient scope already has in
+    place (`"unknown"`, absent any earlier classification) rather than
+    breaking generation.
     """
     user_is_legacy = user_filter is not None and is_legacy_str_filter(user_filter)
+    warned: set[str] = set()
 
     async def _filter(
         model: Model,
@@ -87,7 +99,10 @@ def classify_filter(
         try:
             set_agent_bridge_context(classify(model, messages, tools))
         except Exception as ex:
-            logger.warning(f"agent context classification failed: {ex}")
+            key = f"{type(ex).__name__}{ex}"
+            if key not in warned:
+                warned.add(key)
+                logger.warning(f"agent context classification failed: {ex}")
 
         if user_filter is None:
             return None

@@ -1,7 +1,9 @@
 """Tests for the shared agent-context classify wrapper."""
 
+import logging
 from typing import Any
 
+import pytest
 from inspect_ai.agent import (
     AgentBridgeContext,
     current_agent_bridge_context,
@@ -104,14 +106,25 @@ async def test_wrapper_passes_through_user_filter_result() -> None:
     assert isinstance(result, GenerateInput)
 
 
-async def test_classify_exceptions_do_not_break_generation() -> None:
+async def test_classify_exceptions_do_not_break_generation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     def broken_classify(
         model: Model, messages: list[ChatMessage], tools: list[ToolInfo]
     ) -> AgentBridgeContext:
         raise RuntimeError("boom")
 
     wrapped = classify_filter(None, broken_classify)
-    with bridged_request_scope("slug"):
-        result = await wrapped(*_args())  # must not raise
-        assert current_agent_bridge_context() == AgentBridgeContext("unknown")
-    assert result is None
+    with caplog.at_level(logging.WARNING, logger="inspect_swe._util.agentcontext"):
+        with bridged_request_scope("slug"):
+            result = await wrapped(*_args())  # must not raise
+            assert current_agent_bridge_context() == AgentBridgeContext("unknown")
+        assert result is None
+
+        # a broken classifier fails on every request; only the first
+        # occurrence of a given error should be logged.
+        with bridged_request_scope("slug"):
+            await wrapped(*_args())
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1

@@ -11,17 +11,12 @@ from inspect_ai.log import EvalLog
 
 
 # ---------------------------------------------------------------------------
-# Automatically mark every async test function with @pytest.mark.anyio so it
-# runs under both asyncio and trio backends. A hookwrapper is required
-# because its setup phase executes *before* the anyio plugin's tryfirst
-# pytest_pycollect_makeitem hook, which is where anyio looks for the marker.
-# A conftest-level ``pytestmark`` would be too late (applied after
-# collection). Mirrors inspect_ai's tests/conftest.py.
-#
-# Trio variants are skipped by default. Use --runtrio in a *separate* pytest
-# invocation to run only the trio variants (asyncio variants and sync tests
-# are skipped in that run), avoiding cross-backend contamination from global
-# asyncio state (locks, etc.).
+# Automatically mark every async test function with @pytest.mark.anyio so
+# pytest can run it (anyio is registered but requires the marker in strict
+# mode). A hookwrapper is required because its setup phase executes *before*
+# the anyio plugin's tryfirst pytest_pycollect_makeitem hook, which is where
+# anyio looks for the marker. A conftest-level ``pytestmark`` would be too
+# late (applied after collection). Mirrors inspect_ai's tests/conftest.py.
 # ---------------------------------------------------------------------------
 @pytest.hookimpl(hookwrapper=True)
 def pytest_pycollect_makeitem(
@@ -41,12 +36,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     parser.addoption(
         "--runflaky", action="store_true", default=False, help="run flaky tests"
-    )
-    parser.addoption(
-        "--runtrio",
-        action="store_true",
-        default=False,
-        help="run ONLY trio backend variants of async tests (use in a separate invocation)",
     )
 
 
@@ -76,21 +65,6 @@ def pytest_collection_modifyitems(
         for item in items:
             if "flaky" in item.keywords:
                 item.add_marker(skip_flaky)
-
-    if config.getoption("--runtrio"):
-        # --runtrio: run ONLY trio async variants (skip asyncio variants and
-        # sync tests). Keep this a separate invocation from the default run
-        # since asyncio tests create global state (locks, etc.) that is
-        # invalid under trio.
-        skip_non_trio = pytest.mark.skip(reason="running trio variants only")
-        for item in items:
-            if "[trio" not in item.nodeid:
-                item.add_marker(skip_non_trio)
-    else:
-        skip_trio = pytest.mark.skip(reason="need --runtrio option to run")
-        for item in items:
-            if "[trio" in item.nodeid:
-                item.add_marker(skip_trio)
 
 
 def skip_if_env_var(var: str, exists: bool = True) -> pytest.MarkDecorator:
