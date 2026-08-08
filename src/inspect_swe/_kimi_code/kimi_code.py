@@ -108,8 +108,21 @@ _COMPACTION_INSTRUCTION_MARKER = "Write a first-person handoff note"
 def kimi_classifier(
     model: Model, messages: list[ChatMessage], tools: list[ToolInfo]
 ) -> AgentBridgeContext:
-    """Classify kimi's auto-compaction summarizer requests as utility, root otherwise."""
-    if messages and _COMPACTION_INSTRUCTION_MARKER in messages[-1].text:
+    """Classify kimi's auto-compaction summarizer requests as utility, root otherwise.
+
+    Positive match requires the last message to be a ChatMessageUser carrying
+    the marker — tool output echoing kimi's own docs/source therefore can't
+    flip a main-thread request to utility (the harmful failure direction; a
+    missed match merely reverts to root, which no gate acts on differently).
+    Substring rather than prefix match: the rendered instruction opens with a
+    preamble sentence ("You are about to run out of context. ...") before the
+    marker phrase.
+    """
+    if (
+        messages
+        and isinstance(messages[-1], ChatMessageUser)
+        and _COMPACTION_INSTRUCTION_MARKER in messages[-1].text
+    ):
         return AgentBridgeContext("utility")
     return AgentBridgeContext("root")
 

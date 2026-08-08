@@ -446,3 +446,33 @@ def test_live_distribution_manifest_shape() -> None:
             f"manifest checksum for {key} is not sha256 hex: {entry['checksum']!r}"
         )
     assert callable(download_text_file)
+
+
+@skip_if_github_action
+def test_live_compaction_instruction_marker() -> None:
+    """Drift check: kimi-code's compaction instruction still carries our marker.
+
+    ``kimi_classifier`` stamps utility only when the request's final user
+    message contains ``_COMPACTION_INSTRUCTION_MARKER``; kimi-code has no hard
+    version pin here, so upstream rewording would silently revert compaction
+    attribution to root. This fetches the instruction template from upstream
+    main and fails loudly instead. Skips when offline; github-action-gated so
+    an upstream hiccup can't block unrelated CI.
+    """
+    from inspect_swe._kimi_code.kimi_code import _COMPACTION_INSTRUCTION_MARKER
+    from inspect_swe._util.download import download_text_file
+
+    url = (
+        "https://raw.githubusercontent.com/MoonshotAI/kimi-code/main/"
+        "packages/agent-core/src/agent/compaction/compaction-instruction.md"
+    )
+    try:
+        instruction = anyio.run(download_text_file, url)
+    except Exception as ex:
+        pytest.skip(f"live kimi-code source unavailable: {ex}")
+
+    assert _COMPACTION_INSTRUCTION_MARKER in instruction, (
+        "kimi-code's compaction instruction no longer contains the marker "
+        "kimi_classifier keys on; re-derive _COMPACTION_INSTRUCTION_MARKER "
+        "from the current template (see its provenance comment)."
+    )

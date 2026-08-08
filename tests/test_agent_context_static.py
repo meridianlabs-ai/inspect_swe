@@ -1,4 +1,4 @@
-"""Static-root agent context wiring for non-delegating agents."""
+"""Agent-context wiring for the non-delegating agents (root, plus kimi compaction→utility)."""
 
 from typing import Any
 
