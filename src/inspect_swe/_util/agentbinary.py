@@ -92,7 +92,12 @@ async def ensure_agent_binary_installed(
     # use concurrency so multiple samples don't attempt the same download all at once
     async with concurrency(f"{source.binary}-install", 1, visible=False):
         # if a specific version is requested, first try to read it directly from
-        # the cache (package archive first, then single binary)
+        # the cache. package-capable sources only honor a package cache hit
+        # here: a single-binary entry may predate package support (cached by an
+        # older inspect_swe), so it must not short-circuit resolution or the
+        # package install would be silently defeated for exactly the users this
+        # exists for. resolution below still prefers caches; the single-binary
+        # cache remains the offline fallback.
         binary_bytes: bytes | None = None
         package = False
         if version not in ["stable", "latest"]:
@@ -101,18 +106,31 @@ async def ensure_agent_binary_installed(
                     source.cached_package_path(version, platform), None
                 )
                 package = binary_bytes is not None
-            if binary_bytes is None:
+            else:
                 binary_bytes = read_cached_binary(source, version, platform, None)
             if binary_bytes is not None:
                 trace(f"Used {source.agent} binary from cache: {version} ({platform})")
 
         # download the binary
         if binary_bytes is None:
-            binary_bytes, resolved = await download_agent_binary_async(
-                source, version, platform, trace
-            )
-            resolved_version = resolved.version
-            package = resolved.package
+            try:
+                binary_bytes, resolved = await download_agent_binary_async(
+                    source, version, platform, trace
+                )
+                resolved_version = resolved.version
+                package = resolved.package
+            except Exception:
+                # offline fallback: a pinned version with a cached single
+                # binary still installs (without companion executables)
+                if version not in ["stable", "latest"]:
+                    binary_bytes = read_cached_binary(source, version, platform, None)
+                if binary_bytes is None:
+                    raise
+                trace(
+                    f"Unable to resolve {source.agent} {version}; using cached "
+                    f"single binary ({platform})"
+                )
+                resolved_version = version
         else:
             # If we got it from cache, version is already the resolved version
             resolved_version = version
@@ -128,9 +146,16 @@ async def ensure_agent_binary_installed(
                     "does not define a package_entrypoint"
                 )
             binary_path = f"{install_path}/{source.package_entrypoint}"
-            # skip write + extract if this version's package is already installed
-            probe = await sandbox.exec(bash_command(f"test -x {binary_path}"))
+            # skip write + extract if this version's package is already
+            # installed (probe as root to match the extraction below, so a
+            # non-traversable install dir can't force re-extraction each call)
+            probe = await sandbox.exec(
+                bash_command(f"test -x {binary_path}"), user="root"
+            )
             if not probe.success:
+                # tar preserves mode bits, so companion executables in the
+                # archive (e.g. bin/*, codex-resources/*) stay executable; only
+                # the entrypoint is chmod'd as a belt-and-suspenders measure
                 archive_path = f"{install_path}.tar.gz"
                 await sandbox.write_file(archive_path, binary_bytes)
                 await sandbox_exec(
@@ -172,7 +197,9 @@ async def download_agent_binary_async(
         resolved = await source.resolve_version(version, platform)
         with _resolve_version_lock:
             _resolved_versions[cache_key] = resolved
-    version, expected_checksum, download_url = resolved[:3]
+    version = resolved.version
+    expected_checksum = resolved.expected_checksum
+    download_url = resolved.download_url
 
     # resolve the cache location (package archives are cached verbatim, so
     # their checksum stays verifiable; single binaries transformed by
@@ -202,6 +229,14 @@ async def download_agent_binary_async(
 
         # save to cache
         write_cached_file(source, binary_data, cache_path)
+
+        # a package supersedes any single-binary cache entry for the same
+        # version (cached by an older inspect_swe): remove it so it can't be
+        # served later and doesn't hold an eviction slot
+        if resolved.package:
+            stale = source.cached_binary_path(version, platform)
+            if stale.exists():
+                stale.unlink()
 
         # trace
         logger(f"Downloaded {source.agent} binary: {version} ({platform})")

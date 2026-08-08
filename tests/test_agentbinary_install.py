@@ -176,3 +176,72 @@ def test_package_without_entrypoint_raises(tmp_path: Path) -> None:
             None,
             cast(SandboxEnvironment, sandbox),
         )
+
+
+def test_stale_single_binary_cache_still_installs_package(tmp_path: Path) -> None:
+    # a pinned version cached as a single binary by an older inspect_swe must
+    # not short-circuit resolution: the package is fetched, installed, and the
+    # superseded cache entry removed
+    data = b"package-tarball-bytes"
+    resolved = AgentBinaryVersion(
+        "9.9.7",
+        hashlib.sha256(data).hexdigest(),
+        "https://example.com/pkg.tar.gz",
+        True,
+    )
+    source = _package_source(tmp_path, resolved)
+    stale = source.cached_binary_path("9.9.7", "linux-arm64")
+    stale.write_bytes(b"stale-single-binary")
+
+    sandbox = _FakeSandbox(installed=False)
+    with (
+        patch.object(
+            agentbinary,
+            "detect_sandbox_platform",
+            AsyncMock(return_value="linux-arm64"),
+        ),
+        patch.object(agentbinary, "trace", lambda msg: None),
+        patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value="")),
+        patch.object(agentbinary, "download_file", AsyncMock(return_value=data)),
+    ):
+        binary_path = anyio.run(
+            ensure_agent_binary_installed,
+            source,
+            "9.9.7",
+            None,
+            cast(SandboxEnvironment, sandbox),
+        )
+
+    assert binary_path.endswith("/bin/codex")
+    assert sandbox.written == [f"{SANDBOX_INSTALL_DIR}/codex-9.9.7-linux-arm64.tar.gz"]
+    assert source.cached_package_path is not None
+    assert source.cached_package_path("9.9.7", "linux-arm64").read_bytes() == data
+    assert not stale.exists()
+
+
+def test_offline_pinned_version_falls_back_to_cached_binary(tmp_path: Path) -> None:
+    # when resolution fails (offline) a pinned version with a cached single
+    # binary still installs, without the package
+    source = _package_source(tmp_path)  # resolve_version raises (resolved=None)
+    source.cached_binary_path("9.9.6", "linux-arm64").write_bytes(b"single-binary")
+
+    sandbox = _FakeSandbox(installed=False)
+    with (
+        patch.object(
+            agentbinary,
+            "detect_sandbox_platform",
+            AsyncMock(return_value="linux-arm64"),
+        ),
+        patch.object(agentbinary, "trace", lambda msg: None),
+        patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value="")),
+    ):
+        binary_path = anyio.run(
+            ensure_agent_binary_installed,
+            source,
+            "9.9.6",
+            None,
+            cast(SandboxEnvironment, sandbox),
+        )
+
+    assert binary_path == f"{SANDBOX_INSTALL_DIR}/codex-9.9.6-linux-arm64"
+    assert sandbox.written == [binary_path]
