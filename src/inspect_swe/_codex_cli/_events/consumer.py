@@ -246,14 +246,19 @@ class CodexConsumer(ModelEventSink):
         match → that sub-agent's span; zero/multiple → outer span (defensive
         default).
 
-        A conversation that CONTAINS the open spawn_agent call is the
-        spawning agent's own, never the spawned one's, so it short-circuits
-        the V1 fallback. Otherwise a parent whose prompt quotes the text it
-        later spawned with substring-matches its own child, parenting every
-        subsequent parent call under the sub-agent — and costing a caller
-        that gates on `is_sub_agent_call` its steering on the real agent.
-        V2 is unaffected either way (recipient is exact, and its prompts are
-        encrypted), but V1 runs whenever recipient resolution falls through.
+        A conversation never belongs to a sub-agent IT ITSELF spawned, so
+        the V1 fallback excludes any open agent whose spawn call appears in
+        this very conversation. Otherwise a parent whose prompt quotes the
+        text it later spawned with substring-matches its own child,
+        parenting every subsequent parent call under the sub-agent — and
+        costing a caller that gates on `is_sub_agent_call` its steering on
+        the real agent.
+
+        Excluding candidates rather than short-circuiting the conversation
+        keeps NESTED delegation working: a V1 sub-agent that spawns its own
+        sub-agent carries that open call too, and must still match its own
+        spawn prompt. V2 is unaffected either way — recipient resolution
+        runs first and is exact, and its spawn prompts are encrypted.
         """
         if not self._agents:
             return self.outer_span_id
@@ -262,32 +267,31 @@ class CodexConsumer(ModelEventSink):
         if span_id is not None:
             return span_id
 
-        if self._issued_open_spawn(input_messages):
-            return self.outer_span_id
-
         user_text = self._user_text(input_messages)
         if not user_text:
             return self.outer_span_id
 
+        issued = self._issued_call_ids(input_messages)
         matches = [
             agent
             for agent in self._agents.values()
-            if len(agent.prompt) >= _MIN_PROMPT_LENGTH and agent.prompt in user_text
+            if agent.call_id not in issued
+            and len(agent.prompt) >= _MIN_PROMPT_LENGTH
+            and agent.prompt in user_text
         ]
         if len(matches) == 1:
             return matches[0].span_id
         return self.outer_span_id
 
-    def _issued_open_spawn(self, input_messages: list[ChatMessage]) -> bool:
-        """Whether this conversation is the one that issued a currently-open spawn call."""
-        open_call_ids = {agent.call_id for agent in self._agents.values()}
-        for msg in input_messages:
-            if not isinstance(msg, ChatMessageAssistant):
-                continue
-            for call in msg.tool_calls or []:
-                if call.id in open_call_ids:
-                    return True
-        return False
+    @staticmethod
+    def _issued_call_ids(input_messages: list[ChatMessage]) -> set[str]:
+        """tool_call ids issued within this conversation."""
+        return {
+            call.id
+            for msg in input_messages
+            if isinstance(msg, ChatMessageAssistant)
+            for call in msg.tool_calls or []
+        }
 
     def _attribute_by_recipient(self, input_messages: list[ChatMessage]) -> str | None:
         """Resolve a call's span from its agent_message recipient (V2).

@@ -53,6 +53,7 @@ not.
 """
 
 import inspect
+import warnings
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -107,12 +108,24 @@ def _takes_model_first(fn: object) -> bool:
     Mirrors the test inspect_ai's bridge applies to the filter it is handed. We must apply it
     ourselves because the bridge will see OUR wrapper, not the caller's function, and would
     otherwise hand a legacy filter a ``Model``.
+
+    Emits the same ``DeprecationWarning`` the bridge would have: wrapping hides the caller's
+    signature from it, so without this a legacy filter would silently stop being warned about
+    the moment an agent started wrapping.
     """
     try:
         first = next(iter(inspect.signature(fn).parameters.values()), None)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return True
-    return first is None or first.annotation is not str
+    if first is not None and first.annotation is str:
+        warnings.warn(
+            "GenerateFilter with 'str' as the first parameter is deprecated. "
+            "Update your filter to accept a 'Model' instance instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return False
+    return True
 
 
 def with_sub_agent_attribution(
@@ -127,8 +140,14 @@ def with_sub_agent_attribution(
     there is nothing to bind (no filter, or a consumer that cannot attribute), so agents without
     an attributing consumer are unaffected.
 
-    Attribution is purely observational: it reads the message list and the consumer's own
-    already-open span registry, and mutates nothing.
+    Attribution is IDEMPOTENT with the binding `on_pending` would perform — not side-effect
+    free, which is a distinction a future reader reordering this code needs. `CodexConsumer`'s
+    recipient resolution binds a thread on first sight (`agent.thread_id = recipient`, and the
+    matching `_thread_index` entry), so calling it here performs that binding at filter time,
+    ahead of the harvest `on_pending` runs for the same request. It computes the same binding
+    either way: spawn results appear only in the PARENT's input, whose recipients identify the
+    parent, so a child's first call cannot bind a thread the harvest would have bound
+    differently. `LiveConsumer` reads only.
     """
     if user_filter is None or not isinstance(consumer, SubAgentAttribution):
         return user_filter

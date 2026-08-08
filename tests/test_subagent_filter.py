@@ -7,8 +7,9 @@ Offline: synthetic message lists, no sandbox, no model, no bridge. Two things ar
    site that constructs both — the property that makes cross-sample contamination impossible
    under concurrency.
 
-The over-detection cases (a parent quoting the text it spawned with) are the reason the
-attribution short-circuit exists; they are called out individually below.
+The over-detection cases (a parent quoting the text it spawned with) are the reason
+attribution excludes a conversation's own issued calls; they are called out individually below,
+alongside the nested-delegation cases that exclusion exists to preserve.
 """
 
 import asyncio
@@ -103,7 +104,7 @@ def test_claude_no_pending_sub_agents_is_never_a_sub_agent() -> None:
 
 
 def test_claude_parent_quoting_its_own_task_prompt_is_not_a_sub_agent() -> None:
-    """The over-detection case, and why `_attribute` short-circuits on the issuing thread.
+    """The over-detection case, and why `_attribute` excludes a conversation's own calls.
 
     The parent's first user message is the task instruction, which can quote the very text the
     agent then hands to Task. Substring-matched naively, the parent matches its own child: its
@@ -177,7 +178,7 @@ def test_codex_parent_quoting_its_own_spawn_prompt_is_not_a_sub_agent() -> None:
 
 
 def test_codex_v1_substring_still_matches_a_real_sub_agent() -> None:
-    """The short-circuit must not cost V1 its attribution when the thread really is forked."""
+    """The exclusion must not cost V1 its attribution when the thread really is forked."""
     consumer = _codex_consumer(SUBTASK)
     assert consumer.is_sub_agent_call(_sub_agent_thread(SUBTASK)) is True
 
@@ -309,3 +310,68 @@ def test_a_legacy_str_filter_still_receives_a_model_name() -> None:
 
     asyncio.run(_invoke(wrapped, _sub_agent_thread(SUBTASK)))
     assert seen == [("test-model", True)]
+
+
+# ---------------------------------------------------------------------------
+# 4. nested delegation (the issued-call exclusion, not a short-circuit)
+# ---------------------------------------------------------------------------
+
+NESTED = "trace every call site of the allocator and summarise the lifetimes"
+
+
+def test_claude_nested_delegator_still_matches_its_own_spawn_prompt() -> None:
+    """A sub-agent that spawns its own sub-agent must keep its identity.
+
+    Excluding only the calls a conversation ISSUED — rather than sending the whole conversation
+    to the outer span the moment it carries any pending Task — is what preserves this. The
+    spawning agent is not necessarily the top-level one; `on_complete` parents to
+    `event.span_id or outer_span_id` precisely so nesting works.
+    """
+    consumer = _claude_consumer(
+        SUBTASK, NESTED
+    )  # toolu_0 = A (ours), toolu_1 = A's child
+    thread_a: list[ChatMessage] = [
+        ChatMessageUser(content=SUBTASK),
+        ChatMessageAssistant(
+            content="delegating further",
+            tool_calls=[
+                ToolCall(id="toolu_1", function="Task", arguments={"prompt": NESTED})
+            ],
+        ),
+    ]
+    assert consumer._attribute(thread_a) == "agent-toolu_0"
+    assert consumer.is_sub_agent_call(thread_a) is True
+
+
+def test_claude_parent_quoting_survives_the_nested_fix() -> None:
+    """The over-detection guard must still hold with the exclusion in place."""
+    consumer = _claude_consumer(SUBTASK)
+    parent = _parent_thread(
+        f"Here is the job. One subtask is to {SUBTASK}.", spawned=[("toolu_0", SUBTASK)]
+    )
+    assert consumer.is_sub_agent_call(parent) is False
+
+
+def test_codex_v1_nested_delegator_still_matches_its_own_spawn_prompt() -> None:
+    consumer = _codex_consumer(SUBTASK, NESTED)  # call_0 = A (ours), call_1 = A's child
+    thread_a: list[ChatMessage] = [
+        ChatMessageUser(content=SUBTASK),
+        ChatMessageAssistant(
+            content="delegating further",
+            tool_calls=[
+                ToolCall(
+                    id="call_1", function="spawn_agent", arguments={"message": NESTED}
+                )
+            ],
+        ),
+    ]
+    assert consumer._attribute(thread_a) == "agent-call_0"
+    assert consumer.is_sub_agent_call(thread_a) is True
+
+
+def test_codex_v1_parent_quoting_survives_the_nested_fix() -> None:
+    consumer = _codex_consumer(SUBTASK)
+    parent = _parent_thread(
+        f"Here is the job. One subtask is to {SUBTASK}.", spawned=[("call_0", SUBTASK)]
+    )
+    assert consumer.is_sub_agent_call(parent) is False

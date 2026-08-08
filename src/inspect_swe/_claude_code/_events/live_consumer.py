@@ -258,30 +258,36 @@ class LiveConsumer(ModelEventSink):
         pending sub-agent prompts. Exactly one match → that sub-agent's
         span. Zero or multiple matches → outer span.
 
-        A conversation that CONTAINS the pending Task tool_call is the
-        spawning agent's own, never the spawned one's, and short-circuits
-        to the outer span before any matching. Without that check a parent
-        whose first user message quotes text it later passed to Task
-        substring-matches its own child and every subsequent parent call
-        is parented under the sub-agent — and any caller gating on
-        `is_sub_agent_call` loses its steering on the real agent. The check
-        is exact rather than heuristic: `on_complete` registers the pending
-        entry FROM that tool_call, and a sub-agent's forked conversation
-        opens at the Task prompt (see the module docstring) so it never
-        carries the parent's call.
+        A conversation never belongs to a sub-agent IT ITSELF spawned, so
+        any pending entry whose Task tool_call appears in this very
+        conversation is excluded from the candidates. Without that, a
+        parent whose first user message quotes text it later passed to
+        Task substring-matches its own child, and every subsequent parent
+        call is parented under the sub-agent — a caller gating on
+        `is_sub_agent_call` then loses its steering on the real agent.
+        The exclusion is exact rather than heuristic: `on_complete`
+        registers the pending entry FROM that tool_call.
+
+        Excluding candidates rather than short-circuiting the whole
+        conversation to the outer span is what keeps NESTED delegation
+        working: a sub-agent that spawns its own sub-agent carries that
+        open call too, and must still match its own spawn prompt from the
+        grandparent. The spawning agent is not necessarily the top-level
+        one — `on_complete` parents to `event.span_id or outer_span_id`
+        precisely so nesting works.
         """
         if not self._pending_subagents:
-            return self.outer_span_id
-
-        if self._issued_pending_task(input_messages):
             return self.outer_span_id
 
         user_text = self._first_user_text(input_messages)
         if not user_text:
             return self.outer_span_id
 
+        issued = self._issued_call_ids(input_messages)
         matches: list[str] = []
         for tool_use_id, prompt in self._pending_subagents.items():
+            if tool_use_id in issued:
+                continue
             if len(prompt) < _MIN_PROMPT_LENGTH:
                 continue
             if prompt in user_text:
@@ -293,15 +299,15 @@ class LiveConsumer(ModelEventSink):
                 return agent.span_id
         return self.outer_span_id
 
-    def _issued_pending_task(self, input_messages: list[ChatMessage]) -> bool:
-        """Whether this conversation is the one that issued a currently-pending Task call."""
-        for msg in input_messages:
-            if not isinstance(msg, ChatMessageAssistant):
-                continue
-            for call in msg.tool_calls or []:
-                if call.id in self._pending_subagents:
-                    return True
-        return False
+    @staticmethod
+    def _issued_call_ids(input_messages: list[ChatMessage]) -> set[str]:
+        """tool_call ids issued within this conversation."""
+        return {
+            call.id
+            for msg in input_messages
+            if isinstance(msg, ChatMessageAssistant)
+            for call in msg.tool_calls or []
+        }
 
     @staticmethod
     def _first_user_text(input_messages: list[ChatMessage]) -> str | None:
