@@ -4,14 +4,20 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from inspect_ai.agent import AgentState, SandboxAgentBridge, agent, sandbox_agent_bridge
-from inspect_ai.model import Model, get_model
+from inspect_ai.model import GenerateFilter, Model, get_model
 from inspect_ai.tool import Skill, install_skills, read_skills
 from inspect_ai.util import ExecRemoteProcess, ExecRemoteStreamingOptions, store
 from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
+from inspect_swe._util.agentcontext import (
+    ModelFilter,
+    classify_filter,
+    slug_map_classifier,
+)
 from inspect_swe._util.path import join_path
 from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
@@ -19,6 +25,32 @@ from inspect_swe.acp.agent import ACPAgentParams
 from .agentbinary import ensure_claude_code_acp_setup
 
 logger = logging.getLogger(__name__)
+
+
+def build_claude_code_acp_filter(
+    filter: GenerateFilter | None,
+    default_model: str,
+    subagent_model: str | Model | None,
+    haiku_model: str | Model | None,
+) -> ModelFilter:
+    """Claude Code (ACP) bridge filter: agent-context classification by requested slug.
+
+    This ACP adapter (``claude-agent-acp``) has no JSONL/event stream for a
+    `LiveConsumer` to parse, so there's no pending-subagent tracking or
+    prompt substring matching available -- just the per-role model names
+    also used for `CLAUDE_CODE_SUBAGENT_MODEL` / `ANTHROPIC_SMALL_FAST_MODEL`
+    (see `_start_agent`), mirroring the structural (slug) half of
+    `LiveConsumer.classify`'s truth table. An unconfigured role collides
+    with `default_model` (its env var falls back to the same value) and is
+    therefore indistinguishable from root traffic, so it's left out of
+    `kind_by_slug` rather than mapped to a slug `root_slugs` already covers.
+    """
+    kind_by_slug: dict[str, Literal["subagent", "utility"]] = {}
+    if subagent_model is not None:
+        kind_by_slug[get_model(subagent_model).canonical_name()] = "subagent"
+    if haiku_model is not None:
+        kind_by_slug[get_model(haiku_model).canonical_name()] = "utility"
+    return classify_filter(filter, slug_map_classifier({default_model}, kind_by_slug))
 
 
 class ClaudeCode(ACPAgent):
@@ -79,7 +111,9 @@ class ClaudeCode(ACPAgent):
             state,
             model=None,
             model_aliases=self.model_map,
-            filter=self.filter,
+            filter=build_claude_code_acp_filter(
+                self.filter, default_model, self._subagent_model, self._haiku_model
+            ),
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
             port=port,

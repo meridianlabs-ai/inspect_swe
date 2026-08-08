@@ -4,8 +4,9 @@ Covers the truth table documented on `LiveConsumer.classify` -- structural
 slug checks (subagent / small-fast) ahead of the inferred pending-prompt
 substring match, with the presented-slug and no-signal fallbacks -- and
 depends on the slug-multiplexing invariant `resolve_claude_code_models`
-enforces (`models.subagent != models.presented` always; see
-tests/test_claude_code_model.py for that invariant's own coverage).
+enforces (`models.subagent` distinct from all four role names -- presented,
+opus, sonnet, and haiku -- always; see tests/test_claude_code_model.py for
+that invariant's own coverage).
 """
 
 from typing import Any

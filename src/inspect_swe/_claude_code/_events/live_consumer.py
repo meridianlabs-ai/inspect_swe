@@ -178,6 +178,13 @@ class LiveConsumer(ModelEventSink):
         still-open agent span (innermost first) so the transcript stays
         balanced even if Claude Code crashed before its tool_result blocks
         were written.
+
+        Deliberately does NOT clear the subagent-slug drift canary fields
+        (`_subagent_slug_seen`, `_first_subagent_span_seen`,
+        `_subagent_slug_drift_warned`, `_requests_since_first_subagent_span`)
+        -- they track this consumer instance's lifetime, not any single
+        attempt, so a slug sighting (or a warning already issued) from
+        before a retry must still suppress/count against later attempts.
         """
         for tool_use_id in reversed(list(self._open_agents.keys())):
             agent = self._open_agents.pop(tool_use_id)

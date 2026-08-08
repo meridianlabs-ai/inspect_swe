@@ -22,6 +22,11 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
+from inspect_swe._util.agentcontext import (
+    ModelFilter,
+    classify_filter,
+    slug_map_classifier,
+)
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
@@ -29,6 +34,21 @@ from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
 
 from .agentbinary import ensure_gemini_cli_setup
+from .models import GEMINI_UTILITY_MODEL_KINDS
+
+
+def build_gemini_filter(
+    filter: GenerateFilter | None, gemini_model: str
+) -> ModelFilter:
+    """Gemini CLI bridge filter: agent-context classification by requested slug.
+
+    ``gemini_model`` is the exact ``--model`` value passed to the CLI (the
+    presented/primary slug); anything gemini-cli's internal utility calls
+    resolve to (see ``models.py``) is classified "utility" instead.
+    """
+    return classify_filter(
+        filter, slug_map_classifier({gemini_model}, GEMINI_UTILITY_MODEL_KINDS)
+    )
 
 
 @agent
@@ -116,7 +136,7 @@ def gemini_cli(
             state,
             model=model,
             model_aliases=model_aliases,
-            filter=filter,
+            filter=build_gemini_filter(filter, gemini_model),
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,

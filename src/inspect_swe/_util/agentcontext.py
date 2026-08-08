@@ -8,9 +8,13 @@ delegates to the user's filter unchanged.
 
 import inspect
 from logging import getLogger
-from typing import Awaitable, Callable, cast
+from typing import Awaitable, Callable, Literal, Mapping, Set, cast
 
-from inspect_ai.agent import AgentBridgeContext, set_agent_bridge_context
+from inspect_ai.agent import (
+    AgentBridgeContext,
+    current_bridge_request,
+    set_agent_bridge_context,
+)
 from inspect_ai.model import (
     ChatMessage,
     GenerateConfig,
@@ -56,6 +60,41 @@ def static_root_classifier(
     Every bridged request belongs to the agent's own (root) thread.
     """
     return AgentBridgeContext("root")
+
+
+def slug_map_classifier(
+    root_slugs: Set[str],
+    kind_by_slug: Mapping[str, Literal["subagent", "utility"]],
+) -> AgentContextClassifier:
+    """Classifier keyed on the requested model slug (pre-alias-resolution).
+
+    For agents with no live consumer to drive attribution (ACP adapters
+    with no JSONL/event stream to parse, or delegation-free variants that
+    only need to pick out a handful of known utility/subagent slugs), this
+    is the simplest thing that can work: read the raw slug the inner agent
+    requested the model under from `current_bridge_request()` — the same
+    structural signal `LiveConsumer.classify` and `CodexConsumer.classify`
+    check first, minus the stateful signals (pending sub-agents, prompt
+    substring matching) a consumer layers on top.
+
+    `slug in root_slugs` -> `"root"` (checked first, so a slug that happens
+    to appear in both maps resolves as root); `slug in kind_by_slug` -> the
+    mapped kind; no bridged request info, or a slug recognized by neither
+    map -> `"unknown"`.
+    """
+
+    def _classify(
+        model: Model, messages: list[ChatMessage], tools: list[ToolInfo]
+    ) -> AgentBridgeContext:
+        request = current_bridge_request()
+        slug = request.model if request is not None else None
+        if slug in root_slugs:
+            return AgentBridgeContext("root")
+        if slug is not None and slug in kind_by_slug:
+            return AgentBridgeContext(kind_by_slug[slug])
+        return AgentBridgeContext("unknown")
+
+    return _classify
 
 
 def is_legacy_str_filter(fn: GenerateFilter) -> bool:

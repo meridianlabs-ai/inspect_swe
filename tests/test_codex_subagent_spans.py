@@ -492,3 +492,51 @@ def test_classify_matches_span_attribution(monkeypatch: Any) -> None:
         is_subagent_span = consumer._attribute(messages) != consumer.outer_span_id
         kind = consumer.classify(get_model("mockllm/model"), messages, []).kind
         assert (kind == "subagent") == is_subagent_span
+
+
+def test_classify_then_on_pending_is_idempotent(monkeypatch: Any) -> None:
+    """The bridge runs classify() then on_pending() for the same request.
+
+    This is the actual production call sequence, not just each method
+    exercised in isolation. Both derive the request's span
+    via `_attribute`; the first call from a sub-agent's thread binds it
+    (mutating `_thread_index` and the matched `_OpenAgent.thread_id`) as a
+    side effect of `_attribute_by_recipient`'s basename match. `on_pending`'s
+    own `_attribute` pass over the *same* event must resolve to that already-
+    bound span (not re-derive, and potentially disagree with, the binding)
+    and must not mutate that state any further.
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v2_spawn_call("call_pr", "write_primes")],
+    )
+    consumer.on_complete(parent)
+    pr_span = stub.span_begins()[0].id
+
+    # first call from the sub-agent's thread -- unbound until classify()
+    # resolves it via recipient basename matching.
+    child_call = _model_event([_agent_message_user("/root", "/root/write_primes")])
+
+    classified = consumer.classify(get_model("mockllm/model"), child_call.input, [])
+    assert classified == AgentBridgeContext("subagent")
+
+    thread_index_after_classify = dict(consumer._thread_index)
+    agents_after_classify = {
+        call_id: (agent.thread_id, agent.span_id)
+        for call_id, agent in consumer._agents.items()
+    }
+
+    consumer.on_pending(child_call)
+
+    # on_pending's own _attribute() pass agreed with classify()'s implied span.
+    assert child_call.span_id == pr_span
+
+    # ... and the second pass left the binding state exactly as classify()
+    # left it -- no re-derivation, no drift.
+    assert dict(consumer._thread_index) == thread_index_after_classify
+    assert {
+        call_id: (agent.thread_id, agent.span_id)
+        for call_id, agent in consumer._agents.items()
+    } == agents_after_classify
