@@ -8,6 +8,7 @@ from typing import Literal, Sequence
 from inspect_ai.agent import (
     Agent,
     AgentAttempts,
+    AgentBridgeContext,
     AgentState,
     BridgedToolsSpec,
     agent,
@@ -45,11 +46,7 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
-from inspect_swe._util.agentcontext import (
-    ModelFilter,
-    classify_filter,
-    static_root_classifier,
-)
+from inspect_swe._util.agentcontext import ModelFilter, classify_filter
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.trace import trace
@@ -84,10 +81,42 @@ _REPEAT_REMINDER_RE = re.compile(
     re.DOTALL,
 )
 
+# Kimi Code's own context-compaction summarizer runs through the same bridge
+# as ordinary turns: when the conversation nears max_context_size (which this
+# agent always configures), kimi appends a plain ChatMessageUser carrying a
+# fixed compaction instruction to the (still-full) projected history and sends
+# that as the request -- there is no separate system prompt, model name, or
+# port to key off of. Left unclassified, the request would fall to root,
+# falsely attributing kimi's own housekeeping call to the agent's own thread;
+# inspect_ai's AgentBridgeContext names this exact case "utility" (machinery
+# serving the main agent's plumbing -- compaction is its canonical example,
+# per inspect_ai/agent/_bridge/context.py).
+#
+# The marker is the instruction's stable opening line, from
+# packages/agent-core/src/agent/compaction/compaction-instruction.md (rendered
+# via buildInstruction/createUserMessage in
+# packages/agent-core/src/agent/compaction/full.ts:compactionRound). Verified
+# byte-identical across @moonshot-ai/kimi-code tags 0.23.4 through 0.34.0
+# (latest at check time, 2026-08-08). This module has no hard version pin --
+# "auto"/"stable"/"latest" all resolve against Kimi's own latest.json at
+# runtime -- so there is no single version to key a per-era marker set to the
+# way _REPEAT_REMINDER_MARKERS does; unlike that nag wording, this instruction
+# has not changed release to release, so one marker suffices.
+_COMPACTION_INSTRUCTION_MARKER = "Write a first-person handoff note"
+
+
+def kimi_classifier(
+    model: Model, messages: list[ChatMessage], tools: list[ToolInfo]
+) -> AgentBridgeContext:
+    """Classify kimi's auto-compaction summarizer requests as utility, root otherwise."""
+    if messages and _COMPACTION_INSTRUCTION_MARKER in messages[-1].text:
+        return AgentBridgeContext("utility")
+    return AgentBridgeContext("root")
+
 
 def build_kimi_filter(filter: GenerateFilter | None) -> ModelFilter:
-    """Kimi bridge filter: message cleanup + static root agent context."""
-    delegate = classify_filter(filter, static_root_classifier)
+    """Kimi bridge filter: message cleanup + agent-context classification."""
+    delegate = classify_filter(filter, kimi_classifier)
 
     async def kimi_filter(
         model: Model,

@@ -301,8 +301,8 @@ def antigravity(
         filter: Filter for intercepting bridged model requests. Note this agent's
             filter is typed Model-first (the non-deprecated GenerateFilter form);
             the deprecated str-first form is not accepted, unlike sibling agents,
-            because the confinement wrapper dispatches on the outermost filter's
-            first-parameter annotation.
+            because the confinement wrapper invokes the user filter Model-first
+            directly, with no legacy-dispatch branching of its own.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         user: Sandbox user to run the SDK as (defaults to the sandbox default user).
         cwd: Working directory for the SDK (defaults to the user's home directory).
