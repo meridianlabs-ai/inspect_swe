@@ -146,3 +146,7 @@ def test_public_reexports() -> None:
         "is_sub_agent",
     ):
         assert getattr(inspect_swe, name) is getattr(inspect_ai_agent, name)
+
+    # implementer-level API stays in inspect_ai -- not re-exported
+    assert not hasattr(inspect_swe, "set_agent_bridge_context")
+    assert not hasattr(inspect_swe, "current_bridge_request")
