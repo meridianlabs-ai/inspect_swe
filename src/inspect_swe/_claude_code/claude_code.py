@@ -45,6 +45,7 @@ from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.messages import build_user_prompt
 from .._util.sandbox import resolve_agent_cwd
+from .._util.subagent import with_sub_agent_attribution
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 from .model import resolve_claude_code_models
@@ -269,7 +270,9 @@ def claude_code(
                 state,
                 model=models.bridge_model,
                 model_aliases=models.aliases,
-                filter=filter,
+                # Paired with `consumer` in this one call, so the filter can only ever see
+                # THIS sample's attribution. See _util/subagent.py.
+                filter=with_sub_agent_attribution(filter, consumer),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,

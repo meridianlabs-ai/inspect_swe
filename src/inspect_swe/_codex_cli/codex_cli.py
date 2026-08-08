@@ -32,6 +32,7 @@ from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import resolve_agent_cwd, sandbox_exec
+from inspect_swe._util.subagent import with_sub_agent_attribution
 from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
 
@@ -188,7 +189,9 @@ def codex_cli(
                 model_aliases=resolve_codex_auto_review_model_aliases(
                     resolved_auto_review, model_aliases
                 ),
-                filter=filter,
+                # Paired with `consumer` in this one call, so the filter can only ever see
+                # THIS sample's attribution. See _util/subagent.py.
+                filter=with_sub_agent_attribution(filter, consumer),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,

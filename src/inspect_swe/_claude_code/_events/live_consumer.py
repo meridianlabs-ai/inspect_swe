@@ -60,6 +60,7 @@ from inspect_ai.event._model import ModelEvent
 from inspect_ai.log import transcript
 from inspect_ai.model._chat_message import (
     ChatMessage,
+    ChatMessageAssistant,
     ChatMessageSystem,
     ChatMessageUser,
 )
@@ -236,14 +237,43 @@ class LiveConsumer(ModelEventSink):
     # Attribution
     # ------------------------------------------------------------------
 
+    def is_sub_agent_call(self, input_messages: list[ChatMessage]) -> bool:
+        """Whether this bridge call belongs to a sub-agent rather than the main agent.
+
+        The `SubAgentAttribution` protocol (`_util/subagent.py`), which lets a caller's
+        `GenerateFilter` gate itself off sub-agent threads. A membership test against the
+        currently-open sub-agent spans rather than `!= outer_span_id`: `outer_span_id` is
+        resolved at access time (checkpointing rotates the enclosing span), and `_attribute`
+        may return None, so an inequality would be both racy and wrong at the edges.
+        """
+        span_id = self._attribute(input_messages)
+        return span_id is not None and span_id in {
+            agent.span_id for agent in self._open_agents.values()
+        }
+
     def _attribute(self, input_messages: list[ChatMessage]) -> str | None:
         """Resolve the span_id for an incoming bridge call.
 
         Substring-matches the first user message's text against currently-
         pending sub-agent prompts. Exactly one match → that sub-agent's
         span. Zero or multiple matches → outer span.
+
+        A conversation that CONTAINS the pending Task tool_call is the
+        spawning agent's own, never the spawned one's, and short-circuits
+        to the outer span before any matching. Without that check a parent
+        whose first user message quotes text it later passed to Task
+        substring-matches its own child and every subsequent parent call
+        is parented under the sub-agent — and any caller gating on
+        `is_sub_agent_call` loses its steering on the real agent. The check
+        is exact rather than heuristic: `on_complete` registers the pending
+        entry FROM that tool_call, and a sub-agent's forked conversation
+        opens at the Task prompt (see the module docstring) so it never
+        carries the parent's call.
         """
         if not self._pending_subagents:
+            return self.outer_span_id
+
+        if self._issued_pending_task(input_messages):
             return self.outer_span_id
 
         user_text = self._first_user_text(input_messages)
@@ -262,6 +292,16 @@ class LiveConsumer(ModelEventSink):
             if agent is not None:
                 return agent.span_id
         return self.outer_span_id
+
+    def _issued_pending_task(self, input_messages: list[ChatMessage]) -> bool:
+        """Whether this conversation is the one that issued a currently-pending Task call."""
+        for msg in input_messages:
+            if not isinstance(msg, ChatMessageAssistant):
+                continue
+            for call in msg.tool_calls or []:
+                if call.id in self._pending_subagents:
+                    return True
+        return False
 
     @staticmethod
     def _first_user_text(input_messages: list[ChatMessage]) -> str | None:

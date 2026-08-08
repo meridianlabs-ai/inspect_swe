@@ -41,6 +41,7 @@ from inspect_ai.event._model import ModelEvent
 from inspect_ai.log import transcript
 from inspect_ai.model._chat_message import (
     ChatMessage,
+    ChatMessageAssistant,
     ChatMessageTool,
     ChatMessageUser,
 )
@@ -220,6 +221,20 @@ class CodexConsumer(ModelEventSink):
             return
         transcript()._event(SpanEndEvent(id=agent.span_id))
 
+    def is_sub_agent_call(self, input_messages: list[ChatMessage]) -> bool:
+        """Whether this bridge call belongs to a sub-agent rather than the main agent.
+
+        The `SubAgentAttribution` protocol (`_util/subagent.py`), which lets a caller's
+        `GenerateFilter` gate itself off sub-agent threads. A membership test against the
+        currently-open spawn spans rather than `!= outer_span_id`: `outer_span_id` is resolved
+        at access time (checkpointing rotates the enclosing span), and `_attribute` may return
+        None, so an inequality would be both racy and wrong at the edges.
+        """
+        span_id = self._attribute(input_messages)
+        return span_id is not None and span_id in {
+            agent.span_id for agent in self._agents.values()
+        }
+
     def _attribute(self, input_messages: list[ChatMessage]) -> str | None:
         """Resolve the span_id for an incoming bridge call.
 
@@ -230,6 +245,15 @@ class CodexConsumer(ModelEventSink):
         call's user-message text against open spawn prompts. Exactly one
         match → that sub-agent's span; zero/multiple → outer span (defensive
         default).
+
+        A conversation that CONTAINS the open spawn_agent call is the
+        spawning agent's own, never the spawned one's, so it short-circuits
+        the V1 fallback. Otherwise a parent whose prompt quotes the text it
+        later spawned with substring-matches its own child, parenting every
+        subsequent parent call under the sub-agent — and costing a caller
+        that gates on `is_sub_agent_call` its steering on the real agent.
+        V2 is unaffected either way (recipient is exact, and its prompts are
+        encrypted), but V1 runs whenever recipient resolution falls through.
         """
         if not self._agents:
             return self.outer_span_id
@@ -237,6 +261,9 @@ class CodexConsumer(ModelEventSink):
         span_id = self._attribute_by_recipient(input_messages)
         if span_id is not None:
             return span_id
+
+        if self._issued_open_spawn(input_messages):
+            return self.outer_span_id
 
         user_text = self._user_text(input_messages)
         if not user_text:
@@ -250,6 +277,17 @@ class CodexConsumer(ModelEventSink):
         if len(matches) == 1:
             return matches[0].span_id
         return self.outer_span_id
+
+    def _issued_open_spawn(self, input_messages: list[ChatMessage]) -> bool:
+        """Whether this conversation is the one that issued a currently-open spawn call."""
+        open_call_ids = {agent.call_id for agent in self._agents.values()}
+        for msg in input_messages:
+            if not isinstance(msg, ChatMessageAssistant):
+                continue
+            for call in msg.tool_calls or []:
+                if call.id in open_call_ids:
+                    return True
+        return False
 
     def _attribute_by_recipient(self, input_messages: list[ChatMessage]) -> str | None:
         """Resolve a call's span from its agent_message recipient (V2).

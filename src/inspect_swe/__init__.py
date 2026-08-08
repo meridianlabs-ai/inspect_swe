@@ -10,6 +10,7 @@ from ._tools.download import AgentBinary, cached_agent_binaries, download_agent_
 from ._util.agentwheel import download_wheels_tarball
 from ._util.centaur import CentaurOptions
 from ._util.sandbox import SandboxPlatform
+from ._util.subagent import is_sub_agent
 from .acp import ACPAgent, ACPAgentParams, acp_connection, bridge_mcp_to_acp
 from .acp._agents.claude_code import interactive_claude_code
 from .acp._agents.codex_cli import interactive_codex_cli
@@ -38,6 +39,7 @@ __all__ = [
     "interactive_gemini_cli",
     "download_agent_binary",
     "cached_agent_binaries",
+    "is_sub_agent",
     "AgentBinary",
     "SandboxPlatform",
     "CentaurOptions",
