@@ -43,6 +43,7 @@ from inspect_swe._util.path import join_path
 
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
+from .._util.agentcontext import classify_filter
 from .._util.messages import build_user_prompt
 from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
@@ -240,19 +241,11 @@ def claude_code(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
-        # Real-time consumer of Claude Code JSONL output. Doubles as the
-        # bridge's ModelEventSink — the bridge hands us every ModelEvent
-        # instead of emitting it to the transcript, and we attribute each
-        # to the correct agent span using parent_tool_use_id from the JSONL
-        # stream. The outer span (used for main-agent attribution and
-        # sub-agent span parenting) is resolved at emission time so it
-        # tracks the rotating checkpoint span. See live_consumer.py for
-        # full mechanism.
-        consumer = LiveConsumer()
-
         # Resolve the (cosmetic) model identities Claude Code presents to itself
         # and the bridge aliases that route them to the real served model. The
         # per-role env vars below carry the opus/sonnet/haiku/subagent names.
+        # Resolved before LiveConsumer so the consumer can classify bridged
+        # requests by their requested slug (see classify() below).
         models = resolve_claude_code_models(
             model,
             model_config,
@@ -263,13 +256,25 @@ def claude_code(
             model_aliases=model_aliases,
         )
 
+        # Real-time consumer of Claude Code JSONL output. Doubles as the
+        # bridge's ModelEventSink — the bridge hands us every ModelEvent
+        # instead of emitting it to the transcript, and we attribute each
+        # to the correct agent span using parent_tool_use_id from the JSONL
+        # stream. The outer span (used for main-agent attribution and
+        # sub-agent span parenting) is resolved at emission time so it
+        # tracks the rotating checkpoint span. See live_consumer.py for
+        # full mechanism. It also classifies bridged requests into an
+        # AgentBridgeContext (root/subagent/utility/unknown) for the bridge
+        # filter, below.
+        consumer = LiveConsumer(models)
+
         async with (
             checkpointer() as cp,
             sandbox_agent_bridge(
                 state,
                 model=models.bridge_model,
                 model_aliases=models.aliases,
-                filter=filter,
+                filter=classify_filter(filter, consumer.classify),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,

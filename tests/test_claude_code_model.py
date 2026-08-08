@@ -13,13 +13,59 @@ def test_defaults_present_served_model_and_share_one_alias() -> None:
     models = resolve_claude_code_models("mockllm/model", None)
     # presented defaults to the served model's name
     assert models.presented == "model"
-    # every unset role inherits the primary presented name
-    assert models.opus == models.sonnet == models.haiku == models.subagent == "model"
-    # a single alias maps the presented name to the served Model
-    assert set(models.aliases) == {"model"}
+    # every unset opus/sonnet/haiku role inherits the primary presented name
+    assert models.opus == models.sonnet == models.haiku == "model"
+    # subagent is the one exception: it never presents the same slug as the
+    # primary, even when unset -- see test_subagent_default_gets_synthetic_name
+    assert models.subagent == "model-subagent"
+    # aliases: the presented name and the synthetic subagent name, both
+    # routing to the served Model
+    assert set(models.aliases) == {"model", "model-subagent"}
     assert isinstance(models.aliases["model"], Model)
+    assert isinstance(models.aliases["model-subagent"], Model)
     # bridge sentinel preserves the inspect/<model> routing form
     assert models.bridge_model == "inspect/mockllm/model"
+
+
+def test_subagent_default_gets_synthetic_name_aliased_to_served_model() -> None:
+    """Default (unset subagent_model) gets a synthetic '<presented>-subagent' name.
+
+    Routed to the exact same served model as the primary -- zero behavior
+    change, only the presented label differs.
+    """
+    models = resolve_claude_code_models("mockllm/model", None)
+    assert models.subagent == f"{models.presented}-subagent"
+    assert models.subagent != models.presented
+    assert models.aliases[models.subagent] is models.aliases[models.presented]
+
+
+def test_subagent_explicit_distinct_model_unchanged() -> None:
+    """Explicit subagent_model resolving to a distinct name is unchanged.
+
+    Pre-existing behavior -- its own name, its own alias.
+    """
+    models = resolve_claude_code_models(
+        "mockllm/model", None, subagent_model="mockllm/subagent"
+    )
+    assert models.subagent == "subagent"
+    assert "subagent" in models.aliases
+    assert models.aliases["subagent"] is not models.aliases["model"]
+
+
+def test_subagent_explicit_same_as_main_gets_synthetic_name() -> None:
+    """Degenerate case: caller explicitly points subagent_model at the main model.
+
+    Distinctness is still enforced (synthetic suffix applied), routed to the
+    caller's own resolved subagent model, and the primary's alias is left
+    untouched.
+    """
+    models = resolve_claude_code_models(
+        "mockllm/model", None, subagent_model="mockllm/model"
+    )
+    assert models.subagent == f"{models.presented}-subagent"
+    assert models.subagent != models.presented
+    # primary alias untouched
+    assert models.aliases[models.presented] is not None
 
 
 def test_model_config_overrides_presented_identity() -> None:
@@ -40,8 +86,11 @@ def test_set_role_gets_own_name_and_alias_unset_roles_inherit() -> None:
     # the set role routes to its own model via its own name + alias...
     assert models.opus == "opus"
     assert "opus" in models.aliases
-    # ...while unset roles still inherit the primary presented name
-    assert models.sonnet == models.haiku == models.subagent == "model"
+    # ...while unset opus/sonnet/haiku peers still inherit the primary
+    # presented name (subagent is the exception -- see the dedicated
+    # subagent tests -- it never inherits, even when unset)
+    assert models.sonnet == models.haiku == "model"
+    assert models.subagent == "model-subagent"
 
 
 def test_caller_model_aliases_take_precedence() -> None:
