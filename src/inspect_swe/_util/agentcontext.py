@@ -99,7 +99,9 @@ def classify_filter(
         try:
             set_agent_bridge_context(classify(model, messages, tools))
         except Exception as ex:
-            key = f"{type(ex).__name__}{ex}"
+            # key on exception type only: messages may embed per-request data
+            # (ids, paths), which would defeat the dedupe and grow the set
+            key = type(ex).__name__
             if key not in warned:
                 warned.add(key)
                 logger.warning(f"agent context classification failed: {ex}")
