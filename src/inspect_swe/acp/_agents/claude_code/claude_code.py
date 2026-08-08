@@ -32,6 +32,8 @@ def build_claude_code_acp_filter(
     default_model: str,
     subagent_model: str | Model | None,
     haiku_model: str | Model | None,
+    opus_model: str | Model | None = None,
+    sonnet_model: str | Model | None = None,
 ) -> ModelFilter:
     """Claude Code (ACP) bridge filter: agent-context classification by requested slug.
 
@@ -39,18 +41,31 @@ def build_claude_code_acp_filter(
     `LiveConsumer` to parse, so there's no pending-subagent tracking or
     prompt substring matching available -- just the per-role model names
     also used for `CLAUDE_CODE_SUBAGENT_MODEL` / `ANTHROPIC_SMALL_FAST_MODEL`
-    (see `_start_agent`), mirroring the structural (slug) half of
-    `LiveConsumer.classify`'s truth table. An unconfigured role collides
-    with `default_model` (its env var falls back to the same value) and is
-    therefore indistinguishable from root traffic, so it's left out of
-    `kind_by_slug` rather than mapped to a slug `root_slugs` already covers.
+    / `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL` (see
+    `_start_agent`), mirroring the structural (slug) half of
+    `LiveConsumer.classify`'s truth table.
+
+    `opus_model`/`sonnet_model` are configured *tiers* of main-thread
+    traffic (Claude Code's own opus/sonnet role swap), not delegation --
+    unlike `subagent_model`/`haiku_model`, a distinct slug there is still
+    root, so their canonical names join `root_slugs` rather than
+    `kind_by_slug`. An unconfigured role (any of the four) collides with
+    `default_model` (its env var falls back to the same value) and is
+    therefore indistinguishable from root traffic either way, so it's only
+    ever added when explicitly configured.
     """
+    root_slugs = {default_model}
+    if opus_model is not None:
+        root_slugs.add(get_model(opus_model).canonical_name())
+    if sonnet_model is not None:
+        root_slugs.add(get_model(sonnet_model).canonical_name())
+
     kind_by_slug: dict[str, Literal["subagent", "utility"]] = {}
     if subagent_model is not None:
         kind_by_slug[get_model(subagent_model).canonical_name()] = "subagent"
     if haiku_model is not None:
         kind_by_slug[get_model(haiku_model).canonical_name()] = "utility"
-    return classify_filter(filter, slug_map_classifier({default_model}, kind_by_slug))
+    return classify_filter(filter, slug_map_classifier(root_slugs, kind_by_slug))
 
 
 class ClaudeCode(ACPAgent):
@@ -112,7 +127,12 @@ class ClaudeCode(ACPAgent):
             model=None,
             model_aliases=self.model_map,
             filter=build_claude_code_acp_filter(
-                self.filter, default_model, self._subagent_model, self._haiku_model
+                self.filter,
+                default_model,
+                self._subagent_model,
+                self._haiku_model,
+                self._opus_model,
+                self._sonnet_model,
             ),
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,

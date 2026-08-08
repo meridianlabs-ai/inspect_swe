@@ -209,6 +209,28 @@ async def test_claude_code_acp_filter_stamps_unknown_for_unrecognized_slug() -> 
     )
 
 
+async def test_claude_code_acp_filter_opus_and_sonnet_tiers_are_root() -> None:
+    """Distinct opus/sonnet tier models are main-thread traffic, not delegation.
+
+    Unlike subagent_model/haiku_model, a configured opus_model/sonnet_model
+    is still root -- Claude Code's own role swap, never a sub-agent or
+    utility call -- so their canonical names must join `root_slugs`, not
+    `kind_by_slug`.
+    """
+    wrapped = build_claude_code_acp_filter(
+        None,
+        "anthropic/claude",
+        None,
+        None,
+        "mockllm/opus",
+        "mockllm/sonnet",
+    )
+    opus_slug = get_model("mockllm/opus").canonical_name()
+    sonnet_slug = get_model("mockllm/sonnet").canonical_name()
+    assert await _invoke(wrapped, opus_slug) == AgentBridgeContext("root")
+    assert await _invoke(wrapped, sonnet_slug) == AgentBridgeContext("root")
+
+
 # ---------------------------------------------------------------------------
 # wiring: ACP codex_cli (interactive_codex_cli)
 # ---------------------------------------------------------------------------

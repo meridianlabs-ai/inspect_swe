@@ -14,6 +14,13 @@ alias currently resolves to (e.g. `"gemini-3-flash-preview"`). This module
 collects the concrete slugs those aliases are known to resolve to (gathered
 from `@google/gemini-cli-core`'s `defaultModelConfigs.js` alias table).
 
+Provenance: `@google/gemini-cli-core@0.54.4` (resolved via `npm view
+@google/gemini-cli-core version`, then fetched with `npm pack` and read
+directly from `dist/src/config/defaultModelConfigs.js` /
+`dist/src/core/baseLlmClient.js` -- verified 2026-08-08). Re-verify against
+the then-current version's `defaultModelConfigs.js` if these slugs are ever
+suspected stale (e.g. a gemini-cli upgrade renames an alias's target).
+
 Two of gemini-cli's utility aliases (`chat-compression-*` family members,
 selected by whichever model family is actually presented) always resolve to
 *the same concrete slug as whatever model is presented as primary* -- so
