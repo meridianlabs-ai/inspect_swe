@@ -108,3 +108,81 @@ def test_bundled_catalog_tracks_live_latest() -> None:
         f"bundled fallback's latest is '{bundled_latest}'; refresh "
         f"src/inspect_swe/_codex_cli/_bundled_catalog.py"
     )
+
+
+_RELEASE_WITH_PACKAGE = {
+    "assets": [
+        {
+            "name": "codex-aarch64-unknown-linux-musl.tar.gz",
+            "digest": "sha256:aaa",
+            "browser_download_url": "https://example.com/codex.tar.gz",
+        },
+        {
+            "name": "codex-package-aarch64-unknown-linux-musl.tar.gz",
+            "digest": "sha256:bbb",
+            "browser_download_url": "https://example.com/codex-package.tar.gz",
+        },
+    ]
+}
+
+_RELEASE_WITHOUT_PACKAGE = {
+    "assets": [
+        {
+            "name": "codex-aarch64-unknown-linux-musl.tar.gz",
+            "digest": "sha256:aaa",
+            "browser_download_url": "https://example.com/codex.tar.gz",
+        },
+    ]
+}
+
+
+def test_codex_resolve_version_prefers_package_asset() -> None:
+    # releases >= 0.133.0 ship codex-package-<arch>.tar.gz with the companion
+    # executables (codex-code-mode-host etc.); it should win over the single binary
+    source = agentbinary.codex_cli_binary_source()
+    with patch.object(
+        agentbinary,
+        "_fetch_release_assets",
+        AsyncMock(return_value=_RELEASE_WITH_PACKAGE),
+    ):
+        resolved = anyio.run(source.resolve_version, "0.147.0", "linux-arm64")
+    assert resolved.package is True
+    assert resolved.expected_checksum == "bbb"
+    assert resolved.download_url.endswith("codex-package.tar.gz")
+
+
+def test_codex_resolve_version_falls_back_to_single_binary() -> None:
+    # releases < 0.133.0 have no package asset; fall back to the codex binary
+    source = agentbinary.codex_cli_binary_source()
+    with patch.object(
+        agentbinary,
+        "_fetch_release_assets",
+        AsyncMock(return_value=_RELEASE_WITHOUT_PACKAGE),
+    ):
+        resolved = anyio.run(source.resolve_version, "0.130.0", "linux-arm64")
+    assert resolved.package is False
+    assert resolved.expected_checksum == "aaa"
+    assert resolved.download_url.endswith("codex.tar.gz")
+
+
+def test_codex_source_defines_package_support() -> None:
+    source = agentbinary.codex_cli_binary_source()
+    assert source.package_entrypoint == "bin/codex"
+    assert source.cached_package_path is not None
+    cache_path = source.cached_package_path("0.147.0", "linux-arm64")
+    assert cache_path.name == "codex-package-0.147.0-linux-arm64.tar.gz"
+
+
+def test_codex_list_cached_binaries_excludes_models_catalogs(tmp_path: Path) -> None:
+    # the models catalog cache lives alongside binaries; it must not be listed
+    # (or evicted-against) as a binary
+    with patch.object(agentbinary, "package_cache_dir", return_value=tmp_path):
+        source = agentbinary.codex_cli_binary_source()
+        (tmp_path / "codex-0.147.0-linux-arm64").write_bytes(b"binary")
+        (tmp_path / "codex-package-0.147.0-linux-arm64.tar.gz").write_bytes(b"pkg")
+        (tmp_path / "codex-0.147.0-models.json").write_text("{}")
+        names = {p.name for p in source.list_cached_binaries()}
+    assert names == {
+        "codex-0.147.0-linux-arm64",
+        "codex-package-0.147.0-linux-arm64.tar.gz",
+    }

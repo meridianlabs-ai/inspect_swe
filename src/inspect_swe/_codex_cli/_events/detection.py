@@ -38,6 +38,52 @@ class SpawnedAgent:
     agent_type: str
     message: str
     reasoning_effort: str | None
+    task_name: str | None = None
+    """Multi-Agent V2 task name (e.g. "write_fizzbuzz"); None under V1."""
+
+    @property
+    def name(self) -> str:
+        """Display name for the agent's span (V2 task_name, else V1 agent_type)."""
+        return self.task_name or self.agent_type
+
+
+def agent_message_recipients(input_messages: list[ChatMessage]) -> set[str]:
+    """Recipients of the agent_message items in a request's input.
+
+    Multi-Agent V2 delivers inter-agent messages as `agent_message` input items;
+    the bridge preserves each raw item (author/recipient) on ContentText.internal.
+    Every agent_message in a request is inbound to the requester, so the
+    recipient path (e.g. "/root/write_fizzbuzz") identifies the calling agent.
+    """
+    return {
+        recipient
+        for item in _agent_message_items(input_messages)
+        if isinstance(recipient := item.get("recipient"), str) and recipient
+    }
+
+
+def final_answer_authors(input_messages: list[ChatMessage]) -> set[str]:
+    """Authors of FINAL_ANSWER agent_message items in a request's input.
+
+    A FINAL_ANSWER is a sub-agent's terminal return under Multi-Agent V2 (the
+    `wait_agent` result no longer carries per-thread completion status), so its
+    author path marks that agent's thread as completed.
+    """
+    authors: set[str] = set()
+    for item in _agent_message_items(input_messages):
+        author = item.get("author")
+        if not (isinstance(author, str) and author):
+            continue
+        for part in item.get("content") or []:
+            if (
+                isinstance(part, dict)
+                and part.get("type") == "input_text"
+                and isinstance(text := part.get("text"), str)
+                and text.lstrip().startswith("Message Type: FINAL_ANSWER")
+            ):
+                authors.add(author)
+                break
+    return authors
 
 
 def find_spawned_agents(tool_calls: list[ToolCall] | None) -> list[SpawnedAgent]:
@@ -51,12 +97,14 @@ def find_spawned_agents(tool_calls: list[ToolCall] | None) -> list[SpawnedAgent]
         if not isinstance(message, str) or not message:
             continue
         reasoning = args.get("reasoning_effort")
+        task_name = args.get("task_name")
         result.append(
             SpawnedAgent(
                 call_id=tc.id,
                 agent_type=str(args.get("agent_type") or "agent"),
                 message=message,
                 reasoning_effort=str(reasoning) if reasoning else None,
+                task_name=str(task_name) if task_name else None,
             )
         )
     return result
@@ -88,12 +136,15 @@ def spawn_result(message: ChatMessageTool) -> SpawnResult | None:
     The result is correlated to its spawn call by `message.tool_call_id`, so the
     caller can bind thread_id → span without any ordering assumptions. The
     `nickname` (Codex's friendly per-agent name) is surfaced for tool views.
+
+    Multi-Agent V2 results carry `{"task_name": "/root/<name>"}` instead of
+    `agent_id`/`nickname`; the absolute task path serves as the thread id.
     """
     if message.function != SPAWN_AGENT:
         return None
     data = _loads(message.text)
     if isinstance(data, dict):
-        agent_id = data.get("agent_id")
+        agent_id = data.get("agent_id") or data.get("task_name")
         if isinstance(agent_id, str) and agent_id:
             nickname = data.get("nickname")
             return SpawnResult(
@@ -133,6 +184,21 @@ def is_compaction_request(input_messages: list[ChatMessage]) -> bool:
 # ---------------------------------------------------------------------------
 # internal
 # ---------------------------------------------------------------------------
+
+
+def _agent_message_items(input_messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    """Raw agent_message items stashed on user-message content by the bridge."""
+    items: list[dict[str, Any]] = []
+    for msg in input_messages:
+        if not isinstance(msg, ChatMessageUser) or isinstance(msg.content, str):
+            continue
+        for content in msg.content:
+            internal = getattr(content, "internal", None)
+            if isinstance(internal, dict):
+                item = internal.get("agent_message")
+                if isinstance(item, dict):
+                    items.append(item)
+    return items
 
 
 def _loads(text: str) -> Any:
