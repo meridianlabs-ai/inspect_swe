@@ -206,3 +206,76 @@ def test_classify_agrees_with_span_attribution(monkeypatch: Any) -> None:
 
     assert span_id != consumer.outer_span_id
     assert result == AgentBridgeContext("subagent")
+
+
+# ---------------------------------------------------------------------------
+# subagent-slug drift canary
+# ---------------------------------------------------------------------------
+#
+# The synthetic subagent slug shape ("<presented>-subagent") was never
+# live-verified against a real CC build the way P1's real catalog-name slugs
+# were. If some CC version rejects/ignores it, subagent requests would
+# silently stop carrying it and attribution would quietly degrade to
+# prompt-match-only. These tests drive `_check_subagent_slug_drift` (called
+# from `classify`) directly through its public entry point.
+
+
+def test_subagent_slug_drift_warns_once(monkeypatch: Any, caplog: Any) -> None:
+    consumer = _consumer(monkeypatch)
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+
+    with caplog.at_level(
+        "WARNING", logger="inspect_swe._claude_code._events.live_consumer"
+    ):
+        with bridged_request_scope(consumer._models.presented):
+            # well past the threshold -- must still warn exactly once
+            for _ in range(10):
+                _classify(consumer)
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert consumer._models.subagent in warnings[0].message
+
+
+def test_subagent_slug_seen_suppresses_drift_warning(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """Ever observing the subagent slug permanently suppresses the warning.
+
+    Even a single sighting suppresses it, however many non-subagent-slug
+    requests follow.
+    """
+    consumer = _consumer(monkeypatch)
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+
+    with caplog.at_level(
+        "WARNING", logger="inspect_swe._claude_code._events.live_consumer"
+    ):
+        with bridged_request_scope(consumer._models.subagent):
+            _classify(consumer)
+        with bridged_request_scope(consumer._models.presented):
+            for _ in range(10):
+                _classify(consumer)
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 0
+
+
+def test_subagent_slug_drift_requires_a_first_span(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """No Task/Agent span ever opened -> nothing to warn about.
+
+    An agent that never delegates isn't drift.
+    """
+    consumer = _consumer(monkeypatch)
+
+    with caplog.at_level(
+        "WARNING", logger="inspect_swe._claude_code._events.live_consumer"
+    ):
+        with bridged_request_scope(consumer._models.presented):
+            for _ in range(10):
+                _classify(consumer)
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 0

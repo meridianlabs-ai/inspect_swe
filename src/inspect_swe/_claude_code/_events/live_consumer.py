@@ -93,6 +93,12 @@ logger = getLogger(__name__)
 # typically full sentences).
 _MIN_PROMPT_LENGTH = 16
 
+# Number of classify() calls to tolerate, after the first Task/Agent span has
+# opened, without ever observing the expected subagent slug, before warning
+# that subagent traffic may not be carrying it at all (see
+# `_check_subagent_slug_drift`).
+_SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD = 5
+
 
 @dataclass
 class _OpenAgent:
@@ -137,6 +143,17 @@ class LiveConsumer(ModelEventSink):
         # runner loop to distinguish an Anthropic refusal (content_filter)
         # from a genuine scaffold crash when Claude Code exits non-zero.
         self._last_stop_reason: StopReason | None = None
+
+        # Drift canary (see `classify`'s "structural" branch 1): the
+        # synthetic subagent slug shape ("<presented>-subagent") was never
+        # live-verified against a real CC build the way the catalog-name
+        # slugs in probe P1 were. These track whether reality matches the
+        # assumption, so a rejected/ignored slug surfaces as a warning
+        # instead of silently degrading to prompt-match-only attribution.
+        self._first_subagent_span_seen = False
+        self._subagent_slug_seen = False
+        self._requests_since_first_subagent_span = 0
+        self._subagent_slug_drift_warned = False
 
     @property
     def last_stop_reason(self) -> StopReason | None:
@@ -217,6 +234,7 @@ class LiveConsumer(ModelEventSink):
                 agent_span_id = f"agent-{tc.id}"
                 self._open_agents[tc.id] = _OpenAgent(span_id=agent_span_id)
                 self._pending_subagents[tc.id] = prompt
+                self._first_subagent_span_seen = True
                 span_name = args.get("subagent_type") or args.get("name") or "agent"
                 description = args.get("description") or ""
                 transcript()._event(
@@ -339,6 +357,7 @@ class LiveConsumer(ModelEventSink):
         """
         request = current_bridge_request()
         slug = request.model if request is not None else None
+        self._check_subagent_slug_drift(slug)
 
         if slug == self._models.subagent:
             return AgentBridgeContext("subagent")
@@ -349,6 +368,46 @@ class LiveConsumer(ModelEventSink):
         if slug == self._models.presented:
             return AgentBridgeContext("root")
         return AgentBridgeContext("root" if not self._pending_subagents else "unknown")
+
+    def _check_subagent_slug_drift(self, slug: str | None) -> None:
+        """Warn (once, per consumer instance) if reality contradicts probe P1.
+
+        The synthetic subagent slug (`models.subagent`, a non-catalog shape
+        like "claude-sonnet-4-5-subagent" — see `model.py`) was never
+        live-verified the way P1's real catalog-name slugs were: if some CC
+        version rejects or ignores a non-catalog `CLAUDE_CODE_SUBAGENT_MODEL`
+        value, subagent requests would silently stop carrying it, and
+        `classify`/`_attribute` would quietly fall back to prompt-match-only
+        attribution. That's a real degradation worth surfacing, not a bug to
+        crash on.
+
+        Counted here (once per `classify` call, i.e. once per bridged
+        request — `on_pending` isn't separately instrumented to avoid double
+        counting the same request) rather than in a dedicated method, since
+        `classify` already resolves `slug` for its own checks.
+        """
+        if slug == self._models.subagent:
+            self._subagent_slug_seen = True
+            return
+        if (
+            not self._first_subagent_span_seen
+            or self._subagent_slug_seen
+            or self._subagent_slug_drift_warned
+        ):
+            return
+
+        self._requests_since_first_subagent_span += 1
+        if (
+            self._requests_since_first_subagent_span
+            >= _SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD
+        ):
+            self._subagent_slug_drift_warned = True
+            logger.warning(
+                "claude code subagent traffic never carried the expected "
+                f"subagent model slug {self._models.subagent!r} — subagent "
+                "attribution is running on prompt-match fallback; CC "
+                "version drift or slug rejection likely"
+            )
 
     @staticmethod
     def _first_user_text(input_messages: list[ChatMessage]) -> str | None:
