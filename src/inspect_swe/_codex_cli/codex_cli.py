@@ -36,6 +36,7 @@ from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
+from .._util.agentcontext import classify_filter
 from ._events.consumer import CodexConsumer
 from .agentbinary import (
     codex_binary_version,
@@ -188,7 +189,7 @@ def codex_cli(
                 model_aliases=resolve_codex_auto_review_model_aliases(
                     resolved_auto_review, model_aliases
                 ),
-                filter=filter,
+                filter=classify_filter(filter, consumer.classify),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,
