@@ -123,6 +123,31 @@ logger = getLogger(__name__)
 #      verification. An `opencode_model` under any other provider skips
 #      sentinel injection entirely (logged once) rather than risk the same
 #      "Model not found" failure mode with a guessed id.
+#   4. Primary-collision guard (spec review, 2026-08-08): since sentinels
+#      must be real catalog ids (caveat 3), a caller's `opencode_model` can
+#      legitimately BE one of our fixed sentinel picks (e.g.
+#      `opencode_model="anthropic/claude-haiku-4-5-20251001"`, our exact
+#      subagent-sentinel default) -- that would put the same bare slug in
+#      both `slug_map_classifier`'s `root_slugs` and `kind_by_slug`, and
+#      root wins (checked first), silently swallowing all subagent/utility
+#      classification. `_SENTINEL_MODELS` therefore holds an ORDERED
+#      3-candidate preference list per role per provider, not a single id;
+#      `build_opencode_config_overrides` picks the first candidate that
+#      collides with neither the primary's bare id nor (for the small-model
+#      role) the already-chosen subagent sentinel. If every candidate for a
+#      role collides (degenerate: caller's `opencode_model` IS the whole
+#      preference list), that role's override is omitted entirely and its
+#      traffic falls back to the existing "unknown" classification rather
+#      than a silently-wrong "root". Only the first (default) candidate per
+#      role is live-verified (caveat 3); the alternates are real,
+#      catalog-plausible model ids chosen by the same reasoning but not
+#      independently live-verified as *sentinels* (they're genuine model
+#      names, just unexercised in this specific role). `build_opencode_filter`
+#      additionally asserts (by construction, not by trusting callers) that
+#      `root_slugs` and `kind_by_slug` never share a key: any collision is
+#      logged and the colliding `kind_by_slug` entry is dropped rather than
+#      raised, so a direct/unusual call into these builders degrades to
+#      "unknown" instead of misclassifying as "root".
 #
 # Regardless of provider, the OpenCode provider clients put only the bare
 # model id (no `provider/` prefix) in the wire request's `model` field --
@@ -132,15 +157,34 @@ logger = getLogger(__name__)
 # classification and the bridge's `model_aliases` keys both use the bare
 # forms, never the `provider/`-prefixed config values.
 
-_SENTINEL_MODELS: dict[str, tuple[str, str]] = {
-    # provider_id -> (subagent_sentinel_id, small_model_sentinel_id), both
-    # bare (no `provider/` prefix) REAL catalog model ids, distinct from
-    # each other and from that provider's typical `opencode_model` default.
-    # anthropic pair is live-verified (see caveat 3 above); openai/google
-    # pairs are unverified best-effort analogues.
-    "anthropic": ("claude-haiku-4-5-20251001", "claude-3-5-haiku-20241022"),
-    "openai": ("gpt-5-mini", "gpt-5-nano"),
-    "google": ("gemini-2.5-flash", "gemini-2.5-flash-lite"),
+_SENTINEL_MODELS: dict[str, tuple[tuple[str, str, str], tuple[str, str, str]]] = {
+    # provider_id -> (subagent_candidates, small_model_candidates), each an
+    # ORDERED 3-candidate preference list of bare (no `provider/` prefix)
+    # REAL catalog model ids (see caveat 4 above for why a list rather than
+    # a single fixed id). `_select_sentinel` picks the first candidate that
+    # doesn't collide with the primary/already-chosen sentinel. Only each
+    # list's first (default) entry is live-verified for the anthropic
+    # provider (see caveat 3); all other entries/providers are unverified.
+    "anthropic": (
+        (
+            "claude-haiku-4-5-20251001",
+            "claude-3-5-haiku-20241022",
+            "claude-3-haiku-20240307",
+        ),
+        (
+            "claude-3-5-haiku-20241022",
+            "claude-3-haiku-20240307",
+            "claude-3-opus-20240229",
+        ),
+    ),
+    "openai": (
+        ("gpt-5-mini", "gpt-5-nano", "gpt-4o-mini"),
+        ("gpt-5-nano", "gpt-4o-mini", "gpt-3.5-turbo"),
+    ),
+    "google": (
+        ("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"),
+        ("gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"),
+    ),
 }
 
 OPENCODE_BUILTIN_SUBAGENTS: tuple[str, ...] = ("general", "explore", "scout")
@@ -168,8 +212,18 @@ def _bare_model_id(model_ref: str) -> str:
     return model_ref.split("/", 1)[1] if "/" in model_ref else model_ref
 
 
+def _select_sentinel(
+    candidates: tuple[str, str, str], excluded: Sequence[str]
+) -> str | None:
+    """First candidate bare id not in `excluded`, or `None` if all collide."""
+    for candidate in candidates:
+        if candidate not in excluded:
+            return candidate
+    return None
+
+
 def build_opencode_config_overrides(
-    provider_id: str,
+    provider_id: str, opencode_model: str
 ) -> tuple[dict[str, Any], str | None, str | None]:
     """`agent`/`small_model` config fragment routing traffic to sentinel slugs.
 
@@ -177,13 +231,22 @@ def build_opencode_config_overrides(
     where `config_fragment` is merged into the generated OpenCode config and
     the two sentinels are the `provider/`-prefixed config values (matching
     `opencode_model`'s provider, so they still resolve through the
-    overridden `baseURL`). When `provider_id` isn't in `_SENTINEL_MODELS`,
-    returns an empty fragment and `(None, None)` — no sentinel injection is
-    attempted (see caveat 3 above), and a warning is logged once per
-    provider id.
+    overridden `baseURL`).
+
+    When `provider_id` isn't in `_SENTINEL_MODELS`, returns an empty
+    fragment and `(None, None)` — no sentinel injection is attempted (see
+    caveat 3), and a warning is logged once per provider id.
+
+    Otherwise, picks each sentinel from its provider's ordered candidate
+    list, skipping any candidate whose bare id collides with `opencode_model`
+    (and, for the small-model role, with the already-chosen subagent
+    sentinel too) — see caveat 4. Either pick may independently come back
+    `None` (with a logged warning) if every candidate for that role
+    collides; that role's override is simply omitted from the config rather
+    than risking a slug that silently reclassifies as "root".
     """
-    sentinel_ids = _SENTINEL_MODELS.get(provider_id)
-    if sentinel_ids is None:
+    sentinel_candidates = _SENTINEL_MODELS.get(provider_id)
+    if sentinel_candidates is None:
         logger.warning(
             f"opencode(): no known catalog sentinel models for provider "
             f"{provider_id!r}; subagent/utility traffic will not be "
@@ -191,22 +254,53 @@ def build_opencode_config_overrides(
         )
         return {}, None, None
 
-    subagent_id, small_model_id = sentinel_ids
-    subagent_sentinel = f"{provider_id}/{subagent_id}"
-    small_model_sentinel = f"{provider_id}/{small_model_id}"
-    config_fragment: dict[str, Any] = {
-        "small_model": small_model_sentinel,
-        "agent": {
-            **{
-                name: {"model": subagent_sentinel}
-                for name in OPENCODE_BUILTIN_SUBAGENTS
-            },
-            **{
-                name: {"model": small_model_sentinel}
-                for name in OPENCODE_UTILITY_AGENTS
-            },
-        },
-    }
+    subagent_candidates, small_model_candidates = sentinel_candidates
+    primary_bare = _bare_model_id(opencode_model)
+
+    subagent_id = _select_sentinel(subagent_candidates, (primary_bare,))
+    if subagent_id is None:
+        logger.warning(
+            f"opencode(): every candidate subagent sentinel model for "
+            f"provider {provider_id!r} collides with opencode_model "
+            f"{opencode_model!r}; subagent traffic will not be "
+            f"slug-distinguishable from root."
+        )
+
+    small_model_excluded = (
+        (primary_bare, subagent_id) if subagent_id is not None else (primary_bare,)
+    )
+    small_model_id = _select_sentinel(small_model_candidates, small_model_excluded)
+    if small_model_id is None:
+        logger.warning(
+            f"opencode(): every candidate small-model sentinel for provider "
+            f"{provider_id!r} collides with opencode_model {opencode_model!r} "
+            f"or the chosen subagent sentinel; utility traffic will not be "
+            f"slug-distinguishable from root."
+        )
+
+    subagent_sentinel = (
+        f"{provider_id}/{subagent_id}" if subagent_id is not None else None
+    )
+    small_model_sentinel = (
+        f"{provider_id}/{small_model_id}" if small_model_id is not None else None
+    )
+
+    agent_overrides: dict[str, Any] = {}
+    if subagent_sentinel is not None:
+        agent_overrides.update(
+            {name: {"model": subagent_sentinel} for name in OPENCODE_BUILTIN_SUBAGENTS}
+        )
+    if small_model_sentinel is not None:
+        agent_overrides.update(
+            {name: {"model": small_model_sentinel} for name in OPENCODE_UTILITY_AGENTS}
+        )
+
+    config_fragment: dict[str, Any] = {}
+    if small_model_sentinel is not None:
+        config_fragment["small_model"] = small_model_sentinel
+    if agent_overrides:
+        config_fragment["agent"] = agent_overrides
+
     return config_fragment, subagent_sentinel, small_model_sentinel
 
 
@@ -247,16 +341,36 @@ def build_opencode_filter(
     (the form the bridge actually sees); the subagent/small-model sentinels
     (when not `None` — see `build_opencode_config_overrides`) are matched by
     their bare ids regardless of which provider prefix they were given.
+
+    Invariant (caveat 4 above): `root_slugs` and `kind_by_slug` must never
+    share a key — `slug_map_classifier` checks `root_slugs` first, so a
+    shared key would silently classify that sentinel's traffic "root"
+    instead of "subagent"/"utility". `build_opencode_config_overrides`
+    already picks collision-free sentinels, so this shouldn't trigger via
+    the normal `opencode()` call path; it's enforced here too (rather than
+    trusted from the caller) since this function is itself importable and
+    callable directly. A collision is logged and the colliding
+    `kind_by_slug` entry is dropped — never raised — so the request falls
+    back to the existing "unknown"/"root" classification instead of a
+    silently wrong one.
     """
+    root_slug = _bare_model_id(opencode_model)
     kind_by_slug: dict[str, Literal["subagent", "utility"]] = {}
     if subagent_sentinel is not None:
         kind_by_slug[_bare_model_id(subagent_sentinel)] = "subagent"
     if small_model_sentinel is not None:
         kind_by_slug[_bare_model_id(small_model_sentinel)] = "utility"
-    return classify_filter(
-        filter,
-        slug_map_classifier({_bare_model_id(opencode_model)}, kind_by_slug),
-    )
+
+    if root_slug in kind_by_slug:
+        logger.warning(
+            f"opencode(): sentinel slug {root_slug!r} collides with the "
+            f"root slug (opencode_model {opencode_model!r}); dropping its "
+            f"subagent/utility classification, which would otherwise be "
+            f"unreachable (slug_map_classifier checks root_slugs first)."
+        )
+        del kind_by_slug[root_slug]
+
+    return classify_filter(filter, slug_map_classifier({root_slug}, kind_by_slug))
 
 
 @agent
@@ -343,7 +457,7 @@ def opencode(
     # agent-context config overrides (subagent/small-model sentinel slugs —
     # see module docstring above)
     agent_context_config, subagent_sentinel, small_model_sentinel = (
-        build_opencode_config_overrides(provider_id)
+        build_opencode_config_overrides(provider_id, opencode_model)
     )
     opencode_filter = build_opencode_filter(
         filter, opencode_model, subagent_sentinel, small_model_sentinel
