@@ -3,7 +3,9 @@
 import logging
 from typing import Any
 
+import inspect_swe
 import pytest
+from inspect_ai import agent as inspect_ai_agent
 from inspect_ai.agent import (
     AgentBridgeContext,
     current_agent_bridge_context,
@@ -128,3 +130,19 @@ async def test_classify_exceptions_do_not_break_generation(
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
+
+
+def test_public_reexports() -> None:
+    """`inspect_swe`'s re-exports are the same objects as `inspect_ai.agent`'s.
+
+    Thin aliases for consumer convenience — not copies, so isinstance checks,
+    identity comparisons, and monkeypatching either module's attribute behave
+    identically either way callers import them.
+    """
+    for name in (
+        "AgentBridgeContext",
+        "current_agent_bridge_context",
+        "is_root_agent",
+        "is_sub_agent",
+    ):
+        assert getattr(inspect_swe, name) is getattr(inspect_ai_agent, name)

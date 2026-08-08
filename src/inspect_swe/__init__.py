@@ -1,3 +1,10 @@
+from inspect_ai.agent import (
+    AgentBridgeContext,
+    current_agent_bridge_context,
+    is_root_agent,
+    is_sub_agent,
+)
+
 from ._antigravity.antigravity import antigravity
 from ._claude_code.claude_code import claude_code
 from ._codex_cli.codex_cli import codex_cli
@@ -42,6 +49,10 @@ __all__ = [
     "SandboxPlatform",
     "CentaurOptions",
     "CodexAutoReview",
+    "AgentBridgeContext",
+    "current_agent_bridge_context",
+    "is_root_agent",
+    "is_sub_agent",
     "__version__",
     "download_wheels_tarball",
 ]
