@@ -32,12 +32,14 @@ from inspect_ai.model import (
     get_model,
 )
 from inspect_ai.tool import ToolChoice, ToolInfo
+from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_swe._opencode.opencode import (
     _SENTINEL_MODELS,
     OPENCODE_BUILTIN_SUBAGENTS,
     OPENCODE_UTILITY_AGENTS,
     _bare_model_id,
     _select_sentinel,
+    build_opencode_config,
     build_opencode_config_overrides,
     build_opencode_filter,
     build_opencode_model_aliases,
@@ -308,6 +310,77 @@ def test_model_aliases_skip_none_sentinels() -> None:
     served = get_model("mockllm/model")
     aliases = build_opencode_model_aliases(served, None, None, None)
     assert aliases == {}
+
+
+# ---------------------------------------------------------------------------
+# build_opencode_config — full-dict snapshot
+# ---------------------------------------------------------------------------
+#
+# Guards the actual config written to the sandbox (execute() calls this
+# function verbatim -- see opencode.py). Without a test observing the
+# ASSEMBLED dict, a future refactor could drop the `agent_context_config`
+# spread and silently kill agent-context classification while every other
+# test (which only exercises the builder functions in isolation) stayed
+# green.
+
+
+def test_build_opencode_config_full_snapshot() -> None:
+    agent_context_config, _subagent_sentinel, _small_model_sentinel = (
+        build_opencode_config_overrides("anthropic", _ANTHROPIC_PRIMARY)
+    )
+    mcp_servers = [
+        MCPServerConfigHTTP(
+            type="http", name="test-server", url="http://example.com/mcp"
+        )
+    ]
+
+    config = build_opencode_config(
+        "anthropic",
+        "http://localhost:3001/v1",
+        agent_context_config,
+        True,  # skills_enabled
+        mcp_servers,
+    )
+
+    assert config == {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            "anthropic": {"options": {"baseURL": "http://localhost:3001/v1"}},
+        },
+        "small_model": "anthropic/claude-3-5-haiku-20241022",
+        "agent": {
+            "general": {"model": "anthropic/claude-haiku-4-5-20251001"},
+            "explore": {"model": "anthropic/claude-haiku-4-5-20251001"},
+            "scout": {"model": "anthropic/claude-haiku-4-5-20251001"},
+            "title": {"model": "anthropic/claude-3-5-haiku-20241022"},
+            "summary": {"model": "anthropic/claude-3-5-haiku-20241022"},
+            "compaction": {"model": "anthropic/claude-3-5-haiku-20241022"},
+        },
+        "permission": {"skill": {"*": "allow"}},
+        "mcp": {
+            "test-server": {
+                "enabled": True,
+                "type": "remote",
+                "url": "http://example.com/mcp",
+            }
+        },
+    }
+
+
+def test_build_opencode_config_without_skills_or_mcp_omits_those_keys() -> None:
+    config = build_opencode_config(
+        "anthropic", "http://localhost:3001/v1", {}, False, []
+    )
+    assert config == {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            "anthropic": {"options": {"baseURL": "http://localhost:3001/v1"}},
+        },
+    }
+    assert "permission" not in config
+    assert "mcp" not in config
+    assert "agent" not in config
+    assert "small_model" not in config
 
 
 # ---------------------------------------------------------------------------

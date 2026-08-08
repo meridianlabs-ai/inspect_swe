@@ -86,11 +86,17 @@ logger = getLogger(__name__)
 #      (https://opencode.ai/docs/agents/, opencode-ai 1.18.x). We route all
 #      three through the subagent sentinel, setting *only* `model` on each
 #      so their built-in description/prompt/mode (if any) are left alone;
-#      if a given install doesn't actually ship one of these names the
-#      entry is simply an inert, never-invoked custom-agent definition (the
-#      config schema permits arbitrary agent keys via `additionalProperties`
-#      and every `AgentConfig` field is optional, so this can't fail config
-#      parsing). Live-verified (see #3): OpenCode DOES read `general`'s
+#      if a given install doesn't actually ship one of these names, this is
+#      NOT inert: per OpenCode's docs, a config-defined agent with no
+#      `mode` set defaults to mode `"all"` (spawnable from any context), so
+#      on an older install lacking one of these built-ins the entry creates
+#      a real, spawnable, prompt-less/description-less custom agent under
+#      that name (the config schema still parses fine either way --
+#      `additionalProperties`/optional fields -- so this is a behavioral
+#      risk, not a parsing one). Low risk in practice: `version="auto"`
+#      resolves to the latest release (`agentbinary.py`), so an install old
+#      enough to lack `general`/`explore`/`scout` is an edge case, not the
+#      default path. Live-verified (see #3): OpenCode DOES read `general`'s
 #      config override and attempt to resolve its `model` -- proving the
 #      per-built-in override mechanism itself works -- it was the *sentinel
 #      value's* catalog rejection (#3), not the override mechanism, that
@@ -136,18 +142,26 @@ logger = getLogger(__name__)
 #      collides with neither the primary's bare id nor (for the small-model
 #      role) the already-chosen subagent sentinel. If every candidate for a
 #      role collides (degenerate: caller's `opencode_model` IS the whole
-#      preference list), that role's override is omitted entirely and its
-#      traffic falls back to the existing "unknown" classification rather
-#      than a silently-wrong "root". Only the first (default) candidate per
-#      role is live-verified (caveat 3); the alternates are real,
+#      preference list), that role's override is omitted entirely -- its
+#      traffic then carries the primary slug (OpenCode's documented
+#      behavior for an unconfigured agent: it inherits the invoking
+#      primary's model) and classifies "root", same as if no override had
+#      ever been attempted. That's an honest, harmless degradation (matches
+#      the pre-existing "unrecognized provider" fallback and the
+#      claude_code precedent for a same-as-presented small-fast slug) --
+#      NOT "unknown" and not a misclassification, just under-attribution.
+#      Only the first (default) candidate per role is live-verified
+#      (caveat 3); the alternates are real,
 #      catalog-plausible model ids chosen by the same reasoning but not
 #      independently live-verified as *sentinels* (they're genuine model
 #      names, just unexercised in this specific role). `build_opencode_filter`
 #      additionally asserts (by construction, not by trusting callers) that
 #      `root_slugs` and `kind_by_slug` never share a key: any collision is
 #      logged and the colliding `kind_by_slug` entry is dropped rather than
-#      raised, so a direct/unusual call into these builders degrades to
-#      "unknown" instead of misclassifying as "root".
+#      raised, so a direct/unusual call into these builders classifies that
+#      slug's traffic "root" (it IS the root slug on the wire) instead of
+#      misclassifying it "subagent"/"utility" -- the same honest
+#      degradation as the omitted-override case above, not "unknown".
 #
 # Regardless of provider, the OpenCode provider clients put only the bare
 # model id (no `provider/` prefix) in the wire request's `model` field --
@@ -200,6 +214,11 @@ the same per-agent `model` override mechanism `OPENCODE_BUILTIN_SUBAGENTS`
 uses -- belt-and-braces alongside `small_model` (see caveat 1 above; NOT
 independently live-verified)."""
 
+_warned_unrecognized_providers: set[str] = set()
+"""Dedupe key for the "no known catalog sentinel models" warning below --
+logged once per distinct provider id (mirrors `classify_filter`'s `warned`
+set), not once per `opencode()` call/request."""
+
 
 def _bare_model_id(model_ref: str) -> str:
     """Strip a `provider/model` config value down to the bare model id.
@@ -247,11 +266,13 @@ def build_opencode_config_overrides(
     """
     sentinel_candidates = _SENTINEL_MODELS.get(provider_id)
     if sentinel_candidates is None:
-        logger.warning(
-            f"opencode(): no known catalog sentinel models for provider "
-            f"{provider_id!r}; subagent/utility traffic will not be "
-            f"slug-distinguishable from root for this opencode_model."
-        )
+        if provider_id not in _warned_unrecognized_providers:
+            _warned_unrecognized_providers.add(provider_id)
+            logger.warning(
+                f"opencode(): no known catalog sentinel models for provider "
+                f"{provider_id!r}; subagent/utility traffic will not be "
+                f"slug-distinguishable from root for this opencode_model."
+            )
         return {}, None, None
 
     subagent_candidates, small_model_candidates = sentinel_candidates
@@ -350,9 +371,11 @@ def build_opencode_filter(
     the normal `opencode()` call path; it's enforced here too (rather than
     trusted from the caller) since this function is itself importable and
     callable directly. A collision is logged and the colliding
-    `kind_by_slug` entry is dropped — never raised — so the request falls
-    back to the existing "unknown"/"root" classification instead of a
-    silently wrong one.
+    `kind_by_slug` entry is dropped — never raised — so a request under
+    that slug classifies "root" (it genuinely is the root slug on the
+    wire), same as if the sentinel had never been passed; any OTHER,
+    non-colliding slug this filter doesn't recognize still classifies
+    "unknown" as usual.
     """
     root_slug = _bare_model_id(opencode_model)
     kind_by_slug: dict[str, Literal["subagent", "utility"]] = {}
@@ -371,6 +394,37 @@ def build_opencode_filter(
         del kind_by_slug[root_slug]
 
     return classify_filter(filter, slug_map_classifier({root_slug}, kind_by_slug))
+
+
+def build_opencode_config(
+    provider_id: str,
+    provider_base_url: str,
+    agent_context_config: dict[str, Any],
+    skills_enabled: bool,
+    mcp_servers: Sequence[MCPServerConfig],
+) -> dict[str, Any]:
+    """Assemble the full OpenCode global config JSON (pure, no I/O).
+
+    Extracted from `execute()` verbatim (no behavior change) so the
+    assembled shape is unit-testable without a sandbox — in particular that
+    `agent_context_config` (the `agent`/`small_model` sentinel overrides
+    from `build_opencode_config_overrides`) actually lands in the written
+    config. Without this, a future refactor of `execute()` could drop that
+    spread and silently kill agent-context classification while every
+    other test stayed green (nothing else observes the written config).
+    """
+    config: dict[str, Any] = {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            provider_id: {"options": {"baseURL": provider_base_url}},
+        },
+        **agent_context_config,
+    }
+    if skills_enabled:
+        config["permission"] = {"skill": {"*": "allow"}}
+    if mcp_servers:
+        config["mcp"] = resolve_mcp_servers(mcp_servers)
+    return config
 
 
 @agent
@@ -516,17 +570,13 @@ def opencode(
             # include "/v1" in the baseURL we hand to opencode.
             bridge_url = f"http://localhost:{bridge.port}"
             provider_base_url = f"{bridge_url}/v1"
-            opencode_config: dict[str, Any] = {
-                "$schema": "https://opencode.ai/config.json",
-                "provider": {
-                    provider_id: {"options": {"baseURL": provider_base_url}},
-                },
-                **agent_context_config,
-            }
-            if resolved_skills is not None:
-                opencode_config["permission"] = {"skill": {"*": "allow"}}
-            if all_mcp_servers:
-                opencode_config["mcp"] = resolve_mcp_servers(all_mcp_servers)
+            opencode_config = build_opencode_config(
+                provider_id,
+                provider_base_url,
+                agent_context_config,
+                resolved_skills is not None,
+                all_mcp_servers,
+            )
 
             opencode_config_dir = f"{sandbox_home}/.config/opencode"
             opencode_config_path = f"{opencode_config_dir}/opencode.json"
