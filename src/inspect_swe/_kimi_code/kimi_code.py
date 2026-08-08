@@ -3,7 +3,7 @@ import re
 import shlex
 from pathlib import Path
 from textwrap import dedent
-from typing import Literal, Sequence, cast
+from typing import Literal, Sequence
 
 from inspect_ai.agent import (
     Agent,
@@ -45,9 +45,11 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
-from inspect_swe._util.agentcontext import ModelFilter as _ModelFilter
-from inspect_swe._util.agentcontext import StrFilter as _StrFilter
-from inspect_swe._util.agentcontext import is_legacy_str_filter as _is_legacy_str_filter
+from inspect_swe._util.agentcontext import (
+    ModelFilter,
+    classify_filter,
+    static_root_classifier,
+)
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.trace import trace
@@ -81,6 +83,33 @@ _REPEAT_REMINDER_RE = re.compile(
     + r").*?</system-reminder>",
     re.DOTALL,
 )
+
+
+def build_kimi_filter(filter: GenerateFilter | None) -> ModelFilter:
+    """Kimi bridge filter: message cleanup + static root agent context."""
+    delegate = classify_filter(filter, static_root_classifier)
+
+    async def kimi_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        # in place (not via GenerateInput) so the rewritten ids persist in
+        # both the recorded ModelEvent input and bridge.state.messages
+        _dedupe_tool_call_ids(messages)
+        cleaned, changed = _strip_repeat_reminders(messages)
+        result = await delegate(model, cleaned, tools, tool_choice, config)
+        if result is not None:
+            return result
+        if changed:
+            return GenerateInput(
+                input=cleaned, tools=tools, tool_choice=tool_choice, config=config
+            )
+        return None
+
+    return kimi_filter
 
 
 @agent
@@ -165,7 +194,6 @@ def kimi_code(
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
     resolved_disallowed = list(disallowed_tools or [])
-    filter_is_legacy = filter is not None and _is_legacy_str_filter(filter)
 
     async def execute(state: AgentState) -> AgentState:
         resolved_model = _resolve_model(model=model, model_aliases=model_aliases)
@@ -178,39 +206,11 @@ def kimi_code(
         port = store().get(MODEL_PORT, 3100) + 1
         store().set(MODEL_PORT, port)
 
-        async def combined_filter(
-            model: Model,
-            messages: list[ChatMessage],
-            tools: list[ToolInfo],
-            tool_choice: ToolChoice | None,
-            config: GenerateConfig,
-        ) -> ModelOutput | GenerateInput | None:
-            # in place (not via GenerateInput) so the rewritten ids persist in
-            # both the recorded ModelEvent input and bridge.state.messages
-            _dedupe_tool_call_ids(messages)
-            cleaned, changed = _strip_repeat_reminders(messages)
-            if filter is not None:
-                if filter_is_legacy:
-                    result = await cast(_StrFilter, filter)(
-                        model.name, cleaned, tools, tool_choice, config
-                    )
-                else:
-                    result = await cast(_ModelFilter, filter)(
-                        model, cleaned, tools, tool_choice, config
-                    )
-                if result is not None:
-                    return result
-            if changed:
-                return GenerateInput(
-                    input=cleaned, tools=tools, tool_choice=tool_choice, config=config
-                )
-            return None
-
         async with sandbox_agent_bridge(
             state,
             model=bridge_model,
             model_aliases=model_aliases,
-            filter=combined_filter,
+            filter=build_kimi_filter(filter),
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,

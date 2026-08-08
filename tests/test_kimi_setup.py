@@ -28,12 +28,12 @@ from inspect_swe._kimi_code import agentbinary
 from inspect_swe._kimi_code.kimi_code import (
     _config_toml,
     _dedupe_tool_call_ids,
-    _is_legacy_str_filter,
     _mcp_json,
     _resolve_max_context_size,
     _resolve_model,
     _strip_repeat_reminders,
 )
+from inspect_swe._util.agentcontext import is_legacy_str_filter as _is_legacy_str_filter
 
 from tests.conftest import skip_if_github_action
 

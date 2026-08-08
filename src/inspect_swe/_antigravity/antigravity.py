@@ -29,6 +29,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
+from inspect_swe._util.agentcontext import classify_filter, static_root_classifier
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import resolve_agent_cwd
@@ -178,6 +179,13 @@ def _confine_declared_tools(
     return _filter
 
 
+def build_antigravity_filter(
+    filter: _ModelGenerateFilter | None,
+) -> _ModelGenerateFilter:
+    """Antigravity bridge filter: tool confinement + static root agent context."""
+    return classify_filter(_confine_declared_tools(filter), static_root_classifier)
+
+
 @dataclass(frozen=True, slots=True)
 class SDKExecutionSpec:
     command: list[str]
@@ -314,7 +322,7 @@ def antigravity(
             state,
             model=bridge_model,
             model_aliases=model_aliases,
-            filter=_confine_declared_tools(filter),
+            filter=build_antigravity_filter(filter),
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=bridge_port,
