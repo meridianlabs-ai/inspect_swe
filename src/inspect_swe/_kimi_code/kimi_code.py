@@ -1,10 +1,9 @@
-import inspect
 import json
 import re
 import shlex
 from pathlib import Path
 from textwrap import dedent
-from typing import Awaitable, Callable, Literal, Sequence, cast
+from typing import Literal, Sequence, cast
 
 from inspect_ai.agent import (
     Agent,
@@ -46,6 +45,9 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
+from inspect_swe._util.agentcontext import ModelFilter as _ModelFilter
+from inspect_swe._util.agentcontext import StrFilter as _StrFilter
+from inspect_swe._util.agentcontext import is_legacy_str_filter as _is_legacy_str_filter
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.trace import trace
@@ -54,25 +56,6 @@ from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.sandbox import resolve_agent_cwd
 from .._util.toml import _format_value
 from .agentbinary import kimi_code_binary_source
-
-# GenerateFilter is a union of Model-first and (deprecated) str-first callables;
-# the bridge dispatches on the user filter's first-parameter annotation. Our
-# combined_filter wrapper hides the user filter from that dispatch, so we
-# replicate it: Model-first filters get the Model, str-first get model.name.
-_ModelFilter = Callable[
-    [Model, list[ChatMessage], list[ToolInfo], "ToolChoice | None", GenerateConfig],
-    Awaitable["ModelOutput | GenerateInput | None"],
-]
-_StrFilter = Callable[
-    [str, list[ChatMessage], list[ToolInfo], "ToolChoice | None", GenerateConfig],
-    Awaitable["ModelOutput | GenerateInput | None"],
-]
-
-
-def _is_legacy_str_filter(fn: GenerateFilter) -> bool:
-    first = next(iter(inspect.signature(fn).parameters.values()), None)
-    return first is not None and first.annotation is str
-
 
 # Kimi Code's CLI appends escalating <system-reminder> nags to tool results when
 # it detects an identical tool call repeated N times in a row (tool-dedup: tier 1
