@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.70](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.69...0.2.70) (2026-08-09)
+
+
+### Features
+
+* pass web_search to sandbox_agent_bridge based on web search config ([#116](https://github.com/meridianlabs-ai/inspect_swe/issues/116)) ([5ba7549](https://github.com/meridianlabs-ai/inspect_swe/commit/5ba754967343786f79e8c59808bce2df531daaf5))
+
 ## [0.2.69](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.68...0.2.69) (2026-08-08)
 
 
