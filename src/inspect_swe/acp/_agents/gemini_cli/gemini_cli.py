@@ -16,6 +16,7 @@ from typing_extensions import Unpack
 from inspect_swe._gemini_cli.agentbinary import ensure_gemini_cli_setup
 from inspect_swe._gemini_cli.gemini_cli import build_gemini_settings
 from inspect_swe._util.path import join_path
+from inspect_swe._util.websearch import web_search_grant
 from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
 
@@ -35,11 +36,13 @@ class GeminiCli(ACPAgent):
         *,
         skills: list[str | Path | Skill] | None = None,
         version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
+        web_search: bool = True,
         debug: bool = False,
         **kwargs: Unpack[ACPAgentParams],
     ) -> None:
         self._resolved_skills = read_skills(skills) if skills else None
         self._version = version
+        self._web_search = web_search
         self._debug = debug
         super().__init__(**kwargs)
 
@@ -75,6 +78,7 @@ class GeminiCli(ACPAgent):
             filter=self.filter,
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
+            web_search=web_search_grant(self._web_search),
             port=port,
         ) as bridge:
             # Install node and gemini CLI in the sandbox.
@@ -169,6 +173,7 @@ def interactive_gemini_cli(
     # Gemini-specific
     skills: list[str | Path | Skill] | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
+    web_search: bool = True,
     debug: bool = False,
     # Forwarded to ACPAgent
     **kwargs: Unpack[ACPAgentParams],
@@ -183,12 +188,14 @@ def interactive_gemini_cli(
         version: Version of gemini CLI to use. One of:
             ``"auto"``, ``"sandbox"``, ``"stable"``, ``"latest"``,
             or a specific semver version string.
+        web_search: Enable the agent's web search tool (defaults to ``True``).
         debug: Run gemini-cli with ``--debug`` and ``GEMINI_DEBUG_LOG_FILE`` set to ``$HOME/gemini-debug.log`` in the sandbox (in ACP mode console output is patched away from stderr, so the log file is the only way to surface internals).
         **kwargs: See :class:`ACPAgentParams` for all base options.
     """
     return GeminiCli(
         skills=skills,
         version=version,
+        web_search=web_search,
         debug=debug,
         **kwargs,
     )

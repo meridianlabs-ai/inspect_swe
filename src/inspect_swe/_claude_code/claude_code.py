@@ -40,6 +40,7 @@ from inspect_swe._claude_code._events.stream import (
 )
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.path import join_path
+from inspect_swe._util.websearch import web_search_grant, web_search_tool_disallowed
 
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
@@ -157,7 +158,8 @@ def claude_code(
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
             tools available to the agent running in the sandbox.
-        disallowed_tools: List of tool names to disallow entirely.
+        disallowed_tools: List of tool names to disallow entirely (disallowing
+            `"WebSearch"` also disables web search for the agent).
         centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
@@ -274,6 +276,9 @@ def claude_code(
                 retry_refusals=retry_refusals,
                 port=port,
                 bridged_tools=bridged_tools,
+                web_search=web_search_grant(
+                    not web_search_tool_disallowed(disallowed_tools, "WebSearch")
+                ),
                 model_event_sink=consumer,
                 checkpointer=cp,
             ) as bridge,

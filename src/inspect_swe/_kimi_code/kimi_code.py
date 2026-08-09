@@ -49,6 +49,7 @@ from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.trace import trace
+from inspect_swe._util.websearch import web_search_grant
 
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.sandbox import resolve_agent_cwd
@@ -232,6 +233,9 @@ def kimi_code(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
+            # granted unconditionally to preserve today's behaviour; a grant is
+            # inert unless the CLI declares a native web tool
+            web_search=web_search_grant(True),
         ) as bridge:
             # resolve sandbox
             sbox = sandbox_env(sandbox)

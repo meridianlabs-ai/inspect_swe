@@ -27,6 +27,7 @@ from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
+from inspect_swe._util.websearch import web_search_grant
 
 from .agentbinary import ensure_gemini_cli_setup
 
@@ -42,6 +43,7 @@ def gemini_cli(
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+    web_search: bool = True,
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
@@ -71,6 +73,7 @@ def gemini_cli(
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP
+        web_search: Enable the agent's web search tool (defaults to `True`).
         centaur: Run in 'centaur' mode, which makes Gemini CLI available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts
         model: Model name to use for inspect bridge (defaults to main model for task)
@@ -121,6 +124,7 @@ def gemini_cli(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
+            web_search=web_search_grant(web_search),
         ) as bridge:
             # resolve sandbox
             sbox = sandbox_env(sandbox)
