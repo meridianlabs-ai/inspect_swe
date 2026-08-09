@@ -100,6 +100,7 @@ class CodexCli(ACPAgent):
             filter=self.filter,
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
+            web_search=self._web_search != "disabled",
             port=port,
         ) as bridge:
             # Install node and codex-acp in the sandbox.

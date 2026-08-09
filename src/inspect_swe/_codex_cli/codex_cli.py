@@ -193,6 +193,7 @@ def codex_cli(
                 retry_refusals=retry_refusals,
                 port=port,
                 bridged_tools=bridged_tools,
+                web_search=effective_web_search != "disabled",
                 model_event_sink=consumer,
                 checkpointer=cp,
             ) as bridge,
