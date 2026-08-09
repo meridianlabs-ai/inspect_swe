@@ -16,7 +16,6 @@ from typing_extensions import Unpack
 from inspect_swe._gemini_cli.agentbinary import ensure_gemini_cli_setup
 from inspect_swe._gemini_cli.gemini_cli import build_gemini_settings
 from inspect_swe._util.path import join_path
-from inspect_swe._util.websearch import web_search_grant
 from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
 
@@ -78,7 +77,7 @@ class GeminiCli(ACPAgent):
             filter=self.filter,
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
-            web_search=web_search_grant(self._web_search),
+            web_search=self._web_search,
             port=port,
         ) as bridge:
             # Install node and gemini CLI in the sandbox.

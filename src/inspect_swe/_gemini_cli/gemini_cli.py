@@ -27,7 +27,6 @@ from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
-from inspect_swe._util.websearch import web_search_grant
 
 from .agentbinary import ensure_gemini_cli_setup
 
@@ -124,7 +123,7 @@ def gemini_cli(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
-            web_search=web_search_grant(web_search),
+            web_search=web_search,
         ) as bridge:
             # resolve sandbox
             sbox = sandbox_env(sandbox)

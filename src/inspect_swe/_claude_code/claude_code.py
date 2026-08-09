@@ -40,7 +40,7 @@ from inspect_swe._claude_code._events.stream import (
 )
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.path import join_path
-from inspect_swe._util.websearch import web_search_grant, web_search_tool_disallowed
+from inspect_swe._util.websearch import web_search_tool_disallowed
 
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
@@ -276,8 +276,8 @@ def claude_code(
                 retry_refusals=retry_refusals,
                 port=port,
                 bridged_tools=bridged_tools,
-                web_search=web_search_grant(
-                    not web_search_tool_disallowed(disallowed_tools, "WebSearch")
+                web_search=not web_search_tool_disallowed(
+                    disallowed_tools, "WebSearch"
                 ),
                 model_event_sink=consumer,
                 checkpointer=cp,

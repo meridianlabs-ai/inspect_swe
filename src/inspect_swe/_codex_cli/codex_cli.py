@@ -34,7 +34,6 @@ from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import resolve_agent_cwd, sandbox_exec
 from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
-from inspect_swe._util.websearch import web_search_grant
 
 from .._util.agentbinary import ensure_agent_binary_installed
 from ._events.consumer import CodexConsumer
@@ -194,7 +193,7 @@ def codex_cli(
                 retry_refusals=retry_refusals,
                 port=port,
                 bridged_tools=bridged_tools,
-                web_search=web_search_grant(effective_web_search != "disabled"),
+                web_search=effective_web_search != "disabled",
                 model_event_sink=consumer,
                 checkpointer=cp,
             ) as bridge,

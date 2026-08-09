@@ -1,6 +1,15 @@
-from typing import Sequence
+"""Web search availability for CLI agents.
 
-from inspect_ai.tool import WebSearchProviders
+CLI agents implement their web tools by issuing a *nested* model request carrying
+the provider's native `web_search` / `web_fetch` tool, so the tool reaches the
+model over the agent bridge rather than from the sandbox. Configuring the CLI
+alone is therefore not sufficient to withhold it — an agent can address the model
+proxy directly. Each agent passes its effective setting to
+`sandbox_agent_bridge(web_search=...)`, which is where the capability is actually
+granted or withheld.
+"""
+
+from typing import Sequence
 
 
 def web_search_tool_disallowed(
@@ -14,18 +23,3 @@ def web_search_tool_disallowed(
         entry == tool_name or entry.startswith(f"{tool_name}(")
         for entry in (disallowed_tools or [])
     )
-
-
-def web_search_grant(enabled: bool) -> WebSearchProviders | None:
-    """Bridge grant for an agent's built-in web search tools.
-
-    CLI agents implement their web tools by issuing a *nested* model request
-    carrying the provider's native `web_search` / `web_fetch` tool, so the tool
-    reaches the model over the bridge rather than from the sandbox. Configuring
-    the CLI alone is therefore not sufficient to withhold it — an agent can
-    address the model proxy directly — which is why the grant is made here.
-
-    An empty `WebSearchProviders` resolves to the same internal-provider set the
-    bridge applies by default, so a grant does not pin a provider list.
-    """
-    return WebSearchProviders() if enabled else None

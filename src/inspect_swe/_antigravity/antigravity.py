@@ -33,7 +33,6 @@ from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
-from inspect_swe._util.websearch import web_search_grant
 
 from .agentbinary import ensure_antigravity_sdk
 
@@ -322,7 +321,7 @@ def antigravity(
             bridged_tools=bridged_tools,
             # granted unconditionally to preserve today's behaviour; a grant is
             # inert unless the CLI declares a native web tool
-            web_search=web_search_grant(True),
+            web_search=True,
         ) as bridge:
             sbox = sandbox_env(sandbox)
 

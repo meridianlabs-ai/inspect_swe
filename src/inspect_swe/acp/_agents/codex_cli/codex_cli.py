@@ -31,7 +31,6 @@ from inspect_swe._codex_cli.config import (
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import sandbox_exec
 from inspect_swe._util.toml import to_toml
-from inspect_swe._util.websearch import web_search_grant
 from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
 
@@ -101,7 +100,7 @@ class CodexCli(ACPAgent):
             filter=self.filter,
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
-            web_search=web_search_grant(self._web_search != "disabled"),
+            web_search=self._web_search != "disabled",
             port=port,
         ) as bridge:
             # Install node and codex-acp in the sandbox.
