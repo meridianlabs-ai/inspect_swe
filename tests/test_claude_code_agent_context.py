@@ -369,21 +369,18 @@ def _sync_task_result_jsonl(
     return _tool_result_jsonl(tool_use_id, result_text)
 
 
-def _task_notification_jsonl(
+def _task_notification_text(
     tool_use_id: str, task_id: str = "a56bbf04021ac8018"
-) -> dict[str, Any]:
-    """An async Task's genuine completion signal.
+) -> str:
+    """Text of one `<task-notification>` block.
 
-    Shape verified live against CC 2.1.220 (recorded log msg[6]/msg[8]):
-    `message.content` is a plain string (not a tool_result block), and
+    An async Task's genuine completion signal. Shape verified live against
+    CC 2.1.220 (recorded log msg[6]/msg[8]):
     correlates to the *original* Task tool_use_id via `<tool-use-id>` --
     not the CC-internal `<task-id>` also present in the block -- see
     `live_consumer._TASK_NOTIFICATION_TOOL_USE_ID_RE`.
     """
-    text = (
-        "[SYSTEM NOTIFICATION - NOT USER INPUT]\n"
-        "This is an automated background-task event, NOT a message from "
-        "the user.\n\n"
+    return (
         "<task-notification>\n"
         f"<task-id>{task_id}</task-id>\n"
         f"<tool-use-id>{tool_use_id}</tool-use-id>\n"
@@ -391,6 +388,21 @@ def _task_notification_jsonl(
         "<summary>Agent finished</summary>\n"
         "<result>the result text</result>\n"
         "</task-notification>"
+    )
+
+
+def _task_notification_jsonl(
+    tool_use_id: str, task_id: str = "a56bbf04021ac8018"
+) -> dict[str, Any]:
+    """A raw "user" JSONL line wrapping one `<task-notification>` block.
+
+    `message.content` is a plain string (not a tool_result block) -- see
+    `_task_notification_text`.
+    """
+    text = (
+        "[SYSTEM NOTIFICATION - NOT USER INPUT]\n"
+        "This is an automated background-task event, NOT a message from "
+        "the user.\n\n" + _task_notification_text(tool_use_id, task_id)
     )
     return {"type": "user", "message": {"content": text}}
 
@@ -576,3 +588,80 @@ def test_attribute_safety_net_no_op_with_multiple_async_agents(
     with bridged_request_scope(consumer._models.subagent):
         resolved = consumer._attribute(messages)
     assert resolved == consumer.outer_span_id
+
+
+def test_attribute_safety_net_requires_sole_open_agent(monkeypatch: Any) -> None:
+    """A concurrently-open agent of ANY kind must block the safety net.
+
+    Exactly one async agent is open (call_1), which alone would satisfy the
+    old (too-loose) check -- but a second, still-open sync Task (call_2,
+    no tool_result yet) is also open, with a prompt that won't substring-
+    match this call's text. The safety net must require the async agent be
+    the *sole* open agent (of any kind), not just the sole *async* one --
+    otherwise call_2's own unmatchable traffic could get misattributed to
+    call_1. Must fall back to the outer span.
+    """
+    consumer = _consumer(monkeypatch)
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+    consumer.process_jsonl_line(_async_launch_ack_jsonl("call_1"))
+    # call_2: a second, still-open (synchronous) Task -- no tool_result yet,
+    # so it's open but not launched_async.
+    _spawn_pending(consumer, "call_2", _TASK_PROMPT_2)
+
+    messages: list[ChatMessage] = [
+        ChatMessageUser(content="totally unrelated text, no prompt substring")
+    ]
+    with bridged_request_scope(consumer._models.subagent):
+        resolved = consumer._attribute(messages)
+    assert resolved == consumer.outer_span_id
+
+
+def test_task_notification_batched_closes_both_spans(monkeypatch: Any) -> None:
+    """A batched turn can carry two <task-notification> blocks at once.
+
+    E.g. two background agents finishing close together. Both spans must
+    close, not just the first match.
+    """
+    consumer, stub = _consumer_with_transcript(monkeypatch)
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+    _spawn_pending(consumer, "call_2", _TASK_PROMPT_2)
+    consumer.process_jsonl_line(_async_launch_ack_jsonl("call_1", agent_id="agent-1"))
+    consumer.process_jsonl_line(_async_launch_ack_jsonl("call_2", agent_id="agent-2"))
+    span_1 = consumer._open_agents["call_1"].span_id
+    span_2 = consumer._open_agents["call_2"].span_id
+
+    batched_text = (
+        "[SYSTEM NOTIFICATION - NOT USER INPUT]\n"
+        + _task_notification_text("call_1", task_id="agent-1")
+        + "\n"
+        + _task_notification_text("call_2", task_id="agent-2")
+    )
+    consumer.process_jsonl_line({"type": "user", "message": {"content": batched_text}})
+
+    assert "call_1" not in consumer._open_agents
+    assert "call_2" not in consumer._open_agents
+    span_ends = _span_events(stub, SpanEndEvent)
+    assert len(span_ends) == 2
+    assert {e.id for e in span_ends} == {span_1, span_2}
+
+
+def test_unresolvable_task_notification_warns_once(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """An unresolvable notification warns once per consumer instance.
+
+    A <task-notification> naming no open launched-async agent is the free
+    drift signal that `_is_async_launch_ack`'s prefix match may have gone
+    stale.
+    """
+    consumer, _ = _consumer_with_transcript(monkeypatch)
+
+    with caplog.at_level(
+        "WARNING", logger="inspect_swe._claude_code._events.live_consumer"
+    ):
+        consumer.process_jsonl_line(_task_notification_jsonl("does-not-exist"))
+        consumer.process_jsonl_line(_task_notification_jsonl("also-does-not-exist"))
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "does-not-exist" in warnings[0].message

@@ -202,6 +202,13 @@ class LiveConsumer(ModelEventSink):
         self._requests_since_first_subagent_span = 0
         self._subagent_slug_drift_warned = False
 
+        # Drift canary for the async-launch-ack signal (see
+        # `_warn_unresolvable_task_notification`): whether we've already
+        # warned that a `<task-notification>` named a tool_use_id that
+        # isn't a currently-open launched-async agent -- warn once per
+        # consumer instance, not once per notification.
+        self._task_notification_drift_warned = False
+
     @property
     def last_stop_reason(self) -> StopReason | None:
         """Stop reason of the last completed model event this attempt."""
@@ -226,12 +233,13 @@ class LiveConsumer(ModelEventSink):
         balanced even if Claude Code crashed before its tool_result blocks
         were written.
 
-        Deliberately does NOT clear the subagent-slug drift canary fields
+        Deliberately does NOT clear the drift canary fields
         (`_subagent_slug_seen`, `_first_subagent_span_seen`,
-        `_subagent_slug_drift_warned`, `_requests_since_first_subagent_span`)
-        -- they track this consumer instance's lifetime, not any single
-        attempt, so a slug sighting (or a warning already issued) from
-        before a retry must still suppress/count against later attempts.
+        `_subagent_slug_drift_warned`, `_requests_since_first_subagent_span`,
+        `_task_notification_drift_warned`) -- they track this consumer
+        instance's lifetime, not any single attempt, so a slug sighting (or
+        a warning already issued) from before a retry must still
+        suppress/count against later attempts.
         """
         for tool_use_id in reversed(list(self._open_agents.keys())):
             agent = self._open_agents.pop(tool_use_id)
@@ -339,11 +347,37 @@ class LiveConsumer(ModelEventSink):
 
         Safety net for async Task agents: if the prompt-match fails but the
         request is structurally known to be sub-agent traffic (its slug is
-        `models.subagent` -- see `classify`'s truth table) and there is
-        exactly one async-launched agent currently open, attribute to it --
-        unambiguous by construction. Zero or multiple open async agents fall
-        back to the outer span like any other unmatched call; this only
-        covers the single-async-agent case, not concurrent async agents.
+        `models.subagent` -- see `classify`'s truth table), there is exactly
+        one async-launched agent currently open, AND it is the *only* open
+        agent of any kind (no concurrently-open sync agent it could be
+        confused with), attribute to it. Requiring sole occupancy of
+        `_open_agents` -- not just sole occupancy among async agents -- is
+        what makes this unambiguous: a concurrently-open sync agent with an
+        unmatchable prompt (below `_MIN_PROMPT_LENGTH`, or substring-
+        overlapping another) would otherwise let this net misattribute that
+        sync agent's own traffic to the async one. Any other combination
+        (zero async agents open, multiple open agents of any kind) falls
+        back to the outer span like any other unmatched call.
+
+        Known limitation (deferred, not implemented): Claude Code lets a
+        user resume a *completed* async agent via SendMessage (the
+        launch-ack text includes "Use SendMessage with to: '<agentId>' ...
+        to continue this agent", and a `<task-notification>`'s own
+        `<note>` says "the same task-id may notify more than once"). If a
+        resumed agent's continuation calls arrive after its span already
+        closed on `<task-notification>`, and some other async agent
+        happens to be the sole open agent at that moment, this safety net
+        would attribute the resumed agent's traffic to that *other* open
+        agent -- wrong-sibling attribution again, just via a different
+        path than the bug this net was added to guard against. Fixing this
+        would need a "tombstone": retaining a closed async agent's
+        span_id (keyed by its tool_use_id/agentId) for some bounded window
+        after close, so a later resume can still correlate to its own
+        (closed, but reopenable) span rather than falling through to the
+        net. Judged out of scope here -- the resume flow isn't exercised
+        by the recorded log this fix is based on, and a tombstone adds
+        real state (eviction policy, reopen-vs-new-span semantics) for a
+        case that hasn't been observed live yet.
         """
         tool_use_id = self._match_pending_prompt(input_messages)
         if tool_use_id is not None:
@@ -352,12 +386,14 @@ class LiveConsumer(ModelEventSink):
                 return agent.span_id
 
         request = current_bridge_request()
-        if request is not None and request.model == self._models.subagent:
-            async_agents = [
-                agent for agent in self._open_agents.values() if agent.launched_async
-            ]
-            if len(async_agents) == 1:
-                return async_agents[0].span_id
+        if (
+            request is not None
+            and request.model == self._models.subagent
+            and len(self._open_agents) == 1
+        ):
+            (only_agent,) = self._open_agents.values()
+            if only_agent.launched_async:
+                return only_agent.span_id
 
         return self.outer_span_id
 
@@ -578,31 +614,65 @@ class LiveConsumer(ModelEventSink):
         return text.startswith(_ASYNC_LAUNCH_ACK_PREFIX)
 
     def _handle_task_notification(self, text: str) -> None:
-        """Close an async Task's span on its genuine completion signal.
+        """Close async Tasks' spans on their genuine completion signal.
 
         See `_TASK_NOTIFICATION_MARKER` / `_TASK_NOTIFICATION_TOOL_USE_ID_RE`
-        for provenance. Only closes agents already marked `launched_async`
-        (sync Tasks already closed on their real tool_result); if the
-        `<tool-use-id>` can't be parsed out, or names an agent we don't have
-        open, this is a no-op -- conservative by design, per the module docs:
-        an un-correlated async agent's span just stays open until `reset()`
-        closes it (innermost-first) rather than guessing which one finished.
+        for provenance. Scans for *every* `<tool-use-id>` in the text (not
+        just the first) since a batched turn can carry more than one
+        `<task-notification>` block -- e.g. two background agents finishing
+        close together and both notifications landing in the same JSONL
+        "user" line. Only closes agents already marked `launched_async`
+        (sync Tasks already closed on their real tool_result); if a
+        `<tool-use-id>` names an agent we don't have open (or don't have
+        marked launched-async), that one notification is a no-op --
+        conservative by design, per the module docs: an un-correlated async
+        agent's span just stays open until `reset()` closes it (innermost-
+        first) rather than guessing which one finished. That no-op is also
+        the live signature of `_is_async_launch_ack`'s prefix match having
+        gone stale (see `_warn_unresolvable_task_notification`).
         """
         if _TASK_NOTIFICATION_MARKER not in text:
             return
 
-        match = _TASK_NOTIFICATION_TOOL_USE_ID_RE.search(text)
-        if match is None:
-            return
-        tool_use_id = match.group(1)
-
-        agent = self._open_agents.get(tool_use_id)
-        if agent is None or not agent.launched_async:
+        matches = list(_TASK_NOTIFICATION_TOOL_USE_ID_RE.finditer(text))
+        if not matches:
             return
 
-        self._pending_subagents.pop(tool_use_id, None)
-        self._open_agents.pop(tool_use_id, None)
-        transcript()._event(SpanEndEvent(id=agent.span_id))
+        for match in matches:
+            tool_use_id = match.group(1)
+            agent = self._open_agents.get(tool_use_id)
+            if agent is None or not agent.launched_async:
+                self._warn_unresolvable_task_notification(tool_use_id)
+                continue
+
+            self._pending_subagents.pop(tool_use_id, None)
+            self._open_agents.pop(tool_use_id, None)
+            transcript()._event(SpanEndEvent(id=agent.span_id))
+
+    def _warn_unresolvable_task_notification(self, tool_use_id: str) -> None:
+        """Warn (once, per consumer instance) of an unresolvable notification.
+
+        A `<task-notification>` naming a `tool_use_id` that isn't a
+        currently-open launched-async agent is the free-standing signature
+        of `_is_async_launch_ack`'s prefix match having gone stale (CC
+        reworded the launch-ack text, so `_handle_tool_result` never marked
+        the agent `launched_async` in the first place) -- the same failure
+        mode `_check_subagent_slug_drift` guards for the subagent-slug
+        signal. Silently no-op'ing forever would let async spans quietly
+        stop closing on notification (falling back to `reset()` only) with
+        nothing surfaced; this warns once instead.
+        """
+        if self._task_notification_drift_warned:
+            return
+        self._task_notification_drift_warned = True
+        logger.warning(
+            "claude code <task-notification> named tool_use_id %r that "
+            "isn't a currently-open launched-async agent -- async-launch-ack "
+            "detection may have gone stale (CC changed the launch-ack "
+            "text), or the notification arrived after the agent's span "
+            "already closed",
+            tool_use_id,
+        )
 
     def _handle_system(self, raw: dict[str, Any]) -> None:
         """Handle system events (only compaction boundaries today).
