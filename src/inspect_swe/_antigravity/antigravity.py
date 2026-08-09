@@ -319,6 +319,9 @@ def antigravity(
             retry_refusals=retry_refusals,
             port=bridge_port,
             bridged_tools=bridged_tools,
+            # granted unconditionally to preserve today's behaviour; a grant is
+            # inert unless the CLI declares a native web tool
+            web_search=True,
         ) as bridge:
             sbox = sandbox_env(sandbox)
 
