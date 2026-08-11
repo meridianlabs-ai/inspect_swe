@@ -49,6 +49,19 @@ def test_modern_injected_messages_are_context(text: str) -> None:
     assert is_context_message(text)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A genuine user message may start with the AGENTS.md heading; only
+        # the full injected shape (with the closing marker) is context.
+        "# AGENTS.md instructions are being ignored, why?",
+        "# AGENTS.md instructions\n\nplease review my draft below",
+    ],
+)
+def test_agents_md_prefix_alone_is_genuine_user_speech(text: str) -> None:
+    assert not is_context_message(text)
+
+
 def test_context_messages_do_not_shift_rollback_boundary() -> None:
     scout_events = asyncio.run(
         _convert(
@@ -58,7 +71,11 @@ def test_context_messages_do_not_shift_rollback_boundary() -> None:
                 _message("user", "<recommended_plugins>plugins</recommended_plugins>"),
                 _message("user", "second user turn"),
                 _message("assistant", "second response"),
-                _message("user", "# AGENTS.md instructions for /workspace"),
+                _message(
+                    "user",
+                    "# AGENTS.md instructions for /workspace\n\n"
+                    "<INSTRUCTIONS>be helpful</INSTRUCTIONS>",
+                ),
                 _line("event_msg", {"type": "thread_rolled_back", "num_turns": 1}),
                 _message("user", "replacement user turn"),
                 _message("assistant", "replacement response"),
@@ -72,6 +89,34 @@ def test_context_messages_do_not_shift_rollback_boundary() -> None:
     input_text = "\n".join(message.text for message in final_model_event.input)
     assert "first user turn" in input_text
     assert "second user turn" not in input_text
+    assert "second response" not in input_text
+    assert "replacement user turn" in input_text
+
+
+def test_genuine_agents_md_prefixed_turn_is_a_rollback_boundary() -> None:
+    """A real user message starting with the AGENTS.md heading (no closing
+    marker) must count as a genuine turn, so num_turns=1 rolls back only it."""
+    scout_events = asyncio.run(
+        _convert(
+            [
+                _message("user", "first user turn"),
+                _message("assistant", "first response"),
+                _message("user", "# AGENTS.md instructions are being ignored, why?"),
+                _message("assistant", "second response"),
+                _line("event_msg", {"type": "thread_rolled_back", "num_turns": 1}),
+                _message("user", "replacement user turn"),
+                _message("assistant", "replacement response"),
+            ]
+        )
+    )
+
+    final_model_event = next(
+        event for event in reversed(scout_events) if isinstance(event, ModelEvent)
+    )
+    input_text = "\n".join(message.text for message in final_model_event.input)
+    assert "first user turn" in input_text
+    assert "first response" in input_text
+    assert "AGENTS.md instructions are being ignored" not in input_text
     assert "second response" not in input_text
     assert "replacement user turn" in input_text
 

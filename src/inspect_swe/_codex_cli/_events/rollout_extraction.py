@@ -59,7 +59,13 @@ _CONTEXT_OPEN_TAGS = (
     "<turn_context>",
 )
 
-_CONTEXT_TEXT_PREFIXES = ("# AGENTS.md instructions",)
+# Injected AGENTS.md blocks are bare markdown: a "# AGENTS.md instructions"
+# heading followed by the file contents wrapped in <INSTRUCTIONS> markers.
+# Codex's own classifiers (codex-rs/memories/write/src/phase1.rs) require both
+# the heading and the closing marker, so we do too — a genuine user message
+# could plausibly start with the heading alone.
+_AGENTS_MD_PREFIX = "# AGENTS.md instructions"
+_AGENTS_MD_CLOSE = "</INSTRUCTIONS>"
 
 # Genuine user text bundled with context blocks is prefixed with this marker.
 USER_MESSAGE_BEGIN = "## My request for Codex:"
@@ -71,10 +77,12 @@ def is_context_message(text: str) -> bool:
     Messages that contain the ``USER_MESSAGE_BEGIN`` marker carry genuine
     user text after the context prefix, so they are user speech.
     """
-    stripped = text.lstrip()
     if USER_MESSAGE_BEGIN in text:
         return False
-    return stripped.startswith((*_CONTEXT_OPEN_TAGS, *_CONTEXT_TEXT_PREFIXES))
+    stripped = text.lstrip()
+    if stripped.startswith(_CONTEXT_OPEN_TAGS):
+        return True
+    return stripped.startswith(_AGENTS_MD_PREFIX) and _AGENTS_MD_CLOSE in stripped
 
 
 # ── content conversion ───────────────────────────────────────────────────
