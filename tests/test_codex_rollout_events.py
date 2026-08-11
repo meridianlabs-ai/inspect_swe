@@ -144,6 +144,49 @@ def test_genuine_agents_md_prefixed_turn_is_a_rollback_boundary() -> None:
     assert "replacement user turn" in input_text
 
 
+def test_model_event_usage_is_set_when_yielded() -> None:
+    """Streaming consumers may serialize each event as it arrives, so usage
+    must be attached before the ModelEvent is yielded, not after."""
+    parsed = parse_rollout_events(
+        [
+            _message("user", "hi"),
+            _message("assistant", "hello"),
+            _line(
+                "event_msg",
+                {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {"total_tokens": 30},
+                        "last_token_usage": {
+                            "input_tokens": 20,
+                            "output_tokens": 10,
+                            "total_tokens": 30,
+                        },
+                    },
+                },
+            ),
+            _message("user", "thanks"),
+            _message("assistant", "any time"),
+        ]
+    )
+
+    async def stream() -> list[tuple[ModelEvent, bool]]:
+        seen: list[tuple[ModelEvent, bool]] = []
+        async for event in process_rollout_events(parsed):
+            if isinstance(event, ModelEvent):
+                seen.append((event, event.output.usage is not None))
+        return seen
+
+    seen = asyncio.run(stream())
+    assert len(seen) == 2
+    first_event, first_had_usage = seen[0]
+    assert first_had_usage, "usage must be present at yield time"
+    assert first_event.output.usage is not None
+    assert first_event.output.usage.total_tokens == 30
+    # the second response has no token_count after it
+    assert seen[1][0].output.usage is None
+
+
 def test_subagent_activity_links_modern_spawn_result_to_child_thread() -> None:
     loader_calls: list[tuple[str, int]] = []
 

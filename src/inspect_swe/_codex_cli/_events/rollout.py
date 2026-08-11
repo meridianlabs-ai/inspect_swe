@@ -17,7 +17,9 @@ parsed rollout lines in file order, reconstructing what the model saw
 - ``thread_rolled_back`` (undo) truncates accumulated messages so subsequent
   ``ModelEvent.input`` reflects what the model actually saw; already-emitted
   events stay in the timeline with an InfoEvent marking the boundary
-- ``token_count`` events attach usage to the most recent ModelEvent
+- ``token_count`` events supply each ModelEvent's usage; the usage is looked
+  ahead at flush time so events are complete when yielded (consumers may
+  serialize them as they stream)
 
 Unlike Claude Code there is no uuid/parentUuid tree (rollouts are
 append-ordered) and no shared-id consolidation (one model response is a run
@@ -41,7 +43,7 @@ from inspect_ai.event import (
     SpanEndEvent,
     ToolEvent,
 )
-from inspect_ai.model import Content, ContentText, ModelOutput
+from inspect_ai.model import Content, ContentText, ModelOutput, ModelUsage
 from inspect_ai.model._chat_message import (
     ChatMessage,
     ChatMessageAssistant,
@@ -172,7 +174,6 @@ class _RolloutProcessor:
         # Buffered assistant-side items awaiting flush into one ModelEvent
         self.assistant_buffer: list[RolloutEvent] = []
         self.buffer_timestamp: datetime | None = None
-        self.last_model_event: ModelEvent | None = None
         self.current_model: str | None = None
         self.last_total_tokens: int | None = None
         self.last_timestamp: datetime = _EPOCH
@@ -208,8 +209,11 @@ class _RolloutProcessor:
             self.buffer_timestamp = timestamp
         self.assistant_buffer.append(event)
 
-    def flush_model(self) -> list[Event]:
+    def flush_model(self, usage: ModelUsage | None = None) -> list[Event]:
         """Convert buffered assistant-side items into a ModelEvent.
+
+        ``usage`` comes from the caller's lookahead to the response's
+        ``token_count`` event, so the ModelEvent is complete when yielded.
 
         Also emits self-contained spans for hosted ``web_search_call`` items
         (which have no separate output item) and registers pending tool
@@ -345,6 +349,7 @@ class _RolloutProcessor:
             config=GenerateConfig(),
             output=ModelOutput(
                 model=model,
+                usage=usage,
                 choices=[
                     ChatCompletionChoice(
                         message=output_message, stop_reason=stop_reason
@@ -354,7 +359,6 @@ class _RolloutProcessor:
             timestamp=timestamp,
         )
         self.accumulated_messages.append(output_message)
-        self.last_model_event = model_event
 
         return [model_event, *web_search_events]
 
@@ -556,16 +560,13 @@ class _RolloutProcessor:
         return [compaction]
 
     def process_token_count(self, event: TokenCountEvent) -> None:
-        """Attach usage to the most recent ModelEvent."""
+        """Track the cumulative total (per-response usage is attached by the
+        flush-time lookahead in ``process_rollout_events``)."""
         if not event.info:
             return
         total = total_tokens_from_token_info(event.info)
         if total is not None:
             self.last_total_tokens = total
-        if self.last_model_event is not None:
-            usage = usage_from_token_info(event.info)
-            if usage is not None and self.last_model_event.output.usage is None:
-                self.last_model_event.output.usage = usage
 
     def process_rolled_back(
         self, event: ThreadRolledBackEvent, timestamp: datetime
@@ -748,16 +749,30 @@ async def process_rollout_events(
     """
     proc = _RolloutProcessor(max_depth=max_depth, child_loader=child_loader)
 
-    for event in events:
+    def lookahead_usage(start: int) -> ModelUsage | None:
+        """Usage for the response being flushed: the first usage-bearing
+        token_count at/after ``start``, before the next model response."""
+        for ahead in events[start:]:
+            if proc.is_assistant_side(ahead):
+                return None
+            if isinstance(ahead, TokenCountEvent) and ahead.info:
+                usage = usage_from_token_info(ahead.info)
+                if usage is not None:
+                    return usage
+        return None
+
+    for index, event in enumerate(events):
         timestamp = proc.update_timestamp(event)
 
         if proc.is_assistant_side(event):
             proc.buffer_assistant(event, timestamp)
             continue
 
-        # Boundary item: flush any buffered model response first
-        for evt in proc.flush_model():
-            yield evt
+        # Boundary item: flush any buffered model response first (with its
+        # usage looked ahead, so the ModelEvent is complete when yielded)
+        if proc.assistant_buffer:
+            for evt in proc.flush_model(usage=lookahead_usage(index)):
+                yield evt
 
         if isinstance(event, ResponseMessage):
             proc.process_user_message(event)
