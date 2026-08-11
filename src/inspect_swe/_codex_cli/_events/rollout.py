@@ -539,7 +539,9 @@ class _RolloutProcessor:
         if event.replacement_history is not None:
             self.accumulated_messages = history_to_messages(event.replacement_history)
         elif event.message:
-            self.accumulated_messages = [ChatMessageAssistant(content=event.message)]
+            # Codex re-injects the summary as a user-role bridge message
+            # (codex-rs build_compacted_history), so mirror that role.
+            self.accumulated_messages = [ChatMessageUser(content=event.message)]
         else:
             self.accumulated_messages = []
         self.user_turn_starts = []

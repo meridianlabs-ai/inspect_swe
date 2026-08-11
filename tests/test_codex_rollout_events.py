@@ -144,6 +144,32 @@ def test_genuine_agents_md_prefixed_turn_is_a_rollback_boundary() -> None:
     assert "replacement user turn" in input_text
 
 
+def test_compaction_summary_without_replacement_history_is_user_role() -> None:
+    """Codex re-injects the compaction summary via a user-role bridge message
+    (build_compacted_history), so the accumulated context must match."""
+    scout_events = asyncio.run(
+        _convert(
+            [
+                _message("user", "long conversation"),
+                _message("assistant", "long response"),
+                _line("compacted", {"message": "summary of the thread"}),
+                _message("user", "next question"),
+                _message("assistant", "next answer"),
+            ]
+        )
+    )
+
+    final_model_event = next(
+        event for event in reversed(scout_events) if isinstance(event, ModelEvent)
+    )
+    summary = next(
+        message
+        for message in final_model_event.input
+        if "summary of the thread" in message.text
+    )
+    assert summary.role == "user"
+
+
 def test_model_event_usage_is_set_when_yielded() -> None:
     """Streaming consumers may serialize each event as it arrives, so usage
     must be attached before the ModelEvent is yielded, not after."""
