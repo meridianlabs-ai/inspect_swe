@@ -53,6 +53,7 @@ from .agentbinary import (
     codex_models_catalog,
 )
 from .config import (
+    MCP_STARTUP_TIMEOUT_SEC,
     CodexApprovalPolicy,
     CodexAutoReview,
     CodexDeprecatedArgs,
@@ -96,6 +97,7 @@ def codex_cli(
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
+    mcp_startup_timeout: int | None = MCP_STARTUP_TIMEOUT_SEC,
     web_search: CodexWebSearch = "live",
     goals: bool = True,
     auto_review: bool | CodexAutoReview = False,
@@ -141,6 +143,8 @@ def codex_cli(
             tools available to the agent running in the sandbox.
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
+        mcp_startup_timeout: Seconds Codex waits for bridged MCP server startup.
+            Defaults to 300; pass `None` to use Codex's default.
         web_search: Web search mode. Use "live" for live web search, "cached" for cached web search, or "disabled" to disable web search. Defaults to "live".
         goals: Enable Codex goal tools (defaults to `True`).
         auto_review: Enable Codex automated approval review (guardian). When enabled,
@@ -566,6 +570,7 @@ def codex_cli(
                     bridged_server_names,
                     effective_approval_policy,
                     force_approve=approve_static_mcp_tools,
+                    bridged_startup_timeout=mcp_startup_timeout,
                 )
             )
             toml_config.update(
@@ -574,6 +579,7 @@ def codex_cli(
                     bridged_server_names,
                     effective_approval_policy,
                     force_approve=True,
+                    bridged_startup_timeout=mcp_startup_timeout,
                 )
             )
 

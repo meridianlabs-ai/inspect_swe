@@ -7,6 +7,8 @@ from inspect_ai.tool import MCPServerConfig
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
 
+MCP_STARTUP_TIMEOUT_SEC = 300
+
 CodexWebSearch = Literal["live", "cached", "disabled"]
 
 
@@ -386,7 +388,9 @@ def resolve_codex_sandbox_mode(
 
 
 def codex_mcp_server_config(
-    mcp_server: MCPServerConfig, bridged_server_names: AbstractSet[str]
+    mcp_server: MCPServerConfig,
+    bridged_server_names: AbstractSet[str],
+    bridged_startup_timeout: int | None,
 ) -> dict[str, Any]:
     """TOML table for one `mcp_servers.<name>` entry in codex config.
 
@@ -402,6 +406,8 @@ def codex_mcp_server_config(
     server_config = mcp_server.model_dump(exclude={"name", "tools"}, exclude_none=True)
     if mcp_server.name in bridged_server_names:
         server_config["required"] = True
+        if bridged_startup_timeout is not None:
+            server_config["startup_timeout_sec"] = bridged_startup_timeout
     return server_config
 
 
@@ -410,6 +416,7 @@ def codex_mcp_servers_toml(
     bridged_server_names: AbstractSet[str],
     approval_policy: CodexApprovalPolicy,
     force_approve: bool,
+    bridged_startup_timeout: int | None,
 ) -> dict[str, dict[str, Any]]:
     """Build `[mcp_servers.<name>]` TOML tables for one class of MCP server.
 
@@ -423,11 +430,15 @@ def codex_mcp_servers_toml(
     return {
         f"mcp_servers.{mcp_server.name}": (
             codex_mcp_server_toml(
-                codex_mcp_server_config(mcp_server, bridged_server_names),
+                codex_mcp_server_config(
+                    mcp_server, bridged_server_names, bridged_startup_timeout
+                ),
                 approval_policy,
             )
             if force_approve
-            else codex_mcp_server_config(mcp_server, bridged_server_names)
+            else codex_mcp_server_config(
+                mcp_server, bridged_server_names, bridged_startup_timeout
+            )
         )
         for mcp_server in mcp_servers
     }

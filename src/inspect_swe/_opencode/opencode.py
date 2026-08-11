@@ -23,7 +23,10 @@ from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
-from inspect_swe._util.mcp_ready import DEFAULT_MCP_READY_TIMEOUT, wait_for_mcp_endpoints
+from inspect_swe._util.mcp_ready import (
+    DEFAULT_MCP_READY_TIMEOUT,
+    wait_for_mcp_endpoints,
+)
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace

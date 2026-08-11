@@ -21,7 +21,10 @@ from inspect_ai.tool import MCPServerConfig, MCPServerConfigHTTP
 from inspect_ai.util import ExecRemoteProcess
 from typing_extensions import TypedDict, Unpack
 
-from inspect_swe._util.mcp_ready import DEFAULT_MCP_READY_TIMEOUT, wait_for_mcp_endpoints
+from inspect_swe._util.mcp_ready import (
+    DEFAULT_MCP_READY_TIMEOUT,
+    wait_for_mcp_endpoints,
+)
 
 from .client import ACPError, acp_connection, format_acp_failure
 
@@ -114,7 +117,9 @@ class ACPAgent(Agent):
         self.sandbox = kwargs.get("sandbox")
         mcp_ready_timeout = kwargs.get("mcp_ready_timeout")
         self.mcp_ready_timeout = (
-            DEFAULT_MCP_READY_TIMEOUT if mcp_ready_timeout is None else mcp_ready_timeout
+            DEFAULT_MCP_READY_TIMEOUT
+            if mcp_ready_timeout is None
+            else mcp_ready_timeout
         )
 
         self.model_map: dict[str, str | Model] = self._build_model_map()
