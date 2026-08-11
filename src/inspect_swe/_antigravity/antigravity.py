@@ -360,7 +360,7 @@ def antigravity(
             ]
             if bridged_http_configs:
                 await wait_for_mcp_endpoints(
-                    bridged_http_configs, bridge, required=True
+                    bridged_http_configs, bridge, sandbox=sandbox, required=True
                 )
 
             prompt, has_assistant_response = build_user_prompt(state.messages)

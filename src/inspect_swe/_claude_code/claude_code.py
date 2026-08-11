@@ -377,6 +377,16 @@ def claude_code(
             api_key = agent_env.get("ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge")
             await _seed_claude_config(sbox, api_key, user, agent_cwd)
 
+            # Pre-launch MCP readiness gate. Both centaur (interactive) and
+            # non-centaur retry-loop launches read the MCP config at startup,
+            # so both need the bridge endpoints answering tools/list before
+            # the agent's own MCP timer starts. This covers cold start; the
+            # per-attempt gate below covers unattended retries after that.
+            if http_mcp_configs:
+                await wait_for_mcp_endpoints(
+                    http_mcp_configs, bridge, sandbox=sandbox, required=True
+                )
+
             # centaur mode uses human_cli with custom instructions and bash rc
             if centaur:
                 await run_claude_code_centaur(
@@ -442,17 +452,19 @@ def claude_code(
                         # tool_result), so SpanBegin/End stay balanced.
                         consumer.reset()
 
-                        # Wait for bridge MCP endpoints before (re)launching.
-                        # This loop restarts the Claude Code subprocess with
-                        # --resume; the proxy may not be reachable yet, and a
-                        # resumed session that starts without its MCP tools
-                        # fails SILENTLY -- the agent just sees "No such tool
-                        # available" and its output gets graded as a normal
+                        # Per-attempt gate: on unattended retries after this
+                        # loop restarts with --resume, the bridge could have
+                        # been restarted or briefly lost tool visibility. The
+                        # pre-centaur gate above only covered cold start;
+                        # this call is a no-op when endpoints are still ready.
+                        # A resumed session that starts without its MCP tools
+                        # fails SILENTLY -- the agent sees "No such tool
+                        # available" and its output is graded as a normal
                         # (toolless) sample. Raises if unreachable so the
                         # sample errors instead of being scored.
                         if http_mcp_configs:
                             await wait_for_mcp_endpoints(
-                                http_mcp_configs, bridge, required=True
+                                http_mcp_configs, bridge, sandbox=sandbox, required=True
                             )
 
                         # launch Claude Code in streaming mode; drain stdout in

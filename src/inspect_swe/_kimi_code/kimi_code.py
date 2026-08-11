@@ -295,6 +295,21 @@ def kimi_code(
                 "HOME": sandbox_home,
             } | (env or {})
 
+            # Compute bridged HTTP configs once at the outer scope so both the
+            # centaur and non-centaur paths use the same gated set. Kimi's
+            # centaur mode is fire-and-forget on MCP connect (documented as by
+            # design) and exposes no client-side blocking knob, so a slow
+            # bridge would race the first turn without this pre-launch gate.
+            _http_mcp_configs = [
+                c
+                for c in bridge.mcp_server_configs
+                if isinstance(c, MCPServerConfigHTTP)
+            ]
+            if _http_mcp_configs:
+                await wait_for_mcp_endpoints(
+                    _http_mcp_configs, bridge, sandbox=sandbox, required=True
+                )
+
             if centaur:
                 await _run_kimi_code_centaur(
                     options=centaur,
@@ -316,19 +331,14 @@ def kimi_code(
                         agent_cmd.append("--continue")
                     agent_cmd += ["-p", agent_prompt]
 
-                    # Bridged MCP endpoints must be live BEFORE launch: this
-                    # agent reads its MCP config at startup, and the bridge
-                    # proxy starts asynchronously. Launching early yields an
-                    # agent with no bridged tools and NO error, whose output is
-                    # then scored as a valid trajectory. Raises if unreachable.
-                    _http_mcp_configs = [
-                        c
-                        for c in bridge.mcp_server_configs
-                        if isinstance(c, MCPServerConfigHTTP)
-                    ]
+                    # Per-attempt gate: on unattended retries after this
+                    # loop restarts, the bridge could have been restarted or
+                    # briefly lost tool visibility; the pre-centaur gate above
+                    # only covered cold start. This call is a no-op when the
+                    # endpoints are still ready.
                     if _http_mcp_configs:
                         await wait_for_mcp_endpoints(
-                            _http_mcp_configs, bridge, required=True
+                            _http_mcp_configs, bridge, sandbox=sandbox, required=True
                         )
 
                     # NOTE: endpoint readiness is the strongest guarantee

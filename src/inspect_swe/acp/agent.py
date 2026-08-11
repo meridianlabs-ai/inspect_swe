@@ -209,7 +209,10 @@ class ACPAgent(Agent):
                     ]
                     if bridged_http_configs:
                         await wait_for_mcp_endpoints(
-                            bridged_http_configs, bridge, required=True
+                            bridged_http_configs,
+                            bridge,
+                            sandbox=self.sandbox,
+                            required=True,
                         )
 
                     async with acp_connection(proc) as (conn, feeder, error_info):

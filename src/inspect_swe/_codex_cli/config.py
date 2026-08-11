@@ -166,7 +166,7 @@ def codex_mcp_server_config(
 ) -> dict[str, Any]:
     """TOML table for one `mcp_servers.<name>` entry in codex config.
 
-    Bridged servers are marked `required = true`: codex >= 0.119.0 then blocks
+    Bridged servers are marked `required = true`: codex >= 0.99.0 then blocks
     session init on their initialize+tools/list and `codex exec` exits non-zero
     if one fails to come up, closing the client-connect half of the first-turn
     race (`wait_for_mcp_endpoints` covers the endpoint half; Claude Code's

@@ -203,6 +203,21 @@ def gemini_cli(
                 "HOME": sandbox_home,  # Use detected sandbox home for config + npm cache
             } | (env or {})
 
+            # Compute bridged HTTP configs once at the outer scope so both the
+            # centaur and non-centaur paths gate on the same set. Gemini CLI's
+            # headless mode blocks the first turn on MCP connect, but the
+            # endpoint has to be answering `tools/list` first -- this pre-launch
+            # gate covers the endpoint half in both centaur and non-centaur modes.
+            _http_mcp_configs = [
+                c
+                for c in bridge.mcp_server_configs
+                if isinstance(c, MCPServerConfigHTTP)
+            ]
+            if _http_mcp_configs:
+                await wait_for_mcp_endpoints(
+                    _http_mcp_configs, bridge, sandbox=sandbox, required=True
+                )
+
             if centaur:
                 await _run_gemini_cli_centaur(
                     options=centaur,
@@ -226,22 +241,15 @@ def gemini_cli(
                     # add prompt as positional argument at the end
                     agent_cmd.append(agent_prompt)
 
-                    # run agent
-                    # Bridged MCP endpoints must be live BEFORE launch: this
-                    # agent reads its MCP config at startup, and the bridge
-                    # proxy starts asynchronously. Launching early yields an
-                    # agent with no bridged tools and NO error, whose output is
-                    # then scored as a valid trajectory. Raises if unreachable.
-                    _http_mcp_configs = [
-                        c
-                        for c in bridge.mcp_server_configs
-                        if isinstance(c, MCPServerConfigHTTP)
-                    ]
+                    # Per-attempt gate: on unattended retries after this loop
+                    # restarts, the bridge could have been restarted or briefly
+                    # lost tool visibility. The pre-centaur gate above only
+                    # covered cold start; this call is a no-op when the
+                    # endpoints are still ready.
                     if _http_mcp_configs:
                         await wait_for_mcp_endpoints(
-                            _http_mcp_configs, bridge, required=True
+                            _http_mcp_configs, bridge, sandbox=sandbox, required=True
                         )
-
                     result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,

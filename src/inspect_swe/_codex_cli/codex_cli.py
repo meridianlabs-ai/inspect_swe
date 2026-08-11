@@ -359,6 +359,22 @@ def codex_cli(
                 "RUST_LOG": "warning",
             } | (env or {})
 
+            # Compute bridged HTTP configs once at the outer scope so both the
+            # centaur and non-centaur paths gate on the same set. Codex closes
+            # the client-connect half of the first-turn race with
+            # `required = true` on bridged servers (see codex_mcp_server_config),
+            # but that only helps once the endpoint is answering; the pre-launch
+            # gate covers the endpoint half in both centaur and non-centaur modes.
+            _http_mcp_configs = [
+                c
+                for c in bridge.mcp_server_configs
+                if isinstance(c, MCPServerConfigHTTP)
+            ]
+            if _http_mcp_configs:
+                await wait_for_mcp_endpoints(
+                    _http_mcp_configs, bridge, sandbox=sandbox, required=True
+                )
+
             if centaur:
                 await _run_codex_cli_centaur(
                     options=centaur,
@@ -386,20 +402,14 @@ def codex_cli(
                     ):
                         agent_cmd.extend(["resume", "--last"])
 
-                    # run agent
-                    # Bridged MCP endpoints must be live BEFORE launch: this
-                    # agent reads its MCP config at startup, and the bridge
-                    # proxy starts asynchronously. Launching early yields an
-                    # agent with no bridged tools and NO error, whose output is
-                    # then scored as a valid trajectory. Raises if unreachable.
-                    _http_mcp_configs = [
-                        c
-                        for c in bridge.mcp_server_configs
-                        if isinstance(c, MCPServerConfigHTTP)
-                    ]
+                    # Per-attempt gate: on unattended retries after this loop
+                    # restarts, the bridge could have been restarted or briefly
+                    # lost tool visibility; the pre-centaur gate above only
+                    # covered cold start. This call is a no-op when the
+                    # endpoints are still ready.
                     if _http_mcp_configs:
                         await wait_for_mcp_endpoints(
-                            _http_mcp_configs, bridge, required=True
+                            _http_mcp_configs, bridge, sandbox=sandbox, required=True
                         )
 
                     result = await sbox.exec_remote(
