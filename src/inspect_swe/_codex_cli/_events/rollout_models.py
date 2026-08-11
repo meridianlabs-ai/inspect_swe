@@ -73,7 +73,6 @@ class SessionMetaEvent(RolloutEvent):
     # "cli" | "vscode" | "exec" | "mcp" | {"custom": ...} | {"subagent": ...} | ...
     source: str | dict[str, Any] | None = None
     agent_nickname: str | None = None
-    agent_path: str | None = None
     agent_role: str | None = None
     model_provider: str | None = None
     # Modern field is base_instructions ({"text": ...}); very old files used

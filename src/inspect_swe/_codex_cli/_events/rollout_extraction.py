@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from logging import getLogger
 from typing import Any
 
-from inspect_ai.event import Event, ModelEvent
 from inspect_ai.model import (
     Content,
     ContentImage,
@@ -20,6 +19,9 @@ from inspect_ai.model._chat_message import (
 )
 from inspect_ai.model._model_output import ModelUsage
 
+# Re-exported here because scout's codex importer sums tokens alongside the
+# other rollout extraction helpers (single implementation in _util.events).
+from ..._util.events import sum_scout_tokens as sum_scout_tokens
 from .rollout_models import ResponseReasoning
 
 logger = getLogger(__name__)
@@ -271,16 +273,6 @@ def total_tokens_from_token_info(info: dict[str, Any]) -> int | None:
         if isinstance(value, int):
             return value
     return None
-
-
-def sum_scout_tokens(events: list[Event]) -> int:
-    """Sum total tokens across all ModelEvents (including nested agents)."""
-    total = 0
-    for event in events:
-        if isinstance(event, ModelEvent):
-            if event.output and event.output.usage:
-                total += event.output.usage.total_tokens
-    return total
 
 
 # ── replacement history conversion ───────────────────────────────────────

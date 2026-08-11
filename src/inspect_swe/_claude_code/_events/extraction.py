@@ -7,7 +7,6 @@ information from Claude Code events.
 from logging import getLogger
 from typing import Any
 
-from inspect_ai.event import Event, ModelEvent
 from inspect_ai.model import (
     Content,
     ContentImage,
@@ -20,6 +19,9 @@ from inspect_ai.model._chat_message import (
 )
 from inspect_ai.tool import ToolCall
 
+# Re-exported here because scout's claude-code importer sums tokens alongside
+# the other extraction helpers (single implementation in _util.events).
+from ..._util.events import sum_scout_tokens as sum_scout_tokens
 from .detection import (
     get_timestamp,
 )
@@ -377,21 +379,3 @@ def get_first_timestamp(events: list[BaseEvent]) -> str | None:
     timestamps.sort()
     return timestamps[0]
 
-
-def sum_scout_tokens(events: list[Event]) -> int:
-    """Sum total tokens from converted Scout ModelEvent objects.
-
-    Unlike sum_tokens() which only counts main-session BaseEvent tokens,
-    this counts tokens from all ModelEvents including loaded subagent events.
-
-    Args:
-        events: List of Inspect AI events
-
-    Returns:
-        Total token count across all ModelEvents
-    """
-    total = 0
-    for event in events:
-        if isinstance(event, ModelEvent) and event.output and event.output.usage:
-            total += event.output.usage.total_tokens
-    return total
