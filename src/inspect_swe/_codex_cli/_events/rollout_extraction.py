@@ -176,18 +176,26 @@ def output_to_result(
     exit_code is only known for the legacy form.
     """
     if isinstance(output, str):
-        # Legacy form: JSON-encoded object with output + metadata
+        # Legacy form: JSON-encoded object with output + metadata. Require the
+        # exact legacy shape (string output, no extra keys) — a genuine tool
+        # output can itself be JSON text (e.g. `cat config.json`) and must
+        # pass through verbatim rather than being unwrapped.
         if output.startswith("{"):
             try:
                 parsed = json.loads(output)
             except json.JSONDecodeError:
                 parsed = None
-            if isinstance(parsed, dict) and "output" in parsed:
+            if (
+                isinstance(parsed, dict)
+                and isinstance(parsed.get("output"), str)
+                and set(parsed.keys()) <= {"output", "metadata"}
+                and isinstance(parsed.get("metadata"), (dict, type(None)))
+            ):
                 metadata = parsed.get("metadata")
                 exit_code = (
                     metadata.get("exit_code") if isinstance(metadata, dict) else None
                 )
-                return str(parsed["output"]), (
+                return parsed["output"], (
                     exit_code if isinstance(exit_code, int) else None
                 )
         return output, None

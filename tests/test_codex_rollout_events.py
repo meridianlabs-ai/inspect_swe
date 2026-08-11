@@ -7,7 +7,10 @@ from typing import Any
 import pytest
 from inspect_ai.event import Event, ModelEvent, SpanBeginEvent
 from inspect_swe._codex_cli._events.rollout import process_rollout_events
-from inspect_swe._codex_cli._events.rollout_extraction import is_context_message
+from inspect_swe._codex_cli._events.rollout_extraction import (
+    is_context_message,
+    output_to_result,
+)
 from inspect_swe._codex_cli._events.rollout_models import (
     SubAgentActivityEvent,
     parse_rollout_events,
@@ -60,6 +63,26 @@ def test_modern_injected_messages_are_context(text: str) -> None:
 )
 def test_agents_md_prefix_alone_is_genuine_user_speech(text: str) -> None:
     assert not is_context_message(text)
+
+
+def test_output_to_result_unwraps_legacy_form() -> None:
+    legacy = '{"output": "hello\\n", "metadata": {"exit_code": 1, "duration_seconds": 0.2}}'
+    assert output_to_result(legacy) == ("hello\n", 1)
+    assert output_to_result('{"output": "ok"}') == ("ok", None)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Genuine tool output that happens to be JSON with an "output" key
+        # (e.g. `cat config.json`) must pass through verbatim.
+        '{"output": "x", "metadata": {"exit_code": 1}, "extra": true}',
+        '{"output": {"nested": 1}, "metadata": {"exit_code": 1}}',
+        '{"output": "x", "metadata": "not-a-dict"}',
+    ],
+)
+def test_output_to_result_passes_through_non_legacy_json(text: str) -> None:
+    assert output_to_result(text) == (text, None)
 
 
 def test_context_messages_do_not_shift_rollback_boundary() -> None:
