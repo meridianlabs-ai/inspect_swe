@@ -378,4 +378,3 @@ def get_first_timestamp(events: list[BaseEvent]) -> str | None:
     # Sort and return earliest
     timestamps.sort()
     return timestamps[0]
-

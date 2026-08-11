@@ -562,8 +562,11 @@ class _RolloutProcessor:
         return [compaction]
 
     def process_token_count(self, event: TokenCountEvent) -> None:
-        """Track the cumulative total (per-response usage is attached by the
-        flush-time lookahead in ``process_rollout_events``)."""
+        """Track the cumulative total.
+
+        Per-response usage is attached by the flush-time lookahead in
+        ``process_rollout_events``.
+        """
         if not event.info:
             return
         total = total_tokens_from_token_info(event.info)
@@ -752,8 +755,11 @@ async def process_rollout_events(
     proc = _RolloutProcessor(max_depth=max_depth, child_loader=child_loader)
 
     def lookahead_usage(start: int) -> ModelUsage | None:
-        """Usage for the response being flushed: the first usage-bearing
-        token_count at/after ``start``, before the next model response."""
+        """Usage for the response being flushed.
+
+        The first usage-bearing token_count at/after ``start``, before the
+        next model response.
+        """
         for ahead in events[start:]:
             if proc.is_assistant_side(ahead):
                 return None

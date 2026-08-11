@@ -66,7 +66,9 @@ def test_agents_md_prefix_alone_is_genuine_user_speech(text: str) -> None:
 
 
 def test_output_to_result_unwraps_legacy_form() -> None:
-    legacy = '{"output": "hello\\n", "metadata": {"exit_code": 1, "duration_seconds": 0.2}}'
+    legacy = (
+        '{"output": "hello\\n", "metadata": {"exit_code": 1, "duration_seconds": 0.2}}'
+    )
     assert output_to_result(legacy) == ("hello\n", 1)
     assert output_to_result('{"output": "ok"}') == ("ok", None)
 
@@ -117,8 +119,11 @@ def test_context_messages_do_not_shift_rollback_boundary() -> None:
 
 
 def test_genuine_agents_md_prefixed_turn_is_a_rollback_boundary() -> None:
-    """A real user message starting with the AGENTS.md heading (no closing
-    marker) must count as a genuine turn, so num_turns=1 rolls back only it."""
+    """AGENTS.md-heading user speech is a genuine turn.
+
+    A real user message starting with the AGENTS.md heading (no closing
+    marker) must count as a genuine turn, so num_turns=1 rolls back only it.
+    """
     scout_events = asyncio.run(
         _convert(
             [
@@ -145,8 +150,11 @@ def test_genuine_agents_md_prefixed_turn_is_a_rollback_boundary() -> None:
 
 
 def test_compaction_summary_without_replacement_history_is_user_role() -> None:
-    """Codex re-injects the compaction summary via a user-role bridge message
-    (build_compacted_history), so the accumulated context must match."""
+    """Compaction summary fallback carries the user role.
+
+    Codex re-injects the compaction summary via a user-role bridge message
+    (build_compacted_history), so the accumulated context must match.
+    """
     scout_events = asyncio.run(
         _convert(
             [
@@ -171,8 +179,11 @@ def test_compaction_summary_without_replacement_history_is_user_role() -> None:
 
 
 def test_model_event_usage_is_set_when_yielded() -> None:
-    """Streaming consumers may serialize each event as it arrives, so usage
-    must be attached before the ModelEvent is yielded, not after."""
+    """Usage is present on ModelEvents at yield time.
+
+    Streaming consumers may serialize each event as it arrives, so usage
+    must be attached before the ModelEvent is yielded, not after.
+    """
     parsed = parse_rollout_events(
         [
             _message("user", "hi"),
