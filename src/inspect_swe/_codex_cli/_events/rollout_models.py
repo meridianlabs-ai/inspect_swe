@@ -265,12 +265,17 @@ class ThreadRolledBackEvent(RolloutEvent):
 
 
 class SubAgentActivityEvent(RolloutEvent):
-    """A sub-agent lifecycle event linking a spawn call to its child thread."""
+    """A sub-agent lifecycle event linking a spawn call to its child thread.
+
+    The wire payload also carries ``kind`` ("started" | "interacted" |
+    "interrupted"); it is not declared because nothing consumes it — only
+    "started" events reuse the spawn call's id, which is what the
+    ``event_id`` correlation relies on.
+    """
 
     event_id: str
     agent_thread_id: str
     agent_path: str | None = None
-    kind: str | None = None
 
 
 class ReviewModeEvent(RolloutEvent):

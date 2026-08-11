@@ -29,6 +29,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
+from pathlib import PurePosixPath
 from typing import Any, Literal, Protocol
 
 from inspect_ai.event import (
@@ -123,8 +124,21 @@ class _PendingCall:
     spawn_agent_path: str | None = None
 
 
+def _str_arg(arguments: dict[str, Any], key: str) -> str | None:
+    """A truthy tool-call argument as a string, else None."""
+    value = arguments.get(key)
+    return str(value) if value else None
+
+
 def _spawn_result_thread_id(result: str) -> tuple[str | None, str | None]:
-    """Extract (thread_id, nickname) from a spawn_agent tool result."""
+    """Extract (thread_id, nickname) from a spawn_agent tool result.
+
+    V1 results carry ``{"agent_id": <thread uuid>, "nickname": ...}``; V2
+    results carry ``{"task_name": "/root/<name>", "nickname": ...}`` with no
+    thread id at all — the thread id then comes from the ``sub_agent_activity``
+    event instead (the task path is not a rollout thread id, so unlike
+    ``detection.spawn_result`` it is not used as one here).
+    """
     try:
         data = json.loads(result)
     except (json.JSONDecodeError, TypeError):
@@ -132,8 +146,10 @@ def _spawn_result_thread_id(result: str) -> tuple[str | None, str | None]:
     if isinstance(data, dict):
         agent_id = data.get("agent_id")
         nickname = data.get("nickname")
-        if isinstance(agent_id, str) and agent_id:
-            return agent_id, nickname if isinstance(nickname, str) else None
+        return (
+            agent_id if isinstance(agent_id, str) and agent_id else None,
+            nickname if isinstance(nickname, str) and nickname else None,
+        )
     return None, None
 
 
@@ -232,21 +248,18 @@ class _RolloutProcessor:
                         view=tool_view(item.name, arguments),
                     )
                 )
+                is_spawn = item.name == SPAWN_AGENT
                 self.pending_calls[item.call_id] = _PendingCall(
                     call_id=item.call_id,
                     function=item.name,
                     arguments=arguments,
                     timestamp=timestamp,
-                    is_spawn=item.name == SPAWN_AGENT,
+                    is_spawn=is_spawn,
                     spawn_agent_type=(
-                        str(arguments.get("agent_type"))
-                        if item.name == SPAWN_AGENT and arguments.get("agent_type")
-                        else None
+                        _str_arg(arguments, "agent_type") if is_spawn else None
                     ),
                     spawn_task_name=(
-                        str(arguments.get("task_name"))
-                        if item.name == SPAWN_AGENT and arguments.get("task_name")
-                        else None
+                        _str_arg(arguments, "task_name") if is_spawn else None
                     ),
                 )
             elif isinstance(item, ResponseLocalShellCall):
@@ -426,7 +439,10 @@ class _RolloutProcessor:
             )
             return
         pending.spawn_thread_id = event.agent_thread_id
-        pending.spawn_agent_path = event.agent_path
+        # agent_path is optional on the wire; never erase a previously bound
+        # path with a later event that omits it.
+        if event.agent_path:
+            pending.spawn_agent_path = event.agent_path
 
     async def _spawn_agent_span_events(
         self,
@@ -440,13 +456,31 @@ class _RolloutProcessor:
         result_text = result if isinstance(result, str) else ""
         result_thread_id, nickname = _spawn_result_thread_id(result_text)
         thread_id = pending.spawn_thread_id or result_thread_id
+        path_name = (
+            PurePosixPath(pending.spawn_agent_path).name
+            if pending.spawn_agent_path
+            else None
+        )
         agent_name = (
             nickname
             or pending.spawn_task_name
             or pending.spawn_agent_type
-            or (pending.spawn_agent_path or "").rsplit("/", maxsplit=1)[-1]
+            or path_name
             or "agent"
         )
+
+        # Same shape as the live bridge (consumer.py): keys present only when
+        # known, so consumers need not distinguish absent from None.
+        metadata = {
+            key: value
+            for key, value in {
+                "agent_type": pending.spawn_agent_type,
+                "task_name": pending.spawn_task_name,
+                "thread_id": thread_id,
+                "agent_path": pending.spawn_agent_path,
+            }.items()
+            if value is not None
+        }
 
         events: list[Event] = [
             _span_begin(
@@ -454,12 +488,7 @@ class _RolloutProcessor:
                 name=agent_name,
                 span_type="agent",
                 timestamp=pending.timestamp,
-                metadata={
-                    "agent_type": pending.spawn_agent_type,
-                    "task_name": pending.spawn_task_name,
-                    "thread_id": thread_id,
-                    "agent_path": pending.spawn_agent_path,
-                },
+                metadata=metadata or None,
             )
         ]
 
@@ -584,20 +613,35 @@ class _RolloutProcessor:
         error: ToolCallError | None = None,
         completed: datetime | None = None,
     ) -> list[Event]:
-        """Emit spans for tool calls that never received an output."""
+        """Emit spans for tool calls that never received an output.
+
+        Dangling spawn_agent calls (aborted turn, truncated file) still get
+        their agent span — the child thread id may already be bound from a
+        ``sub_agent_activity`` event, so its events remain reachable.
+        """
         events: list[Event] = []
         for pending in self.pending_calls.values():
-            events.extend(
-                _tool_span_events(
-                    call_id=pending.call_id,
-                    function=pending.function,
-                    arguments=pending.arguments,
-                    result="",
-                    error=error,
-                    timestamp=pending.timestamp,
-                    completed=completed or pending.timestamp,
+            if pending.is_spawn:
+                events.extend(
+                    await self._spawn_agent_span_events(
+                        pending,
+                        result="",
+                        error=error,
+                        timestamp=completed or pending.timestamp,
+                    )
                 )
-            )
+            else:
+                events.extend(
+                    _tool_span_events(
+                        call_id=pending.call_id,
+                        function=pending.function,
+                        arguments=pending.arguments,
+                        result="",
+                        error=error,
+                        timestamp=pending.timestamp,
+                        completed=completed or pending.timestamp,
+                    )
+                )
         self.pending_calls.clear()
         return events
 

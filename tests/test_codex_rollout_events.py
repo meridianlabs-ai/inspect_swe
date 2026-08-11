@@ -200,9 +200,132 @@ def test_subagent_activity_links_modern_spawn_result_to_child_thread() -> None:
         if isinstance(event, SpanBeginEvent) and event.type == "agent"
     )
     assert agent_span.name == "importer_qa_fixture"
+    # Keys are present only when known (same shape as the live bridge).
     assert agent_span.metadata == {
-        "agent_type": None,
         "task_name": "importer_qa_fixture",
         "thread_id": "019fed47-6294-7070-b852-b370a8e708cc",
         "agent_path": "/root/importer_qa_fixture",
     }
+
+
+def _spawn_lines(output: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """A spawn_agent call + activity event, optionally followed by its output."""
+    lines = [
+        _message("user", "delegate this"),
+        _line(
+            "response_item",
+            {
+                "type": "function_call",
+                "name": "spawn_agent",
+                "arguments": '{"task_name":"qa"}',
+                "call_id": "call_spawn",
+            },
+        ),
+        _line(
+            "event_msg",
+            {
+                "type": "sub_agent_activity",
+                "event_id": "call_spawn",
+                "agent_thread_id": "thread-1",
+                "agent_path": "/root/qa",
+                "kind": "started",
+            },
+        ),
+    ]
+    if output is not None:
+        lines.append(_line("response_item", output))
+    return lines
+
+
+@pytest.mark.parametrize(
+    "trailing_lines",
+    [
+        # Turn aborted before the spawn's output was written
+        [{"type": "event_msg", "payload": {"type": "turn_aborted", "reason": "user"}}],
+        # File truncated while the sub-agent was still running
+        [],
+    ],
+)
+def test_dangling_spawn_still_emits_agent_span_and_loads_child(
+    trailing_lines: list[dict[str, Any]],
+) -> None:
+    loader_calls: list[str] = []
+
+    async def fake_loader(thread_id: str, max_depth: int) -> list[Event]:
+        loader_calls.append(thread_id)
+        return []
+
+    lines = _spawn_lines(output=None) + [
+        _line(raw["type"], raw["payload"]) for raw in trailing_lines
+    ]
+
+    async def convert() -> list[Event]:
+        parsed = parse_rollout_events(lines)
+        return [
+            event
+            async for event in process_rollout_events(parsed, child_loader=fake_loader)
+        ]
+
+    scout_events = asyncio.run(convert())
+
+    assert loader_calls == ["thread-1"]
+    agent_span = next(
+        event
+        for event in scout_events
+        if isinstance(event, SpanBeginEvent) and event.type == "agent"
+    )
+    assert agent_span.name == "qa"
+    assert agent_span.metadata is not None
+    assert agent_span.metadata["thread_id"] == "thread-1"
+
+
+def test_later_activity_event_does_not_erase_agent_path() -> None:
+    lines = _spawn_lines(output=None)
+    # A second lifecycle event without agent_path must not erase the bound path
+    lines.append(
+        _line(
+            "event_msg",
+            {
+                "type": "sub_agent_activity",
+                "event_id": "call_spawn",
+                "agent_thread_id": "thread-1",
+            },
+        )
+    )
+    lines.append(
+        _line(
+            "response_item",
+            {
+                "type": "function_call_output",
+                "call_id": "call_spawn",
+                "output": '{"task_name":"/root/qa"}',
+            },
+        )
+    )
+
+    scout_events = asyncio.run(_convert(lines))
+    agent_span = next(
+        event
+        for event in scout_events
+        if isinstance(event, SpanBeginEvent) and event.type == "agent"
+    )
+    assert agent_span.metadata is not None
+    assert agent_span.metadata["agent_path"] == "/root/qa"
+
+
+def test_v2_spawn_result_nickname_names_the_agent_span() -> None:
+    """V2 results carry nickname without agent_id; the nickname must win."""
+    lines = _spawn_lines(
+        output={
+            "type": "function_call_output",
+            "call_id": "call_spawn",
+            "output": '{"task_name":"/root/qa","nickname":"Ivy"}',
+        }
+    )
+    scout_events = asyncio.run(_convert(lines))
+    agent_span = next(
+        event
+        for event in scout_events
+        if isinstance(event, SpanBeginEvent) and event.type == "agent"
+    )
+    assert agent_span.name == "Ivy"
