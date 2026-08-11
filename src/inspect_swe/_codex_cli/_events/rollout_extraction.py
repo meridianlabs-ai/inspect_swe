@@ -49,6 +49,7 @@ _CONTEXT_OPEN_TAGS = (
     "<apps_instructions>",
     "<skills_instructions>",
     "<plugins_instructions>",
+    "<recommended_plugins>",
     "<tools>",
     "<collaboration_mode>",
     "<multi_agent_mode>",
@@ -57,6 +58,8 @@ _CONTEXT_OPEN_TAGS = (
     "<context_window_guidance>",
     "<turn_context>",
 )
+
+_CONTEXT_TEXT_PREFIXES = ("# AGENTS.md instructions",)
 
 # Genuine user text bundled with context blocks is prefixed with this marker.
 USER_MESSAGE_BEGIN = "## My request for Codex:"
@@ -71,7 +74,7 @@ def is_context_message(text: str) -> bool:
     stripped = text.lstrip()
     if USER_MESSAGE_BEGIN in text:
         return False
-    return stripped.startswith(_CONTEXT_OPEN_TAGS)
+    return stripped.startswith((*_CONTEXT_OPEN_TAGS, *_CONTEXT_TEXT_PREFIXES))
 
 
 # ── content conversion ───────────────────────────────────────────────────

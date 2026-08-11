@@ -73,6 +73,7 @@ class SessionMetaEvent(RolloutEvent):
     # "cli" | "vscode" | "exec" | "mcp" | {"custom": ...} | {"subagent": ...} | ...
     source: str | dict[str, Any] | None = None
     agent_nickname: str | None = None
+    agent_path: str | None = None
     agent_role: str | None = None
     model_provider: str | None = None
     # Modern field is base_instructions ({"text": ...}); very old files used
@@ -263,6 +264,15 @@ class ThreadRolledBackEvent(RolloutEvent):
     num_turns: int = 0
 
 
+class SubAgentActivityEvent(RolloutEvent):
+    """A sub-agent lifecycle event linking a spawn call to its child thread."""
+
+    event_id: str
+    agent_thread_id: str
+    agent_path: str | None = None
+    kind: str | None = None
+
+
 class ReviewModeEvent(RolloutEvent):
     """An ``entered_review_mode`` / ``exited_review_mode`` event."""
 
@@ -291,6 +301,7 @@ _EVENT_MSG_TYPES: dict[str, type[RolloutEvent]] = {
     "turn_aborted": TurnAbortedEvent,
     "turn_complete": TurnCompleteEvent,
     "thread_rolled_back": ThreadRolledBackEvent,
+    "sub_agent_activity": SubAgentActivityEvent,
 }
 
 

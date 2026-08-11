@@ -79,6 +79,7 @@ from .rollout_models import (
     ReviewModeEvent,
     RolloutEvent,
     SessionMetaEvent,
+    SubAgentActivityEvent,
     ThreadRolledBackEvent,
     TokenCountEvent,
     TurnAbortedEvent,
@@ -117,6 +118,9 @@ class _PendingCall:
     timestamp: datetime
     is_spawn: bool = False
     spawn_agent_type: str | None = None
+    spawn_task_name: str | None = None
+    spawn_thread_id: str | None = None
+    spawn_agent_path: str | None = None
 
 
 def _spawn_result_thread_id(result: str) -> tuple[str | None, str | None]:
@@ -237,6 +241,11 @@ class _RolloutProcessor:
                     spawn_agent_type=(
                         str(arguments.get("agent_type"))
                         if item.name == SPAWN_AGENT and arguments.get("agent_type")
+                        else None
+                    ),
+                    spawn_task_name=(
+                        str(arguments.get("task_name"))
+                        if item.name == SPAWN_AGENT and arguments.get("task_name")
                         else None
                     ),
                 )
@@ -408,6 +417,17 @@ class _RolloutProcessor:
         )
         return events
 
+    def process_sub_agent_activity(self, event: SubAgentActivityEvent) -> None:
+        """Bind a modern sub-agent activity event to its pending spawn call."""
+        pending = self.pending_calls.get(event.event_id)
+        if pending is None or not pending.is_spawn:
+            logger.debug(
+                f"Sub-agent activity with no matching spawn call: {event.event_id}"
+            )
+            return
+        pending.spawn_thread_id = event.agent_thread_id
+        pending.spawn_agent_path = event.agent_path
+
     async def _spawn_agent_span_events(
         self,
         pending: _PendingCall,
@@ -418,8 +438,15 @@ class _RolloutProcessor:
         """Create the agent span for a spawn_agent call (child events nested)."""
         agent_span_id = f"agent-{pending.call_id}"
         result_text = result if isinstance(result, str) else ""
-        thread_id, nickname = _spawn_result_thread_id(result_text)
-        agent_name = nickname or pending.spawn_agent_type or "agent"
+        result_thread_id, nickname = _spawn_result_thread_id(result_text)
+        thread_id = pending.spawn_thread_id or result_thread_id
+        agent_name = (
+            nickname
+            or pending.spawn_task_name
+            or pending.spawn_agent_type
+            or (pending.spawn_agent_path or "").rsplit("/", maxsplit=1)[-1]
+            or "agent"
+        )
 
         events: list[Event] = [
             _span_begin(
@@ -429,7 +456,9 @@ class _RolloutProcessor:
                 timestamp=pending.timestamp,
                 metadata={
                     "agent_type": pending.spawn_agent_type,
+                    "task_name": pending.spawn_task_name,
                     "thread_id": thread_id,
+                    "agent_path": pending.spawn_agent_path,
                 },
             )
         ]
@@ -700,6 +729,8 @@ async def process_rollout_events(
                 yield evt
         elif isinstance(event, TokenCountEvent):
             proc.process_token_count(event)
+        elif isinstance(event, SubAgentActivityEvent):
+            proc.process_sub_agent_activity(event)
         elif isinstance(event, CompactedEvent):
             for evt in proc.process_compacted(event, timestamp):
                 yield evt
