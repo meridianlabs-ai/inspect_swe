@@ -720,3 +720,160 @@ def test_slow_probes_count_against_the_wall_clock_timeout() -> None:
         f"timeout ignored probe duration: {calls} probes ran, wall-clock "
         "deadline should have stopped after ~4"
     )
+
+
+def _param_default(fn: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> ast.expr:
+    """The AST default expression bound to parameter ``name`` of ``fn``.
+
+    Handles positional-or-keyword parameters via the offset between ``args``
+    and ``defaults`` -- computing ``timeout_index - first_default_index`` and
+    trusting it to be non-negative is not safe: a parameter with no default at
+    all produces a negative offset, and Python's negative indexing then
+    silently returns a *different* parameter's default instead of raising.
+    Also handles keyword-only parameters, which live in
+    ``kwonlyargs``/``kw_defaults`` and never touch ``args.defaults`` at all --
+    a factory that made this parameter keyword-only would otherwise blow up
+    the lookup with a bare, unlabeled ``StopIteration``.
+    """
+    offset = len(fn.args.args) - len(fn.args.defaults)
+    for i, arg in enumerate(fn.args.args):
+        if arg.arg == name:
+            assert i >= offset, f"{fn.name}: {name} has no default"
+            return fn.args.defaults[i - offset]
+    for arg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults, strict=True):
+        if arg.arg == name:
+            assert default is not None, f"{fn.name}: {name} has no default"
+            return default
+    raise AssertionError(f"{fn.name}() has no parameter named {name!r}")
+
+
+def test_every_gated_call_site_forwards_a_configurable_mcp_ready_timeout() -> None:
+    """Auto-discover every gate instead of hand-listing the agents that have one.
+
+    This used to hand-list six agent modules in a dict. That is the same
+    omission mechanism ``test_every_self_launching_bridged_agent_gates_on_mcp_readiness``
+    above exists to catch for the gate itself: a seventh gated agent, or a new
+    gate added to a module absent from the dict, could await
+    ``wait_for_mcp_endpoints`` without forwarding a configurable timeout and
+    this suite would stay green until someone remembered to update the dict --
+    which is exactly how OpenCode and ACP were previously missed here (see
+    that test's docstring). So this walks every awaited
+    ``wait_for_mcp_endpoints`` call under the package instead, the same way
+    the two tests above walk every module for the gate itself.
+
+    A discovered call's ``timeout=`` must be a bare name or an attribute
+    access -- never a literal, which would not be caller-configurable. For a
+    bare name (every top-level agent factory), that name must also be a
+    parameter of its enclosing top-level function, and that parameter's own
+    default must be ``DEFAULT_MCP_READY_TIMEOUT``. For an attribute access
+    (ACP's ``self.mcp_ready_timeout``, resolved via ``TypedDict`` +
+    ``kwargs.get`` rather than a plain parameter default) only the
+    caller-configurable shape is checked here; ACP's own default is pinned by
+    ``test_acp_agent_forwards_configured_mcp_readiness_timeout`` below.
+    """
+    root = Path(__file__).parent.parent / "src" / "inspect_swe"
+
+    def _call_name(call: ast.Call) -> str | None:
+        func = call.func
+        return (
+            func.attr
+            if isinstance(func, ast.Attribute)
+            else (func.id if isinstance(func, ast.Name) else None)
+        )
+
+    def _gated_calls(node: ast.AST) -> list[ast.Call]:
+        return [
+            n.value
+            for n in ast.walk(node)
+            if isinstance(n, ast.Await)
+            and isinstance(n.value, ast.Call)
+            and _call_name(n.value) == "wait_for_mcp_endpoints"
+        ]
+
+    def _enclosing_function(
+        call: ast.Call, functions: list[ast.FunctionDef | ast.AsyncFunctionDef]
+    ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+        for function in functions:
+            if any(node is call for node in ast.walk(function)):
+                return function
+        return None
+
+    covered: set[str] = set()
+    offenders: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        if path.name == "mcp_ready.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        rel = path.relative_to(root).as_posix()
+        top_level_functions = [
+            node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+
+        for call in _gated_calls(tree):
+            covered.add(rel)
+            label = f"{rel}:{call.lineno}"
+            timeout_kw = next((kw for kw in call.keywords if kw.arg == "timeout"), None)
+            if timeout_kw is None:
+                offenders.append(f"{label} passes no timeout=")
+                continue
+            if not isinstance(timeout_kw.value, (ast.Name, ast.Attribute)):
+                offenders.append(
+                    f"{label} timeout= is not forwarded from a caller-"
+                    f"configurable name or attribute: {ast.dump(timeout_kw.value)}"
+                )
+                continue
+            if not isinstance(timeout_kw.value, ast.Name):
+                continue  # e.g. ACP's `self.mcp_ready_timeout`; checked below.
+
+            param_name = timeout_kw.value.id
+            function = _enclosing_function(call, top_level_functions)
+            if function is None:
+                offenders.append(
+                    f"{label} timeout={param_name} is not inside a top-level "
+                    "factory function whose default can be checked"
+                )
+                continue
+            try:
+                default = _param_default(function, param_name)
+            except AssertionError as error:
+                offenders.append(f"{rel}:{function.name}: {error}")
+                continue
+            if not (
+                isinstance(default, ast.Name)
+                and default.id == "DEFAULT_MCP_READY_TIMEOUT"
+            ):
+                offenders.append(
+                    f"{rel}:{function.name}: {param_name} does not default to "
+                    "DEFAULT_MCP_READY_TIMEOUT"
+                )
+
+    assert covered, "found no wait_for_mcp_endpoints call sites to check"
+    assert offenders == [], offenders
+
+
+def test_acp_agent_forwards_configured_mcp_readiness_timeout() -> None:
+    """Pin ACP's `TypedDict` field; the call site's shape is checked elsewhere.
+
+    ACP resolves its timeout via `TypedDict` + `kwargs.get`, not a plain
+    parameter default, so it can't be discovered the way the auto-discovered
+    factories above are. The call site's shape (a caller-configurable
+    `timeout=`) is covered by
+    `test_every_gated_call_site_forwards_a_configurable_mcp_ready_timeout`;
+    this only pins the `TypedDict` field.
+    """
+    path = Path(__file__).parent.parent / "src" / "inspect_swe" / "acp" / "agent.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    params = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ACPAgentParams"
+    )
+
+    assert any(
+        isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "mcp_ready_timeout"
+        for node in params.body
+    )
