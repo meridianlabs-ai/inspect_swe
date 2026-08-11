@@ -241,12 +241,11 @@ def gemini_cli(
                     # add prompt as positional argument at the end
                     agent_cmd.append(agent_prompt)
 
-                    # Per-attempt gate: on unattended retries after this loop
-                    # restarts, the bridge could have been restarted or briefly
-                    # lost tool visibility. The pre-centaur gate above only
-                    # covered cold start; this call is a no-op when the
-                    # endpoints are still ready.
-                    if _http_mcp_configs:
+                    # Retry-loop gate: fires ONLY when this loop is actually
+                    # retrying (attempt_count > 0), so the cold-start
+                    # pre-centaur gate is not paid for twice on the first
+                    # iteration.
+                    if _http_mcp_configs and attempt_count > 0:
                         await wait_for_mcp_endpoints(
                             _http_mcp_configs, bridge, sandbox=sandbox, required=True
                         )

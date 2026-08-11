@@ -452,17 +452,16 @@ def claude_code(
                         # tool_result), so SpanBegin/End stay balanced.
                         consumer.reset()
 
-                        # Per-attempt gate: on unattended retries after this
-                        # loop restarts with --resume, the bridge could have
-                        # been restarted or briefly lost tool visibility. The
-                        # pre-centaur gate above only covered cold start;
-                        # this call is a no-op when endpoints are still ready.
-                        # A resumed session that starts without its MCP tools
-                        # fails SILENTLY -- the agent sees "No such tool
-                        # available" and its output is graded as a normal
-                        # (toolless) sample. Raises if unreachable so the
-                        # sample errors instead of being scored.
-                        if http_mcp_configs:
+                        # Retry-loop gate: fires ONLY when this loop is actually
+                        # retrying (attempt_count > 0 or uncaught_error_count > 0),
+                        # so the cold-start pre-centaur gate is not paid for
+                        # twice on the first iteration. A resumed session that
+                        # starts without its MCP tools fails SILENTLY -- the
+                        # agent sees "No such tool available" and its output is
+                        # graded as a normal (toolless) sample. Raises if
+                        # unreachable so the sample errors instead of being scored.
+                        is_retry = attempt_count > 0 or uncaught_error_count > 0
+                        if http_mcp_configs and is_retry:
                             await wait_for_mcp_endpoints(
                                 http_mcp_configs, bridge, sandbox=sandbox, required=True
                             )

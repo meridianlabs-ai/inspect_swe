@@ -230,28 +230,41 @@ async def wait_for_mcp_endpoints(
             # command. -f is deliberately omitted: the proxy returns JSON-RPC
             # errors over HTTP 200, so the status code carries no information
             # and the body is what has to be read.
-            result = await sbox.exec(
-                [
-                    "curl",
-                    "-s",
-                    "--max-time",
-                    f"{probe_budget:.3f}",
-                    "-H",
-                    "Content-Type: application/json",
-                    "-H",
-                    "Accept: application/json, text/event-stream",
-                    "-X",
-                    "POST",
-                    "--data-binary",
-                    "@-",
-                    url,
-                ],
-                input=request,
-                # Bound sbox.exec itself with the exact remaining budget so
-                # a hung sandbox transport cannot outlive the deadline. +1
-                # gives curl's own --max-time room to fire first and report.
-                timeout=max(1, int(probe_budget) + 1),
-            )
+            try:
+                result = await sbox.exec(
+                    [
+                        "curl",
+                        "-s",
+                        "--max-time",
+                        f"{probe_budget:.3f}",
+                        "-H",
+                        "Content-Type: application/json",
+                        "-H",
+                        "Accept: application/json, text/event-stream",
+                        "-X",
+                        "POST",
+                        "--data-binary",
+                        "@-",
+                        url,
+                    ],
+                    input=request,
+                    # Bound sbox.exec itself with the exact remaining budget so
+                    # a hung sandbox transport cannot outlive the deadline. +1
+                    # gives curl's own --max-time room to fire first and report.
+                    timeout=max(1, int(probe_budget) + 1),
+                    # The poll loop is already the retry mechanism; letting
+                    # sbox.exec retry internally would stretch one probe to
+                    # ~3x its budget before the deadline logic sees anything,
+                    # and turns a TimeoutError into up to two hidden retries.
+                    timeout_retry=False,
+                )
+            except TimeoutError:
+                # Transport wedged past the per-probe budget. Treat as a
+                # failed probe and let the outer deadline decide; a bare
+                # TimeoutError here would bypass required=False and lose
+                # the explanatory MCPEndpointsUnreachableError message.
+                last_seen[name] = f"probe exec timed out after {probe_budget:.1f}s"
+                continue
             if _probe_executable_missing(result.returncode, result.stderr):
                 message = (
                     f"MCP readiness probe cannot run: curl returned "

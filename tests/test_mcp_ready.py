@@ -396,6 +396,42 @@ def test_missing_probe_executable_matches_exec_error_message() -> None:
     assert sbox.exec.await_count == 1
 
 
+def test_exec_timeout_is_treated_as_a_failed_probe_not_a_bare_TimeoutError() -> None:
+    """Wrap ``sbox.exec`` in a ``TimeoutError`` catch, not let it escape.
+
+    ``SandboxEnvironment.exec`` raises ``TimeoutError`` when its own
+    ``timeout=`` expires. If that escapes, callers see a bare ``TimeoutError``
+    instead of ``MCPEndpointsUnreachableError`` (bypassing ``required=False``
+    and losing the explanatory message), and the internal ``timeout_retry``
+    on the sandbox transport can stretch one probe to ~3x its budget before
+    the deadline logic notices. The gate wraps ``sbox.exec`` in a
+    ``TimeoutError`` catch and passes ``timeout_retry=False``, so the poll
+    loop stays the retry mechanism and the error path stays uniform.
+    """
+    sbox = AsyncMock()
+    sbox.exec = AsyncMock(side_effect=TimeoutError("sandbox transport wedged"))
+    bridge = _bridge_with(**{"taiga-mcp": ["browser"]})
+
+    async def run() -> bool:
+        with patch("inspect_ai.util.sandbox", return_value=sbox):
+            return await wait_for_mcp_endpoints(
+                [_http_config()],
+                bridge=bridge,
+                timeout=0.01,
+                interval=0.001,
+            )
+
+    with pytest.raises(MCPEndpointsUnreachableError, match="probe exec timed out"):
+        anyio.run(run)
+    # sbox.exec is called with timeout_retry=False so the poll loop, not the
+    # sandbox transport, decides when to give up.
+    for call in sbox.exec.await_args_list:
+        assert call.kwargs.get("timeout_retry") is False, (
+            "wait_for_mcp_endpoints must pass timeout_retry=False; "
+            "the poll loop is the retry mechanism"
+        )
+
+
 def test_sandbox_argument_selects_the_agent_environment() -> None:
     """Multi-environment tasks must probe the sandbox the agent will run in.
 
