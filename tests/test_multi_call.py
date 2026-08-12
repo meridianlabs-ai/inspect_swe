@@ -140,7 +140,10 @@ def check_multi_call(
             assert len(user_messages) == 4
             assert len(assistant_messages) == 4
         case "codex_cli":
-            assert len(user_messages) == 5
+            # scaffold count varies by codex version (e.g. newer versions
+            # inject an "# AGENTS.md instructions" user message), so only
+            # lower-bound the user messages
+            assert len(user_messages) >= 4
             assert len(assistant_messages) == 4
         case "gemini_cli":
             assert len(user_messages) >= 4
