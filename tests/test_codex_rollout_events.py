@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import pytest
-from inspect_ai.event import Event, ModelEvent, SpanBeginEvent
+from inspect_ai.event import Event, InfoEvent, ModelEvent, SpanBeginEvent
 from inspect_swe._codex_cli._events.rollout import process_rollout_events
 from inspect_swe._codex_cli._events.rollout_extraction import (
     is_context_message,
@@ -13,6 +13,7 @@ from inspect_swe._codex_cli._events.rollout_extraction import (
 )
 from inspect_swe._codex_cli._events.rollout_models import (
     SubAgentActivityEvent,
+    parse_rollout_event,
     parse_rollout_events,
 )
 
@@ -147,6 +148,43 @@ def test_genuine_agents_md_prefixed_turn_is_a_rollback_boundary() -> None:
     assert "AGENTS.md instructions are being ignored" not in input_text
     assert "second response" not in input_text
     assert "replacement user turn" in input_text
+
+
+def test_review_mode_payload_is_surfaced_on_info_event() -> None:
+    scout_events = asyncio.run(
+        _convert(
+            [
+                _line(
+                    "event_msg",
+                    {
+                        "type": "entered_review_mode",
+                        "prompt": "review the diff",
+                        "user_facing_hint": "current changes",
+                    },
+                ),
+                _line("event_msg", {"type": "exited_review_mode"}),
+            ]
+        )
+    )
+
+    entered, exited = (event for event in scout_events if isinstance(event, InfoEvent))
+    assert entered.data == {
+        "type": "entered_review_mode",
+        "review": {"prompt": "review the diff", "user_facing_hint": "current changes"},
+    }
+    # no payload beyond the discriminator -> no review key
+    assert exited.data == {"type": "exited_review_mode"}
+
+
+def test_payload_timestamp_is_fallback_for_missing_envelope_timestamp() -> None:
+    event = parse_rollout_event(
+        {
+            "type": "session_meta",
+            "payload": {"id": "thread-1", "timestamp": "2026-08-10T20:05:06.000Z"},
+        }
+    )
+    assert event is not None
+    assert event.timestamp == "2026-08-10T20:05:06.000Z"
 
 
 def test_compaction_summary_without_replacement_history_is_user_role() -> None:

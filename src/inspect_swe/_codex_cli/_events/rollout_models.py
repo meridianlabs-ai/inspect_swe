@@ -278,7 +278,11 @@ class SubAgentActivityEvent(RolloutEvent):
 
 
 class ReviewModeEvent(RolloutEvent):
-    """An ``entered_review_mode`` / ``exited_review_mode`` event."""
+    """An ``entered_review_mode`` / ``exited_review_mode`` event.
+
+    ``review`` is the event payload (the review request, or the review
+    output on exit), surfaced on the converted InfoEvent.
+    """
 
     entered: bool = True
     review: dict[str, Any] | None = None
@@ -333,16 +337,14 @@ def parse_rollout_event(raw: dict[str, Any]) -> RolloutEvent | None:
         model_cls = TurnContextEvent
     elif line_type == "event_msg":
         payload_type = payload.get("type")
-        if payload_type == "entered_review_mode":
+        if payload_type in ("entered_review_mode", "exited_review_mode"):
+            # The payload (minus the discriminator) is the review request /
+            # review output — surfaced on the InfoEvent for transcript
+            # consumers.
+            review = {k: v for k, v in payload.items() if k != "type"}
             return ReviewModeEvent(
-                entered=True,
-                review=payload if payload else None,
-                timestamp=_envelope_timestamp(raw),
-            )
-        elif payload_type == "exited_review_mode":
-            return ReviewModeEvent(
-                entered=False,
-                review=payload if payload else None,
+                entered=payload_type == "entered_review_mode",
+                review=review or None,
                 timestamp=_envelope_timestamp(raw),
             )
         elif isinstance(payload_type, str):
@@ -357,13 +359,11 @@ def parse_rollout_event(raw: dict[str, Any]) -> RolloutEvent | None:
         logger.warning(f"Failed to parse rollout {line_type} payload: {ex}")
         return None
 
-    # Envelope timestamp wins when present (session_meta payloads carry their
-    # own timestamp field which serves as a fallback).
+    # Envelope timestamp wins when present (a payload-level timestamp — e.g.
+    # session_meta's — is already populated by model_validate as a fallback).
     envelope_ts = _envelope_timestamp(raw)
     if envelope_ts is not None:
         event.timestamp = envelope_ts
-    elif event.timestamp is None and isinstance(payload.get("timestamp"), str):
-        event.timestamp = payload["timestamp"]
     return event
 
 

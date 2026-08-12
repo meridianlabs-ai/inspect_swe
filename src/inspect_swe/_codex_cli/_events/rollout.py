@@ -821,13 +821,16 @@ async def process_rollout_events(
                     timestamp=timestamp,
                 )
         elif isinstance(event, ReviewModeEvent):
+            review_data: dict[str, Any] = {
+                "type": (
+                    "entered_review_mode" if event.entered else "exited_review_mode"
+                ),
+            }
+            if event.review:
+                review_data["review"] = event.review
             yield InfoEvent(
                 source=CODEX_EVENT_SOURCE,
-                data={
-                    "type": (
-                        "entered_review_mode" if event.entered else "exited_review_mode"
-                    ),
-                },
+                data=review_data,
                 timestamp=timestamp,
             )
         elif isinstance(event, SessionMetaEvent):
