@@ -16,7 +16,7 @@ from tests.conftest import (
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_claude_code_web_search(sandbox: str) -> None:
     log = run_example(
-        "web_search", "claude_code", "anthropic/claude-sonnet-4-0", sandbox=sandbox
+        "web_search", "claude_code", "anthropic/claude-sonnet-4-5", sandbox=sandbox
     )[0]
     assert log.status == "success"
     assert log.samples

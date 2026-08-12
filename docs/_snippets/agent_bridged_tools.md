@@ -48,4 +48,4 @@ See the [Bridged Tools](https://inspect.aisi.org.uk/agent-bridge.html#bridged-to
 
 ### Sandbox prerequisite
 
-The bridged-tools readiness gate probes each bridged MCP endpoint from inside the sandbox with `curl`, so the sandbox image must have `curl` on `PATH`. Debian/Ubuntu, Alpine, and Fedora base images ship it by default; a minimal or `distroless` custom image without it will error immediately on agent launch with `MCPProbeExecutableMissingError`, rather than after the 120s readiness timeout. Add `curl` to the image (`apt-get install -y curl`, `apk add curl`, or equivalent) if you build your own.
+The bridged-tools readiness gate probes each bridged MCP endpoint from inside the sandbox with `curl`, so the sandbox image must have `curl` on `PATH`. Full `python:3.x` and Fedora images include it. Official Debian, Ubuntu, Alpine, slim, and distroless images generally do not. An image without it errors immediately on agent launch with `MCPProbeExecutableMissingError`, rather than after the 120-second readiness timeout. Add `curl` to the image (`apt-get install -y curl`, `apk add curl`, or equivalent) if you build your own.

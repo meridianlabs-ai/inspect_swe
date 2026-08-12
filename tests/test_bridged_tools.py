@@ -15,7 +15,7 @@ from tests.conftest import (
 @skip_if_no_docker
 def test_claude_code_bridged_tools() -> None:
     check_bridged_tools(
-        "claude_code", "anthropic/claude-sonnet-4-0", "mcp__secrets__secret_lookup"
+        "claude_code", "anthropic/claude-sonnet-4-5", "mcp__secrets__secret_lookup"
     )
 
 
@@ -37,7 +37,7 @@ def test_gemini_cli_bridged_tools() -> None:
 @skip_if_no_docker
 def test_kimi_code_bridged_tools() -> None:
     check_bridged_tools(
-        "kimi_code", "anthropic/claude-sonnet-4-0", "mcp__secrets__secret_lookup"
+        "kimi_code", "anthropic/claude-sonnet-4-5", "mcp__secrets__secret_lookup"
     )
 
 
@@ -45,7 +45,7 @@ def test_kimi_code_bridged_tools() -> None:
 @skip_if_no_docker
 def test_opencode_bridged_tools() -> None:
     check_bridged_tools(
-        "opencode", "anthropic/claude-sonnet-4-0", "secrets_secret_lookup"
+        "opencode", "anthropic/claude-sonnet-4-5", "secrets_secret_lookup"
     )
 
 
