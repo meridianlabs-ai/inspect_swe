@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import pytest
-from inspect_ai.event import Event, InfoEvent, ModelEvent, SpanBeginEvent
+from inspect_ai.event import Event, InfoEvent, ModelEvent, SpanBeginEvent, ToolEvent
 from inspect_swe._codex_cli._events.rollout import process_rollout_events
 from inspect_swe._codex_cli._events.rollout_extraction import (
     is_context_message,
@@ -148,6 +148,38 @@ def test_genuine_agents_md_prefixed_turn_is_a_rollback_boundary() -> None:
     assert "AGENTS.md instructions are being ignored" not in input_text
     assert "second response" not in input_text
     assert "replacement user turn" in input_text
+
+
+def test_idless_web_search_fallback_ids_are_unique_across_responses() -> None:
+    def web_search(query: str) -> dict[str, Any]:
+        return _line(
+            "response_item",
+            {
+                "type": "web_search_call",
+                "status": "completed",
+                "action": {"type": "search", "query": query},
+            },
+        )
+
+    scout_events = asyncio.run(
+        _convert(
+            [
+                _message("user", "look these up"),
+                web_search("first"),
+                _message("assistant", "found the first"),
+                _message("user", "and another"),
+                web_search("second"),
+                _message("assistant", "found the second"),
+            ]
+        )
+    )
+
+    tool_ids = [
+        event.id
+        for event in scout_events
+        if isinstance(event, ToolEvent) and event.function == "web_search"
+    ]
+    assert tool_ids == ["web_search_0", "web_search_1"]
 
 
 def test_review_mode_payload_is_surfaced_on_info_event() -> None:

@@ -174,6 +174,9 @@ class _RolloutProcessor:
         # Buffered assistant-side items awaiting flush into one ModelEvent
         self.assistant_buffer: list[RolloutEvent] = []
         self.buffer_timestamp: datetime | None = None
+        # Fallback ids issued for id-less web_search_call items (unique
+        # across the whole rollout, not just one flush).
+        self.web_search_count: int = 0
         self.current_model: str | None = None
         self.last_total_tokens: int | None = None
         self.last_timestamp: datetime = _EPOCH
@@ -301,7 +304,11 @@ class _RolloutProcessor:
                 # Hosted tool: no output item, so emit a self-contained span.
                 action = item.action or {}
                 arguments = {k: v for k, v in action.items() if k != "type"}
-                call_id = item.id or f"web_search_{len(web_search_events)}"
+                if item.id:
+                    call_id = item.id
+                else:
+                    call_id = f"web_search_{self.web_search_count}"
+                    self.web_search_count += 1
                 tool_calls.append(
                     ToolCall(
                         id=call_id,
