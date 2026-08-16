@@ -128,11 +128,21 @@ def test_explicit_version_never_fetches(module: Any, resolve_name: str) -> None:
         (opencode_agentbinary, "resolve_opencode_version"),
     ],
 )
-def test_concurrent_resolution_is_shared(module: Any, resolve_name: str) -> None:
-    """Concurrent samples resolving at once all get the same version."""
+def test_concurrent_resolution_makes_one_request(
+    module: Any, resolve_name: str
+) -> None:
+    """A cold-start burst of samples shares one request, not one each."""
     resolve = getattr(module, resolve_name)
-    fetch = AsyncMock(return_value={"tag_name": "v1.2.3"})
+    calls = 0
     results: list[str] = []
+
+    async def fetch() -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        # suspend so the other tasks reach the cache miss while this is
+        # in flight — without single-flight they would each fetch too
+        await anyio.sleep(0.05)
+        return {"tag_name": "v1.2.3"}
 
     async def run() -> None:
         with patch.object(module, "_fetch_latest_release", fetch):
@@ -146,3 +156,26 @@ def test_concurrent_resolution_is_shared(module: Any, resolve_name: str) -> None
 
     anyio.run(run)
     assert results == ["1.2.3"] * 10
+    assert calls == 1
+
+
+@pytest.mark.parametrize(
+    "module,resolve_name",
+    [
+        (gemini_agentbinary, "resolve_gemini_version"),
+        (opencode_agentbinary, "resolve_opencode_version"),
+    ],
+)
+def test_failed_resolution_is_not_cached(module: Any, resolve_name: str) -> None:
+    """A failed fetch doesn't poison the cache; the next caller retries."""
+    resolve = getattr(module, resolve_name)
+    fetch = AsyncMock(side_effect=[RuntimeError("boom"), {"tag_name": "v1.2.3"}])
+
+    async def run() -> None:
+        with patch.object(module, "_fetch_latest_release", fetch):
+            with pytest.raises(RuntimeError):
+                await resolve("latest")
+            assert await resolve("latest") == "1.2.3"
+
+    anyio.run(run)
+    assert fetch.await_count == 2

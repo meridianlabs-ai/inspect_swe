@@ -8,18 +8,19 @@ to 60/hour per IP, which one ordinary eval can exhaust on its own.
 
 Agents installed via ``AgentBinarySource`` have an equivalent cache in
 ``agentbinary.download_agent_binary_async``.
-
-We use a ``threading.Lock`` (not ``anyio.Lock``) because it only guards
-synchronous dict reads/writes — never held across an await — and avoids
-issues with module-level anyio locks binding to a stale event loop across
-multiple ``anyio.run()`` calls. No expiry: entries live for the process
-lifetime. Two callers may race and both resolve, but this is benign (same
-result) and merely costs one extra request.
 """
 
 import threading
 from typing import Awaitable, Callable
 
+from inspect_ai.util import concurrency
+
+# Guards the cache dict. A threading.Lock rather than an async lock because it
+# only wraps synchronous dict access — never held across an await, so it can
+# neither stall the event loop nor deadlock — and because a module-level async
+# lock binds its waiter state to whichever event loop first uses it. That
+# breaks as soon as the process runs a second loop, which every anyio.run()
+# call does (the test suite runs one per test).
 _resolve_lock = threading.Lock()
 _resolved_versions: dict[str, str] = {}
 
@@ -29,6 +30,10 @@ async def cached_version_resolution(
 ) -> str:
     """Resolve a version, reusing the result for the process lifetime.
 
+    Concurrent callers for the same key share a single resolution rather than
+    each issuing their own request. Failures are not cached, so a later caller
+    retries.
+
     Args:
         key: Cache key identifying what is being resolved (e.g. ``"opencode"``).
         resolve: Called to resolve the version on a cache miss.
@@ -36,13 +41,27 @@ async def cached_version_resolution(
     Returns:
         The resolved version string.
     """
-    with _resolve_lock:
-        cached = _resolved_versions.get(key)
+    cached = _cached(key)
     if cached is not None:
         return cached
 
-    version = await resolve()
+    # Serialize resolution per key so that a burst of samples starting together
+    # makes one request rather than one each. concurrency() is inspect's own
+    # async primitive, so unlike a module-level anyio.Lock it holds no state
+    # tied to a particular event loop.
+    async with concurrency(f"version-resolution-{key}", 1, visible=False):
+        # re-check now that we hold the lock: another sample may have resolved
+        # while we were waiting for it
+        cached = _cached(key)
+        if cached is not None:
+            return cached
 
+        version = await resolve()
+        with _resolve_lock:
+            _resolved_versions[key] = version
+        return version
+
+
+def _cached(key: str) -> str | None:
     with _resolve_lock:
-        _resolved_versions[key] = version
-    return version
+        return _resolved_versions.get(key)
