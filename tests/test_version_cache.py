@@ -139,8 +139,8 @@ def test_concurrent_resolution_makes_one_request(
     async def fetch() -> dict[str, str]:
         nonlocal calls
         calls += 1
-        # suspend so the other tasks reach the cache miss while this is
-        # in flight — without single-flight they would each fetch too
+        # suspend so the other tasks reach the cache miss while this one
+        # is still in flight
         await anyio.sleep(0.05)
         return {"tag_name": "v1.2.3"}
 
