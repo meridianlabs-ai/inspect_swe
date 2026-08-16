@@ -27,6 +27,7 @@ from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
 
+from ._events.consumer import OpenCodeConsumer
 from .agentbinary import ensure_opencode_setup
 
 
@@ -120,6 +121,12 @@ def opencode(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
+        # Bridge ModelEventSink: the bridge hands us every ModelEvent instead
+        # of emitting it to the transcript, and we attribute each to the
+        # correct (sub-)agent span. Reconstructs task-tool sub-agent spans
+        # bridge-only (no OpenCode stdout parsing); see consumer.py.
+        consumer = OpenCodeConsumer()
+
         async with sandbox_agent_bridge(
             state,
             model=model,
@@ -129,6 +136,7 @@ def opencode(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
+            model_event_sink=consumer,
             # granted unconditionally to preserve today's behaviour; a grant is
             # inert unless the CLI declares a native web tool
             web_search=True,
@@ -232,71 +240,88 @@ def opencode(
             } | (env or {})
 
             if centaur:
-                await _run_opencode_centaur(
-                    options=centaur,
-                    opencode_cmd=cmd,
-                    agent_env=agent_env,
-                    state=state,
-                )
+                try:
+                    await _run_opencode_centaur(
+                        options=centaur,
+                        opencode_cmd=cmd,
+                        agent_env=agent_env,
+                        state=state,
+                    )
+                finally:
+                    # close any sub-agent spans left open by the interactive
+                    # session so the span tree stays balanced
+                    consumer.reset()
             else:
                 debug_output: list[str] = []
                 agent_prompt = prompt
                 attempt_count = 0
 
-                while True:
-                    agent_cmd = cmd.copy()
+                try:
+                    while True:
+                        agent_cmd = cmd.copy()
 
-                    # continue previous conversation between attempts (or when
-                    # the inbound state already carries an assistant turn)
-                    if has_assistant_response or attempt_count > 0:
-                        agent_cmd.append("--continue")
+                        # continue previous conversation between attempts (or
+                        # when the inbound state already carries an assistant
+                        # turn)
+                        if has_assistant_response or attempt_count > 0:
+                            agent_cmd.append("--continue")
 
-                    # add prompt as positional argument at the end
-                    agent_cmd.append(agent_prompt)
+                        # add prompt as positional argument at the end
+                        agent_cmd.append(agent_prompt)
 
-                    # run agent
-                    result = await sbox.exec_remote(
-                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
-                        + agent_cmd,
-                        options=ExecRemoteAwaitableOptions(
-                            cwd=agent_cwd,
-                            env=agent_env,
-                            user=user,
-                            concurrency=False,
-                        ),
-                        stream=False,
-                    )
-
-                    if debug:
-                        debug_output.append(result.stdout)
-                        debug_output.append(result.stderr)
-
-                    if not result.success:
-                        cli_error_msg = _clean_opencode_error(
-                            result.stdout, result.stderr
-                        )
-                        raise RuntimeError(
-                            f"Error executing opencode agent {result.returncode}: {cli_error_msg}"
+                        # run agent
+                        result = await sbox.exec_remote(
+                            cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
+                            + agent_cmd,
+                            options=ExecRemoteAwaitableOptions(
+                                cwd=agent_cwd,
+                                env=agent_env,
+                                user=user,
+                                concurrency=False,
+                            ),
+                            stream=False,
                         )
 
-                    attempt_count += 1
-                    if attempt_count >= attempts.attempts:
-                        break
+                        if debug:
+                            debug_output.append(result.stdout)
+                            debug_output.append(result.stderr)
 
-                    answer_scores = await score(bridge.state)
-                    if attempts.score_value(answer_scores[0].value) == 1.0:
-                        break
+                        # close any sub-agent spans left open by this attempt
+                        # (e.g. opencode exited mid-task before the task
+                        # tool_result) so SpanBegin/End stay balanced across
+                        # restarts and on error
+                        consumer.reset()
 
-                    if callable(attempts.incorrect_message):
-                        if not is_callable_coroutine(attempts.incorrect_message):
-                            raise ValueError(
-                                "The incorrect_message function must be async."
+                        if not result.success:
+                            cli_error_msg = _clean_opencode_error(
+                                result.stdout, result.stderr
                             )
-                        agent_prompt = await attempts.incorrect_message(
-                            bridge.state, answer_scores
-                        )
-                    else:
-                        agent_prompt = attempts.incorrect_message
+                            raise RuntimeError(
+                                f"Error executing opencode agent {result.returncode}: {cli_error_msg}"
+                            )
+
+                        attempt_count += 1
+                        if attempt_count >= attempts.attempts:
+                            break
+
+                        answer_scores = await score(bridge.state)
+                        if attempts.score_value(answer_scores[0].value) == 1.0:
+                            break
+
+                        if callable(attempts.incorrect_message):
+                            if not is_callable_coroutine(attempts.incorrect_message):
+                                raise ValueError(
+                                    "The incorrect_message function must be async."
+                                )
+                            agent_prompt = await attempts.incorrect_message(
+                                bridge.state, answer_scores
+                            )
+                        else:
+                            agent_prompt = attempts.incorrect_message
+                finally:
+                    # covers exceptions raised before the per-attempt reset
+                    # (e.g. exec failures) — reset() is idempotent
+                    consumer.reset()
 
                 if debug:
                     debug_output.insert(0, "OpenCode Debug Output:")
