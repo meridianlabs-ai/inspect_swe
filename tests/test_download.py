@@ -177,6 +177,49 @@ def test_mini_swe_agent_cache_hit(wheels_cache_cleanup: Path) -> None:
     assert cache_file.stat().st_atime >= cache_mtime
 
 
+def test_github_api_headers_uses_token_for_api_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect_swe._util.download import github_api_headers
+
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    headers = github_api_headers("https://api.github.com/repos/openai/codex/releases")
+    assert headers == {"Authorization": "Bearer test-token"}
+
+
+def test_github_api_headers_falls_back_to_gh_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect_swe._util.download import github_api_headers
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("GH_TOKEN", "gh-token")
+    headers = github_api_headers("https://api.github.com/repos/openai/codex/releases")
+    assert headers == {"Authorization": "Bearer gh-token"}
+
+
+def test_github_api_headers_empty_without_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect_swe._util.download import github_api_headers
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    assert github_api_headers("https://api.github.com/repos/openai/codex") == {}
+
+
+def test_github_api_headers_never_sent_to_other_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect_swe._util.download import github_api_headers
+
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    assert github_api_headers("https://objects.githubusercontent.com/asset") == {}
+    assert github_api_headers("https://raw.githubusercontent.com/x/y") == {}
+    assert github_api_headers("https://code.kimi.com/kimi-code/latest.json") == {}
+    assert github_api_headers("https://evil.example.com/api.github.com/x") == {}
+
+
 def test_ensure_pip_available_noop_when_present() -> None:
     from inspect_swe._util.agentwheel import _ensure_pip_available
 
