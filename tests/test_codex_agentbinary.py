@@ -65,6 +65,25 @@ def test_codex_models_catalog_falls_back_to_bundled_on_fetch_error(
         assert not cache_file.exists()
 
 
+def test_agentbinary_installation_api_is_public() -> None:
+    # Given
+    from inspect_swe import (
+        claude_code_binary_source,
+        codex_cli_binary_source,
+        ensure_agent_binary_installed,
+    )
+
+    # When
+    public_api = (
+        ensure_agent_binary_installed,
+        claude_code_binary_source,
+        codex_cli_binary_source,
+    )
+
+    # Then
+    assert all(callable(symbol) for symbol in public_api)
+
+
 @skip_if_github_action
 def test_bundled_catalog_tracks_live_latest() -> None:
     """Drift check for the bundled fallback (``_bundled_catalog.py``).
