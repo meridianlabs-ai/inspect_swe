@@ -19,8 +19,10 @@ from inspect_swe._util.versioncache import cached_version_resolution
 @pytest.fixture(autouse=True)
 def clear_version_cache() -> Iterator[None]:
     versioncache._resolved_versions.clear()
+    versioncache._failed_resolutions.clear()
     yield
     versioncache._resolved_versions.clear()
+    versioncache._failed_resolutions.clear()
 
 
 def test_cached_version_resolution_resolves_once() -> None:
@@ -157,6 +159,56 @@ def test_concurrent_resolution_makes_one_request(
     anyio.run(run)
     assert results == ["1.2.3"] * 10
     assert calls == 1
+
+
+@pytest.mark.parametrize(
+    "module,resolve_name",
+    [
+        (gemini_agentbinary, "resolve_gemini_version"),
+        (opencode_agentbinary, "resolve_opencode_version"),
+    ],
+)
+def test_concurrent_failure_is_shared(module: Any, resolve_name: str) -> None:
+    """Callers queued behind a failing fetch share its error, not retry it."""
+    resolve = getattr(module, resolve_name)
+    calls = 0
+    errors: list[Exception] = []
+
+    async def fetch() -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        # suspend so the other tasks reach the cache miss while this one
+        # is still in flight
+        await anyio.sleep(0.05)
+        raise RuntimeError("403 rate limited")
+
+    async def run() -> None:
+        with patch.object(module, "_fetch_latest_release", fetch):
+
+            async def one() -> None:
+                try:
+                    await resolve("latest")
+                except RuntimeError as ex:
+                    errors.append(ex)
+
+            async with anyio.create_task_group() as tg:
+                for _ in range(10):
+                    tg.start_soon(one)
+
+    anyio.run(run)
+    assert calls == 1
+    assert len(errors) == 10
+    assert all(error is errors[0] for error in errors)
+
+    # a genuinely later call (after the failure completed) retries
+    recovered = AsyncMock(return_value={"tag_name": "v1.2.3"})
+
+    async def retry() -> None:
+        with patch.object(module, "_fetch_latest_release", recovered):
+            assert await resolve("latest") == "1.2.3"
+
+    anyio.run(retry)
+    recovered.assert_awaited_once()
 
 
 @pytest.mark.parametrize(

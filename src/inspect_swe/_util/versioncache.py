@@ -14,10 +14,14 @@ from typing import Awaitable, Callable
 
 from inspect_ai.util import concurrency
 
-# Guards the cache dict. Held only across synchronous dict access, never an
+# Guards the cache dicts. Held only across synchronous dict access, never an
 # await.
 _resolve_lock = threading.Lock()
 _resolved_versions: dict[str, str] = {}
+# per key: (number of failed resolutions so far, exception from the latest
+# one). Lets callers already queued behind a failing resolution share its
+# exception instead of each retrying in turn.
+_failed_resolutions: dict[str, tuple[int, Exception]] = {}
 
 
 async def cached_version_resolution(
@@ -26,8 +30,10 @@ async def cached_version_resolution(
     """Resolve a version, reusing the result for the process lifetime.
 
     Concurrent callers for the same key share a single resolution rather than
-    each issuing their own request. Failures are not cached, so a later caller
-    retries.
+    each issuing their own request — including its failure, so a burst of
+    callers hitting a rate-limited API produces one error, not one per caller.
+    Failures are not cached: a call arriving after a failed resolution has
+    completed retries.
 
     Args:
         key: Cache key identifying what is being resolved (e.g. ``"opencode"``).
@@ -36,24 +42,31 @@ async def cached_version_resolution(
     Returns:
         The resolved version string.
     """
-    cached = _cached(key)
-    if cached is not None:
-        return cached
+    with _resolve_lock:
+        cached = _resolved_versions.get(key)
+        if cached is not None:
+            return cached
+        failure = _failed_resolutions.get(key)
+        failures_at_arrival = failure[0] if failure is not None else 0
 
     # serialize per key so a burst of samples starting together makes one
     # request rather than one each
     async with concurrency(f"version-resolution-{key}", 1, visible=False):
-        # another sample may have resolved while we were waiting
-        cached = _cached(key)
-        if cached is not None:
-            return cached
+        # another sample may have resolved (or failed) while we were waiting
+        with _resolve_lock:
+            cached = _resolved_versions.get(key)
+            if cached is not None:
+                return cached
+            failure = _failed_resolutions.get(key)
+        if failure is not None and failure[0] > failures_at_arrival:
+            raise failure[1]
 
-        version = await resolve()
+        try:
+            version = await resolve()
+        except Exception as ex:
+            with _resolve_lock:
+                _failed_resolutions[key] = (failures_at_arrival + 1, ex)
+            raise
         with _resolve_lock:
             _resolved_versions[key] = version
         return version
-
-
-def _cached(key: str) -> str | None:
-    with _resolve_lock:
-        return _resolved_versions.get(key)
