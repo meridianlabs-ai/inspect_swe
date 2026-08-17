@@ -14,6 +14,7 @@ from inspect_swe._codex_cli.config import (
     codex_mcp_server_toml,
     codex_network_access_args,
     codex_sandbox_args,
+    codex_sandbox_uses_bwrap,
     resolve_codex_approval_policy,
     resolve_codex_auto_review,
     resolve_codex_auto_review_model_aliases,
@@ -212,6 +213,28 @@ def test_check_codex_auto_review_version() -> None:
         check_codex_auto_review_version("0.136.0")
     with pytest.raises(RuntimeError, match="0.137.0"):
         check_codex_auto_review_version("0.99.0")
+
+
+def test_check_codex_auto_review_version_names_the_feature() -> None:
+    # the reviewer escape hatch rides the same codex relent, so it reports the
+    # same floor under its own name rather than mentioning auto_review
+    with pytest.raises(RuntimeError, match=r"approvals_reviewer"):
+        check_codex_auto_review_version(
+            "0.136.0", feature="config_overrides['approvals_reviewer']"
+        )
+    check_codex_auto_review_version("0.137.0", feature="anything")
+
+
+def test_codex_sandbox_uses_bwrap_only_on_releases_that_launch_it() -> None:
+    # <= 0.77 sandboxes via Landlock+seccomp and 0.98 makes bwrap opt-in, so a
+    # bwrap preflight on those releases fails over a binary that never runs
+    assert not codex_sandbox_uses_bwrap("0.77.0")
+    assert not codex_sandbox_uses_bwrap("0.98.0")
+    assert codex_sandbox_uses_bwrap("0.99.0")
+    assert codex_sandbox_uses_bwrap("0.145.0")
+    # undetectable or non-numeric: keep the preflight rather than assume
+    assert codex_sandbox_uses_bwrap(None)
+    assert codex_sandbox_uses_bwrap("sandbox")
 
 
 def test_codex_cli_accepts_auto_review() -> None:

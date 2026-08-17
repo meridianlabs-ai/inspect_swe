@@ -118,6 +118,14 @@ GUARDIAN_MODEL_SLUG = "codex-auto-review"
 CODEX_AUTO_REVIEW_MIN_VERSION = "0.137.0"
 """First Codex CLI release where `codex exec` preserves auto_review approvals."""
 
+CODEX_BWRAP_SANDBOX_MIN_VERSION = "0.99.0"
+"""First Codex CLI release whose restricted sandbox unconditionally needs `bwrap`.
+
+Earlier releases do not launch bubblewrap at all: <= 0.77 sandboxes via
+Landlock+seccomp, and 0.98 makes bwrap opt-in. Preflighting for `bwrap` on
+those releases fails the run over a binary that never executes.
+"""
+
 
 def resolve_codex_auto_review_model_aliases(
     auto_review: CodexAutoReview | None,
@@ -145,15 +153,40 @@ def resolve_codex_auto_review_model_aliases(
     return {**(model_aliases or {}), GUARDIAN_MODEL_SLUG: guardian}
 
 
-def check_codex_auto_review_version(version: str | None) -> None:
-    """Raise if the installed Codex CLI can't run auto_review headlessly."""
+def codex_sandbox_uses_bwrap(version: str | None) -> bool:
+    """Whether a restricted sandbox on this Codex release shells out to `bwrap`.
+
+    Unknown or unparseable versions answer `True`: the preflight is kept rather
+    than assumed away, since a missing `bwrap` panics codex at shell launch.
+    """
+    required = tuple(
+        int(part) for part in CODEX_BWRAP_SANDBOX_MIN_VERSION.split(".")
+    )
+    installed = _codex_version_tuple(version)
+    return installed is None or installed >= required
+
+
+def _codex_version_tuple(version: str | None) -> tuple[int, ...] | None:
+    """Parse a Codex version into comparable ints, or `None` if not numeric."""
     if version is None:
+        return None
+    try:
+        return tuple(int(part) for part in version.split(".")[:3])
+    except ValueError:
+        return None
+
+
+def check_codex_auto_review_version(
+    version: str | None, feature: str = "auto_review"
+) -> None:
+    """Raise if the installed Codex CLI can't honor an approvals reviewer headlessly."""
+    installed = _codex_version_tuple(version)
+    if installed is None:
         return
-    installed = tuple(int(part) for part in version.split(".")[:3])
     required = tuple(int(part) for part in CODEX_AUTO_REVIEW_MIN_VERSION.split("."))
     if installed < required:
         raise RuntimeError(
-            f"auto_review requires Codex CLI >= {CODEX_AUTO_REVIEW_MIN_VERSION} "
+            f"{feature} requires Codex CLI >= {CODEX_AUTO_REVIEW_MIN_VERSION} "
             f"(found {version}). Pass version='latest' (or an explicit newer "
             "version) to codex_cli()."
         )

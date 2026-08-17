@@ -53,6 +53,7 @@ from .config import (
     codex_config_options,
     codex_mcp_server_toml,
     codex_sandbox_args,
+    codex_sandbox_uses_bwrap,
     resolve_codex_approval_policy,
     resolve_codex_auto_review,
     resolve_codex_auto_review_model_aliases,
@@ -211,7 +212,9 @@ def codex_cli(
             sandbox modes that default cancels un-annotated static tool calls
             headlessly (inspect's `MCPServerConfig` cannot express
             `default_tools_approval_mode`), so set this to `True` if you combine
-            `sandbox_mode` with static `mcp_servers`.
+            `sandbox_mode` with static `mcp_servers`. Inert whenever the effective
+            approval policy is not `"never"` -- notably under `auto_review`, whose
+            effective policy is `on-request`.
         **deprecated_args: Deprecated compatibility arguments.
     """
     # resolve centaur
@@ -233,6 +236,11 @@ def codex_cli(
     )
     effective_web_search = resolve_codex_web_search(web_search, disallowed_tools)
     resolved_auto_review = resolve_codex_auto_review(auto_review)
+    # Set when a prompting policy is allowed to stand only because an approvals
+    # reviewer is configured through `config_overrides`. That escape hatch is
+    # itself version-gated (see the check below), so the floor must be verified
+    # on this path too.
+    reviewer_hatch_needs_version_floor = False
     if resolved_auto_review is not None:
         # auto_review is a macro over the sandbox/approval controls: it forces
         # workspace-write + on-request with a guardian reviewer via final -c
@@ -269,6 +277,11 @@ def codex_cli(
         # disable the bridged-MCP approval override below, cancelling every
         # bridged tool call. Fail fast instead of silently losing the agent's
         # tools.
+        reviewer_hatch_needs_version_floor = (
+            centaur is False
+            and effective_approval_policy != "never"
+            and (config_overrides or {}).get("approvals_reviewer") is not None
+        )
         if (
             centaur is False
             and effective_approval_policy != "never"
@@ -334,9 +347,18 @@ def codex_cli(
 
             # auto_review requires on-request approval support (>= 0.137.0 for
             # headless exec); the floor is applied in centaur mode too so
-            # behavior is consistent across modes
+            # behavior is consistent across modes. The bare `approvals_reviewer`
+            # escape hatch rides the same codex relent, so it carries the same
+            # floor -- without this, following the ValueError's own advice on an
+            # older binary leaves the runtime policy at `never` while we track a
+            # prompting policy, so the bridged-MCP approval override is omitted
+            # and every bridged write tool call is cancelled silently.
             if resolved_auto_review is not None:
                 check_codex_auto_review_version(codex_version)
+            elif reviewer_hatch_needs_version_floor:
+                check_codex_auto_review_version(
+                    codex_version, feature="config_overrides['approvals_reviewer']"
+                )
 
             # build system prompt
             system_messages = [
@@ -354,20 +376,50 @@ def codex_cli(
             # Without one codex PANICS at sandbox launch on every
             # model-generated shell command -- fail fast with an actionable
             # error instead of a mid-eval panic.
-            if effective_sandbox_mode != "danger-full-access":
-                bwrap_probe = await sandbox_exec(
-                    sbox, "command -v bwrap || echo __MISSING__", user=user
-                )
-                if bwrap_probe.endswith("__MISSING__"):
-                    raise RuntimeError(
+            #
+            # Only preflight where bubblewrap is actually the mechanism: on
+            # releases that launch it (see `codex_sandbox_uses_bwrap`) and on
+            # Linux, since macOS sandboxes via Seatbelt. Under auto_review a
+            # missing bwrap is not fatal -- each sandboxed command fails, a
+            # capable model re-issues it with `require_escalated`, and the
+            # guardian adjudicates -- so warn there rather than raising, and
+            # keep that documented model-driven fallback working.
+            if effective_sandbox_mode != "danger-full-access" and (
+                codex_sandbox_uses_bwrap(codex_version)
+            ):
+                # an immutable property of the image: probe both facts in one
+                # round-trip and reuse it across executions of the agent
+                BWRAP_PROBE = "codex_cli_bwrap_probe"
+                bwrap_probe = store().get(BWRAP_PROBE)
+                if bwrap_probe is None:
+                    bwrap_probe = await sandbox_exec(
+                        sbox,
+                        "uname -s; command -v bwrap || echo __MISSING__",
+                        user=user,
+                    )
+                    store().set(BWRAP_PROBE, bwrap_probe)
+                probe_lines = [ln for ln in bwrap_probe.splitlines() if ln.strip()]
+                on_linux = bool(probe_lines) and probe_lines[0].strip() == "Linux"
+                if on_linux and bwrap_probe.endswith("__MISSING__"):
+                    missing = (
                         f"sandbox_mode={effective_sandbox_mode!r} requires a "
                         "bubblewrap (bwrap) binary in the sandbox image: codex "
                         "release binaries do not bundle one. Install the "
-                        "'bubblewrap' package in the image, or use "
-                        "sandbox_mode='danger-full-access'. The container runtime "
+                        "'bubblewrap' package in the image. The container runtime "
                         "must also permit unprivileged user namespace creation "
                         "(Docker's default seccomp profile blocks it)."
                     )
+                    if resolved_auto_review is not None:
+                        logger.warning(
+                            f"{missing} auto_review continues without an OS "
+                            "sandbox: each sandboxed command fails and the "
+                            "guardian adjudicates the model's escalation instead."
+                        )
+                    else:
+                        raise RuntimeError(
+                            f"{missing} Alternatively use "
+                            "sandbox_mode='danger-full-access'."
+                        )
 
             # resolve working directory (home dir if sandbox default is '/')
             agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
