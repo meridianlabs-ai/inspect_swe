@@ -23,6 +23,7 @@ from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
@@ -129,6 +130,9 @@ def opencode(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
+            # granted unconditionally to preserve today's behaviour; a grant is
+            # inert unless the CLI declares a native web tool
+            web_search=True,
         ) as bridge:
             # resolve sandbox
             sbox = sandbox_env(sandbox)
@@ -228,6 +232,21 @@ def opencode(
                 "HOME": sandbox_home,
             } | (env or {})
 
+            # Compute bridged HTTP configs once at the outer scope so both the
+            # centaur and non-centaur paths gate on the same set. OpenCode's
+            # headless mode blocks the first turn on MCP connect, but the
+            # endpoint has to be answering `tools/list` first -- this pre-launch
+            # gate covers the endpoint half in both centaur and non-centaur modes.
+            _http_mcp_configs = [
+                c
+                for c in bridge.mcp_server_configs
+                if isinstance(c, MCPServerConfigHTTP)
+            ]
+            if _http_mcp_configs:
+                await wait_for_mcp_endpoints(
+                    _http_mcp_configs, bridge, sandbox=sandbox, required=True
+                )
+
             if centaur:
                 await _run_opencode_centaur(
                     options=centaur,
@@ -251,7 +270,15 @@ def opencode(
                     # add prompt as positional argument at the end
                     agent_cmd.append(agent_prompt)
 
-                    # run agent
+                    # Retry-loop gate: fires ONLY when this loop is actually
+                    # retrying (attempt_count > 0), so the cold-start
+                    # pre-centaur gate is not paid for twice on the first
+                    # iteration.
+                    if _http_mcp_configs and attempt_count > 0:
+                        await wait_for_mcp_endpoints(
+                            _http_mcp_configs, bridge, sandbox=sandbox, required=True
+                        )
+
                     result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,

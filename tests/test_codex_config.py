@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 from inspect_ai.model import Model
+from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_swe import codex_cli, interactive_codex_cli
 from inspect_swe._codex_cli.config import (
     GUARDIAN_MODEL_SLUG,
@@ -11,6 +12,7 @@ from inspect_swe._codex_cli.config import (
     check_codex_auto_review_version,
     codex_cli_config_overrides,
     codex_config_options,
+    codex_mcp_server_config,
     codex_mcp_server_toml,
     codex_network_access_args,
     codex_sandbox_args,
@@ -501,3 +503,26 @@ def test_codex_cli_validates_network_access_and_allows_it_with_auto_review() -> 
         codex_cli(network_access="false")  # type: ignore[arg-type]
     codex_cli(auto_review=True, network_access=False)
     codex_cli(auto_review=True, network_access=True)
+
+
+def test_bridged_mcp_server_is_marked_required() -> None:
+    server = MCPServerConfigHTTP(
+        type="http", name="bridged-tools", url="http://localhost:9000/mcp"
+    )
+
+    config = codex_mcp_server_config(server, {"bridged-tools"})
+
+    assert config["required"] is True
+    assert "name" not in config
+    assert "tools" not in config
+    assert "required = true" in to_toml({"mcp_servers.bridged-tools": config})
+
+
+def test_static_mcp_server_is_not_marked_required() -> None:
+    server = MCPServerConfigHTTP(
+        type="http", name="caller-tools", url="http://localhost:9001/mcp"
+    )
+
+    config = codex_mcp_server_config(server, {"bridged-tools"})
+
+    assert "required" not in config

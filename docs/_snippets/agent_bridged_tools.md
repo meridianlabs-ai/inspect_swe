@@ -45,3 +45,7 @@ def investigator() -> Task:
 The `name` field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple `BridgedToolsSpec` instances to create separate MCP servers for different tool groups.
 
 See the [Bridged Tools](https://inspect.aisi.org.uk/agent-bridge.html#bridged-tools) documentation for more details on the architecture and how tool execution flows between host and sandbox.
+
+### Sandbox prerequisite
+
+The bridged-tools readiness gate probes each bridged MCP endpoint from inside the sandbox with `curl`, so the sandbox image must have `curl` on `PATH`. Full `python:3.x` and Fedora images include it. Official Debian, Ubuntu, Alpine, slim, and distroless images generally do not. An image without it errors immediately on agent launch with `MCPProbeExecutableMissingError`, rather than after the 120-second readiness timeout. Add `curl` to the image (`apt-get install -y curl`, `apk add curl`, or equivalent) if you build your own.

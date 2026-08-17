@@ -15,7 +15,13 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, StopReason
 from inspect_ai.scorer import score
-from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
+from inspect_ai.tool import (
+    MCPServerConfig,
+    MCPServerConfigHTTP,
+    Skill,
+    install_skills,
+    read_skills,
+)
 from inspect_ai.util import (
     ExecRemoteStreamingOptions,
     StoreModel,
@@ -39,7 +45,9 @@ from inspect_swe._claude_code._events.stream import (
     claude_code_event_stream,
 )
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
 from inspect_swe._util.path import join_path
+from inspect_swe._util.websearch import web_search_tool_disallowed
 
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
@@ -47,6 +55,7 @@ from .._util.messages import build_user_prompt
 from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
+from .env import claude_code_agent_env
 from .model import resolve_claude_code_models
 
 ClaudeCodePermissionMode = Literal[
@@ -157,7 +166,8 @@ def claude_code(
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
             tools available to the agent running in the sandbox.
-        disallowed_tools: List of tool names to disallow entirely.
+        disallowed_tools: List of tool names to disallow entirely (disallowing
+            `"WebSearch"` also disables web search for the agent).
         centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
@@ -274,6 +284,9 @@ def claude_code(
                 retry_refusals=retry_refusals,
                 port=port,
                 bridged_tools=bridged_tools,
+                web_search=not web_search_tool_disallowed(
+                    disallowed_tools, "WebSearch"
+                ),
                 model_event_sink=consumer,
                 checkpointer=cp,
             ) as bridge,
@@ -314,6 +327,16 @@ def claude_code(
             static_mcp_servers = list(mcp_servers or [])
             bridged_mcp_servers = bridge.mcp_server_configs
             all_mcp_servers = static_mcp_servers + bridged_mcp_servers
+            # BRIDGED HTTP endpoints we must confirm are live before EVERY
+            # launch: the bridge proxy starts asynchronously, and Claude Code
+            # reads --mcp-config at startup. If the proxy isn't listening yet
+            # the agent comes up with no MCP tools and reports NO error.
+            # Static caller-provided servers are NOT probed: they may require
+            # auth headers the probe does not carry, and their availability is
+            # the caller's contract, not the bridge's.
+            http_mcp_configs = [
+                c for c in bridged_mcp_servers if isinstance(c, MCPServerConfigHTTP)
+            ]
             if all_mcp_servers:
                 mcp_server_args, _ = resolve_mcp_servers(all_mcp_servers)
                 cmd.extend(mcp_server_args)
@@ -347,19 +370,9 @@ def claude_code(
                 await install_skills(resolved_skills, sbox, user, skills_dir)
 
             # define agent env
-            agent_env = {
-                "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
-                "ANTHROPIC_AUTH_TOKEN": "sk-ant-api03-DOq5tyLPrk9M4hPE",
-                "ANTHROPIC_MODEL": models.presented,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": models.opus,
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": models.sonnet,
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": models.haiku,
-                "CLAUDE_CODE_SUBAGENT_MODEL": models.subagent,
-                "ANTHROPIC_SMALL_FAST_MODEL": models.haiku,
-                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
-                "IS_SANDBOX": "1",
-            } | (env or {})
+            agent_env = claude_code_agent_env(
+                bridge_port=bridge.port, models=models, env=env
+            )
 
             # Claude Code 2.1.37 reports "has Authorization header: false"
             # despite ANTHROPIC_AUTH_TOKEN being set in the environment,
@@ -368,6 +381,16 @@ def claude_code(
             # supplies a key through a path that does work.
             api_key = agent_env.get("ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge")
             await _seed_claude_config(sbox, api_key, user, agent_cwd)
+
+            # Pre-launch MCP readiness gate. Both centaur (interactive) and
+            # non-centaur retry-loop launches read the MCP config at startup,
+            # so both need the bridge endpoints answering tools/list before
+            # the agent's own MCP timer starts. This covers cold start; the
+            # per-attempt gate below covers unattended retries after that.
+            if http_mcp_configs:
+                await wait_for_mcp_endpoints(
+                    http_mcp_configs, bridge, sandbox=sandbox, required=True
+                )
 
             # centaur mode uses human_cli with custom instructions and bash rc
             if centaur:
@@ -433,6 +456,20 @@ def claude_code(
                         # left open (e.g. Claude exited mid-Task before the
                         # tool_result), so SpanBegin/End stay balanced.
                         consumer.reset()
+
+                        # Retry-loop gate: fires ONLY when this loop is actually
+                        # retrying (attempt_count > 0 or uncaught_error_count > 0),
+                        # so the cold-start pre-centaur gate is not paid for
+                        # twice on the first iteration. A resumed session that
+                        # starts without its MCP tools fails SILENTLY -- the
+                        # agent sees "No such tool available" and its output is
+                        # graded as a normal (toolless) sample. Raises if
+                        # unreachable so the sample errors instead of being scored.
+                        is_retry = attempt_count > 0 or uncaught_error_count > 0
+                        if http_mcp_configs and is_retry:
+                            await wait_for_mcp_endpoints(
+                                http_mcp_configs, bridge, sandbox=sandbox, required=True
+                            )
 
                         # launch Claude Code in streaming mode; drain stdout in
                         # real time so the consumer emits agent spans and the

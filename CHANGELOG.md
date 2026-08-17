@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.70](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.69...0.2.70) (2026-08-09)
+
+
+### Features
+
+* pass web_search to sandbox_agent_bridge based on web search config ([#116](https://github.com/meridianlabs-ai/inspect_swe/issues/116)) ([5ba7549](https://github.com/meridianlabs-ai/inspect_swe/commit/5ba754967343786f79e8c59808bce2df531daaf5))
+
+## [0.2.69](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.68...0.2.69) (2026-08-08)
+
+
+### Bug Fixes
+
+* **codex_cli:** require inspect_ai&gt;=0.3.253 for Multi-Agent V2 delegation ([#109](https://github.com/meridianlabs-ai/inspect_swe/issues/109)) ([249479d](https://github.com/meridianlabs-ai/inspect_swe/commit/249479d31b79f2f481cebcab0f47dbe040ca30f6))
+* **codex_cli:** support Codex Multi-Agent V2 — package-archive install and sub-agent span reconstruction ([#107](https://github.com/meridianlabs-ai/inspect_swe/issues/107)) ([51adaf0](https://github.com/meridianlabs-ai/inspect_swe/commit/51adaf05990ef33825ea06fc9e38103935235cf2))
+
+## [0.2.68](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.67...0.2.68) (2026-08-04)
+
+
+### Features
+
+* **antigravity:** add native Antigravity SDK agent ([#94](https://github.com/meridianlabs-ai/inspect_swe/issues/94)) ([7d85ee9](https://github.com/meridianlabs-ai/inspect_swe/commit/7d85ee9bacc9955068c4333018067d726b7ce2c9))
+* support replacing Claude Code system prompt ([#98](https://github.com/meridianlabs-ai/inspect_swe/issues/98)) ([58638bc](https://github.com/meridianlabs-ai/inspect_swe/commit/58638bcb4cef191fd5bff7b1a961792f0d16e190))
+
 ## [0.2.67](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.66...0.2.67) (2026-07-29)
 
 

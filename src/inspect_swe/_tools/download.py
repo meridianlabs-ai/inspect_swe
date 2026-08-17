@@ -99,7 +99,9 @@ def cached_agent_binaries(
     binaries = source.list_cached_binaries()
 
     def parse_name(name: str) -> tuple[str, str, int, int, int]:
-        match = re.match(r"([a-z_]+)-(\d+)\.(\d+)\.(\d+)", name)
+        # artifact names are either "<agent>-<version>-<platform>" (single
+        # binary) or "<agent>-package-<version>-<platform>.tar.gz" (package)
+        match = re.match(r"([a-z_]+(?:-package)?)-(\d+)\.(\d+)\.(\d+)", name)
         if match:
             return (
                 match.group(1),  # agent type
