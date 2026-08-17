@@ -29,6 +29,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
+from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import resolve_agent_cwd
@@ -347,6 +348,23 @@ def antigravity(
             server_entries = _mcp_server_entries(
                 [*(mcp_servers or []), *bridge.mcp_server_configs]
             )
+
+            # Gate the launch on the bridged MCP endpoints actually serving a
+            # tool listing. The SDK reads its MCP config once at startup while
+            # the bridge proxy comes up asynchronously, so launching early
+            # yields an agent with no environment tools and NO error -- a
+            # toolless trajectory that scores as an ordinary one. Raises if the
+            # endpoints never come up. Static caller-provided servers are the
+            # caller's contract and are not gated, mirroring gemini_cli.
+            bridged_http_configs = [
+                config
+                for config in bridge.mcp_server_configs
+                if isinstance(config, MCPServerConfigHTTP)
+            ]
+            if bridged_http_configs:
+                await wait_for_mcp_endpoints(
+                    bridged_http_configs, bridge, sandbox=sandbox, required=True
+                )
 
             prompt, has_assistant_response = build_user_prompt(state.messages)
             system_messages = [

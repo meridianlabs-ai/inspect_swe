@@ -47,6 +47,7 @@ from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.trace import trace
 
@@ -297,6 +298,21 @@ def kimi_code(
                 "HOME": sandbox_home,
             } | (env or {})
 
+            # Compute bridged HTTP configs once at the outer scope so both the
+            # centaur and non-centaur paths use the same gated set. Kimi's
+            # centaur mode is fire-and-forget on MCP connect (documented as by
+            # design) and exposes no client-side blocking knob, so a slow
+            # bridge would race the first turn without this pre-launch gate.
+            _http_mcp_configs = [
+                c
+                for c in bridge.mcp_server_configs
+                if isinstance(c, MCPServerConfigHTTP)
+            ]
+            if _http_mcp_configs:
+                await wait_for_mcp_endpoints(
+                    _http_mcp_configs, bridge, sandbox=sandbox, required=True
+                )
+
             if centaur:
                 await _run_kimi_code_centaur(
                     options=centaur,
@@ -317,6 +333,24 @@ def kimi_code(
                     if has_assistant_response or attempt_count > 0:
                         agent_cmd.append("--continue")
                     agent_cmd += ["-p", agent_prompt]
+
+                    # Retry-loop gate: fires ONLY when this loop is actually
+                    # retrying (attempt_count > 0), so the cold-start
+                    # pre-centaur gate is not paid for twice on the first
+                    # iteration.
+                    if _http_mcp_configs and attempt_count > 0:
+                        await wait_for_mcp_endpoints(
+                            _http_mcp_configs, bridge, sandbox=sandbox, required=True
+                        )
+
+                    # NOTE: endpoint readiness is the strongest guarantee
+                    # available for kimi: it connects MCP servers via an
+                    # unawaited asyncio task in every mode (documented as by
+                    # design) and exposes no config to block the first turn on
+                    # client connect, so a slow initialize can still race the
+                    # first model call. Claude Code closes this via
+                    # BLOCKING_MCP_ENV and codex via required=true; kimi has
+                    # no equivalent knob.
 
                     result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]

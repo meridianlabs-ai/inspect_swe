@@ -21,7 +21,13 @@ from inspect_ai.model import (
     get_model,
 )
 from inspect_ai.scorer import score
-from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
+from inspect_ai.tool import (
+    MCPServerConfig,
+    MCPServerConfigHTTP,
+    Skill,
+    install_skills,
+    read_skills,
+)
 from inspect_ai.util import SandboxEnvironment, checkpointer, store
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
@@ -29,6 +35,7 @@ from typing_extensions import Unpack
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import resolve_agent_cwd, sandbox_exec
@@ -49,6 +56,7 @@ from .config import (
     check_codex_auto_review_version,
     codex_cli_config_overrides,
     codex_config_options,
+    codex_mcp_server_config,
     resolve_codex_auto_review,
     resolve_codex_auto_review_model_aliases,
     resolve_codex_deprecated_args,
@@ -317,14 +325,16 @@ def codex_cli(
                 codex_config_options(effective_web_search, goals, resolved_auto_review)
             )
 
-            # register mcp servers (combine static configs with bridged tools)
+            # register mcp servers (combine static configs with bridged tools);
+            # bridged servers are marked required so a failed MCP startup fails
+            # the launch loudly instead of running the turn without tools (see
+            # codex_mcp_server_config)
+            bridged_server_names = {s.name for s in bridge.mcp_server_configs}
             all_mcp_servers = list(mcp_servers or []) + bridge.mcp_server_configs
             if all_mcp_servers:
                 for mcp_server in all_mcp_servers:
                     toml_config[f"mcp_servers.{mcp_server.name}"] = (
-                        mcp_server.model_dump(
-                            exclude={"name", "tools"}, exclude_none=True
-                        )
+                        codex_mcp_server_config(mcp_server, bridged_server_names)
                     )
 
             # model provider (use a custom provider name so we can set
@@ -349,6 +359,22 @@ def codex_cli(
                 "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
                 "RUST_LOG": "warning",
             } | (env or {})
+
+            # Compute bridged HTTP configs once at the outer scope so both the
+            # centaur and non-centaur paths gate on the same set. Codex closes
+            # the client-connect half of the first-turn race with
+            # `required = true` on bridged servers (see codex_mcp_server_config),
+            # but that only helps once the endpoint is answering; the pre-launch
+            # gate covers the endpoint half in both centaur and non-centaur modes.
+            _http_mcp_configs = [
+                c
+                for c in bridge.mcp_server_configs
+                if isinstance(c, MCPServerConfigHTTP)
+            ]
+            if _http_mcp_configs:
+                await wait_for_mcp_endpoints(
+                    _http_mcp_configs, bridge, sandbox=sandbox, required=True
+                )
 
             if centaur:
                 await _run_codex_cli_centaur(
@@ -377,7 +403,16 @@ def codex_cli(
                     ):
                         agent_cmd.extend(["resume", "--last"])
 
-                    # run agent
+                    # Retry-loop gate: fires ONLY when this loop is actually
+                    # retrying (attempt_count > 0 or the checkpoint says
+                    # resume), so the cold-start pre-centaur gate is not paid
+                    # for twice on the first iteration.
+                    is_retry = attempt_count > 0 or cp.attempt == "resume"
+                    if _http_mcp_configs and is_retry:
+                        await wait_for_mcp_endpoints(
+                            _http_mcp_configs, bridge, sandbox=sandbox, required=True
+                        )
+
                     result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
