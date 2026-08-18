@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from collections.abc import Set as AbstractSet
 from typing import Any, Literal, Mapping, cast
 
@@ -208,10 +209,16 @@ def codex_mcp_server_toml(
     `approval_policy="never"` alone, write-type MCP tool calls (e.g. an
     `edit_file` call) are auto-denied ("user cancelled MCP tool call") rather
     than run, because headless `codex exec` has no way to answer the resulting
-    approval prompt. "auto" is NOT sufficient either (confirmed empirically:
-    same auto-denial) -- only "approve" actually skips the gate. The override is
-    applied only when `approval_policy` is `"never"`, so callers who choose a
-    prompting policy keep the per-server default.
+    approval prompt. This holds only under a restricted sandbox mode
+    (`read-only`/`workspace-write`); under `sandbox_mode="danger-full-access"`,
+    `approval_policy="never"` instead triggers
+    `--dangerously-bypass-approvals-and-sandbox`, which auto-approves MCP
+    writes too, so this override is redundant on the default path and
+    load-bearing only for the restricted modes. "auto" is NOT sufficient
+    either (confirmed empirically: same auto-denial) -- only "approve"
+    actually skips the gate. The override is applied only when
+    `approval_policy` is `"never"`, so callers who choose a prompting policy
+    keep the per-server default.
 
     Version caveat: the MCP approval gate applies to all servers from codex
     0.117, but `default_tools_approval_mode` is only honoured from 0.122 --
@@ -244,19 +251,18 @@ def codex_sandbox_args(
     sandbox_mode: CodexSandboxMode,
     approval_policy: CodexApprovalPolicy,
     network_access: bool,
-    auto_review: bool = False,
 ) -> list[str]:
     """CLI args selecting Codex's own sandbox and approval policy.
 
-    With `auto_review` the mode and policy come from its own final `-c`
-    overrides (`workspace-write` + `on-request`) instead: an explicit
-    `--sandbox` or bypass flag would pin them at a precedence `-c` cannot beat.
-    Its effective mode is still `workspace-write`, so network access is
-    configured on that path too.
+    Not used under `auto_review`: its mode and policy come from its own
+    final `-c` overrides (`workspace-write` + `on-request`) instead, and an
+    explicit `--sandbox` or bypass flag would pin them at a precedence `-c`
+    cannot beat. The `codex_cli` call site chooses between this and
+    `codex_network_access_args` directly rather than this function
+    special-casing `auto_review` -- its effective mode is still
+    `workspace-write` there too, so network access still needs configuring,
+    just through the other helper.
     """
-    if auto_review:
-        return codex_network_access_args(network_access)
-
     if sandbox_mode == "danger-full-access" and approval_policy == "never":
         return ["--dangerously-bypass-approvals-and-sandbox"]
 
@@ -271,24 +277,52 @@ def codex_sandbox_args(
     return sandbox_args
 
 
+def _unquote_codex_config_value(value: str) -> str:
+    """Strip one layer of surrounding double quotes from a `-c key=value` string.
+
+    Codex parses `-c` values as TOML with a raw-string fallback, so
+    `approval_policy=never` and `approval_policy="never"` are equivalent --
+    and `codex_cli_config_overrides` itself emits the quoted form (e.g.
+    `f'"{web_search}"'`), so quoting is the local convention a caller would
+    copy into `config_overrides`. Validating the raw string would reject
+    exactly that convention.
+    """
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        return value[1:-1]
+    return value
+
+
 def validate_codex_sandbox_mode(value: str) -> CodexSandboxMode:
     """Validate a sandbox mode at runtime (agent kwargs arrive as arbitrary strings)."""
-    if value not in ("read-only", "workspace-write", "danger-full-access"):
+    unquoted = _unquote_codex_config_value(value)
+    if unquoted not in ("read-only", "workspace-write", "danger-full-access"):
         raise ValueError(
             "sandbox_mode must be one of 'read-only', 'workspace-write', or "
             f"'danger-full-access', got {value!r}."
         )
-    return cast(CodexSandboxMode, value)
+    return cast(CodexSandboxMode, unquoted)
+
+
+CODEX_APPROVAL_POLICY_ALIASES = {"on-failure": "on-request"}
+"""Serde aliases Codex's `AskForApproval` accepts for a canonical policy value.
+
+`"on-failure"` deserializes to the same `OnRequest` variant as `"on-request"`
+(`#[serde(alias = "on-failure")] OnRequest`, codex-rs `protocol.rs`) -- a real
+upstream spelling still accepted by every shipped release, not a typo, so it
+is accepted and normalized rather than rejected.
+"""
 
 
 def validate_codex_approval_policy(value: str) -> CodexApprovalPolicy:
     """Validate an approval policy at runtime (agent kwargs arrive as arbitrary strings)."""
-    if value not in ("untrusted", "on-request", "never"):
+    unquoted = _unquote_codex_config_value(value)
+    resolved = CODEX_APPROVAL_POLICY_ALIASES.get(unquoted, unquoted)
+    if resolved not in ("untrusted", "on-request", "never"):
         raise ValueError(
             "approval_policy must be one of 'untrusted', 'on-request', or "
             f"'never', got {value!r}."
         )
-    return cast(CodexApprovalPolicy, value)
+    return cast(CodexApprovalPolicy, resolved)
 
 
 def validate_codex_bool_arg(name: str, value: bool) -> bool:
@@ -369,3 +403,31 @@ def codex_mcp_server_config(
     if mcp_server.name in bridged_server_names:
         server_config["required"] = True
     return server_config
+
+
+def codex_mcp_servers_toml(
+    mcp_servers: Iterable[MCPServerConfig],
+    bridged_server_names: AbstractSet[str],
+    approval_policy: CodexApprovalPolicy,
+    force_approve: bool,
+) -> dict[str, dict[str, Any]]:
+    """Build `[mcp_servers.<name>]` TOML tables for one class of MCP server.
+
+    `codex_cli` calls this once for bridged servers (`force_approve=True`:
+    author-supplied, so the headless approval override always applies) and
+    once for static caller-configured servers (`force_approve=` the
+    `approve_static_mcp_tools` opt-in). Extracted as a pure helper so a
+    regression that gates the override on the wrong flag, or applies it to
+    the wrong server class, fails a unit test instead of only a live run.
+    """
+    return {
+        f"mcp_servers.{mcp_server.name}": (
+            codex_mcp_server_toml(
+                codex_mcp_server_config(mcp_server, bridged_server_names),
+                approval_policy,
+            )
+            if force_approve
+            else codex_mcp_server_config(mcp_server, bridged_server_names)
+        )
+        for mcp_server in mcp_servers
+    }

@@ -14,6 +14,7 @@ from inspect_swe._codex_cli.config import (
     codex_config_options,
     codex_mcp_server_config,
     codex_mcp_server_toml,
+    codex_mcp_servers_toml,
     codex_network_access_args,
     codex_sandbox_args,
     codex_sandbox_uses_bwrap,
@@ -305,12 +306,57 @@ def test_config_override_rejects_unknown_approval_policy() -> None:
         resolve_codex_approval_policy("never", {"approval_policy": "always"})
 
 
+def test_config_override_accepts_quoted_approval_policy() -> None:
+    """A quoted `approval_policy` override must not regress.
+
+    `codex_cli_config_overrides` itself emits the TOML-quoted form (e.g.
+    `'"on-request"'`), and `main` accepted a quoted `approval_policy`
+    override.
+    """
+    assert (
+        resolve_codex_approval_policy("never", {"approval_policy": '"never"'})
+        == "never"
+    )
+
+
+def test_config_override_accepts_on_failure_approval_policy() -> None:
+    """`"on-failure"` is a real upstream `AskForApproval` spelling.
+
+    It is a serde alias of the same `OnRequest` variant as `"on-request"`
+    (`#[serde(alias = "on-failure")] OnRequest`, codex-rs `protocol.rs`) --
+    not a typo, so it must resolve rather than raise, quoted or not.
+    """
+    assert (
+        resolve_codex_approval_policy("never", {"approval_policy": "on-failure"})
+        == "on-request"
+    )
+    assert (
+        resolve_codex_approval_policy("never", {"approval_policy": '"on-failure"'})
+        == "on-request"
+    )
+
+
 def test_resolve_codex_sandbox_mode_prefers_override() -> None:
     assert (
         resolve_codex_sandbox_mode("danger-full-access", {"sandbox_mode": "read-only"})
         == "read-only"
     )
     assert resolve_codex_sandbox_mode("workspace-write", None) == "workspace-write"
+
+
+def test_config_override_accepts_quoted_sandbox_mode() -> None:
+    """A quoted `sandbox_mode` override must not regress, same as `approval_policy`.
+
+    `codex_cli_config_overrides` uses the TOML-quoted convention throughout
+    (e.g. `'"workspace-write"'` for `auto_review`), so a caller who copies it
+    for `sandbox_mode` must not have the value rejected.
+    """
+    assert (
+        resolve_codex_sandbox_mode(
+            "danger-full-access", {"sandbox_mode": '"read-only"'}
+        )
+        == "read-only"
+    )
 
 
 def test_resolve_codex_sandbox_mode_validates_both_paths() -> None:
@@ -455,35 +501,6 @@ def test_codex_network_access_args_spellings() -> None:
     ]
 
 
-@pytest.mark.parametrize("network_access", [True, False])
-def test_codex_sandbox_args_auto_review_emits_network_access(
-    network_access: bool,
-) -> None:
-    """auto_review must still honor `network_access`.
-
-    auto_review selects `workspace-write` through its own final `-c` overrides,
-    so no `--sandbox` or bypass flag may be emitted here -- but omitting the
-    network args entirely left Codex's own default (`false`) in effect and
-    silently discarded the caller's setting, including the documented `True`.
-    """
-    args = codex_sandbox_args(
-        "workspace-write", "on-request", network_access, auto_review=True
-    )
-    assert args == codex_network_access_args(network_access)
-    assert "--sandbox" not in args
-    assert "--dangerously-bypass-approvals-and-sandbox" not in args
-    assert not any(arg.startswith("approval_policy=") for arg in args)
-
-
-def test_codex_sandbox_args_auto_review_never_emits_mode_or_policy() -> None:
-    # auto_review rejects an explicit sandbox_mode/approval_policy at
-    # construction, so the defaults are what reach this function; neither may
-    # leak into the args and outrank auto_review's own -c overrides.
-    assert codex_sandbox_args(
-        "danger-full-access", "never", True, auto_review=True
-    ) == codex_network_access_args(True)
-
-
 def test_codex_cli_rejects_non_bool_approve_static_mcp_tools() -> None:
     """`approve_static_mcp_tools="false"` is truthy and must not be coerced.
 
@@ -526,3 +543,76 @@ def test_static_mcp_server_is_not_marked_required() -> None:
     config = codex_mcp_server_config(server, {"bridged-tools"})
 
     assert "required" not in config
+
+
+def test_codex_cli_rejects_non_bool_centaur() -> None:
+    """`centaur` must not silently bypass the headless guard.
+
+    A non-bool, non-`CentaurOptions` value must raise rather than pass
+    through: that guard keys off `centaur is False` identity, and agent
+    kwargs arrive from task configs and `-S` args as arbitrary values (bare
+    `-S centaur=false` coerces via YAML, but quoted values, config files,
+    and programmatic callers don't), so an unvalidated
+    `centaur=0`/`None`/`"false"` would skip the guard and produce a
+    malformed headless run.
+    """
+    with pytest.raises(ValueError, match="centaur must be a bool"):
+        codex_cli(centaur="false")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="centaur must be a bool"):
+        codex_cli(centaur=0)  # type: ignore[arg-type]
+    # real values are accepted
+    codex_cli(centaur=True)
+    codex_cli(centaur=False)
+
+
+def test_codex_cli_rejects_approve_static_mcp_tools_with_auto_review() -> None:
+    """`approve_static_mcp_tools=True` is inert under `auto_review`.
+
+    The effective policy is `"on-request"`, never `"never"`, so combining
+    them must fail loudly like the sibling `sandbox_mode`/`approval_policy`
+    controls rather than silently doing nothing.
+    """
+    with pytest.raises(ValueError, match="approve_static_mcp_tools"):
+        codex_cli(auto_review=True, approve_static_mcp_tools=True)
+    # the default (False) does not conflict
+    codex_cli(auto_review=True, approve_static_mcp_tools=False)
+
+
+def test_codex_mcp_servers_toml_gates_on_force_approve() -> None:
+    """Regression coverage for the static-vs-bridged wiring in `codex_cli`.
+
+    Static servers only get the headless approval override when the caller
+    opts in (`force_approve=False` by default); bridged servers always do
+    (`force_approve=True`, unconditionally). A regression that gates on the
+    wrong flag or mixes the two server classes fails here.
+    """
+    static = MCPServerConfigHTTP(
+        type="http", name="caller-tools", url="http://localhost:9001/mcp"
+    )
+    bridged = MCPServerConfigHTTP(
+        type="http", name="bridged-tools", url="http://localhost:9000/mcp"
+    )
+    bridged_server_names = {"bridged-tools"}
+
+    static_toml = codex_mcp_servers_toml(
+        [static], bridged_server_names, "never", force_approve=False
+    )
+    assert "default_tools_approval_mode" not in static_toml["mcp_servers.caller-tools"]
+    assert "required" not in static_toml["mcp_servers.caller-tools"]
+
+    static_opted_in = codex_mcp_servers_toml(
+        [static], bridged_server_names, "never", force_approve=True
+    )
+    assert (
+        static_opted_in["mcp_servers.caller-tools"]["default_tools_approval_mode"]
+        == "approve"
+    )
+
+    bridged_toml = codex_mcp_servers_toml(
+        [bridged], bridged_server_names, "never", force_approve=True
+    )
+    assert (
+        bridged_toml["mcp_servers.bridged-tools"]["default_tools_approval_mode"]
+        == "approve"
+    )
+    assert bridged_toml["mcp_servers.bridged-tools"]["required"] is True

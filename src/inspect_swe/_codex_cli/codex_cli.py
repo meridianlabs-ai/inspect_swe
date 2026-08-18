@@ -58,8 +58,8 @@ from .config import (
     check_codex_auto_review_version,
     codex_cli_config_overrides,
     codex_config_options,
-    codex_mcp_server_config,
-    codex_mcp_server_toml,
+    codex_mcp_servers_toml,
+    codex_network_access_args,
     codex_sandbox_args,
     codex_sandbox_uses_bwrap,
     resolve_codex_approval_policy,
@@ -220,12 +220,20 @@ def codex_cli(
             sandbox modes that default cancels un-annotated static tool calls
             headlessly (inspect's `MCPServerConfig` cannot express
             `default_tools_approval_mode`), so set this to `True` if you combine
-            `sandbox_mode` with static `mcp_servers`. Inert whenever the effective
-            approval policy is not `"never"` -- notably under `auto_review`, whose
-            effective policy is `on-request`.
+            `sandbox_mode` with static `mcp_servers`. Raises if combined with
+            `auto_review=True`: that macro's effective policy is `"on-request"`,
+            never `"never"`, so the override this option applies would be
+            silently unreachable.
         **deprecated_args: Deprecated compatibility arguments.
     """
     # resolve centaur
+    if not isinstance(centaur, (bool, CentaurOptions)):
+        # Agent kwargs arrive from task configs and `-S` args as arbitrary
+        # values (bare `-S centaur=false` coerces via YAML, but quoted values,
+        # config files, and programmatic callers don't), and the headless
+        # guard below keys off `centaur is False` identity -- an unvalidated
+        # non-bool silently skips it and produces a malformed headless run.
+        raise ValueError(f"centaur must be a bool or CentaurOptions, got {centaur!r}.")
     if centaur is True:
         centaur = CentaurOptions()
 
@@ -243,6 +251,10 @@ def codex_cli(
         cast(dict[str, Any], deprecated_args)
     )
     effective_web_search = resolve_codex_web_search(web_search, disallowed_tools)
+    network_access = validate_codex_bool_arg("network_access", network_access)
+    approve_static_mcp_tools = validate_codex_bool_arg(
+        "approve_static_mcp_tools", approve_static_mcp_tools
+    )
     resolved_auto_review = resolve_codex_auto_review(auto_review)
     # Set when a prompting policy is allowed to stand only because an approvals
     # reviewer is configured through `config_overrides`. That escape hatch is
@@ -257,6 +269,7 @@ def codex_cli(
         if (
             sandbox_mode != "danger-full-access"
             or approval_policy != "never"
+            or approve_static_mcp_tools
             or any(
                 key in (config_overrides or {})
                 for key in ("sandbox_mode", "approval_policy", "approvals_reviewer")
@@ -266,7 +279,11 @@ def codex_cli(
                 "auto_review manages sandbox_mode, approval_policy and the "
                 "approvals reviewer itself (workspace-write / on-request / "
                 "guardian); do not combine it with explicit sandbox_mode, "
-                "approval_policy, or those config_overrides keys."
+                "approval_policy, approve_static_mcp_tools, or those "
+                "config_overrides keys. approve_static_mcp_tools has no "
+                "effect under auto_review: the effective policy is "
+                "'on-request', not 'never', so the static-server approval "
+                "override this option applies is never reached."
             )
         effective_approval_policy: CodexApprovalPolicy = "on-request"
         effective_sandbox_mode: CodexSandboxMode = "workspace-write"
@@ -303,10 +320,6 @@ def codex_cli(
                 "enable auto_review, or configure an approvals reviewer via "
                 "config_overrides={'approvals_reviewer': ...}."
             )
-    network_access = validate_codex_bool_arg("network_access", network_access)
-    approve_static_mcp_tools = validate_codex_bool_arg(
-        "approve_static_mcp_tools", approve_static_mcp_tools
-    )
 
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
@@ -495,15 +508,16 @@ def codex_cli(
             # Sandbox/approval args from the effective values. Emitted ahead of
             # config_overrides, which wins over them (later -c pairs take
             # precedence). auto_review takes its mode and policy from its own
-            # final -c overrides instead, but its effective mode is still
-            # workspace-write, so network_access applies there too -- see
-            # codex_sandbox_args.
+            # final -c overrides instead, so --sandbox/approval_policy args
+            # here would only fight that precedence -- emit only the network
+            # access args its still-workspace-write effective mode needs.
             cmd.extend(
-                codex_sandbox_args(
+                codex_network_access_args(network_access)
+                if resolved_auto_review is not None
+                else codex_sandbox_args(
                     effective_sandbox_mode,
                     effective_approval_policy,
                     network_access,
-                    auto_review=resolved_auto_review is not None,
                 )
             )
 
@@ -540,18 +554,22 @@ def codex_cli(
             # startup fails the launch loudly instead of running the turn without
             # tools (see codex_mcp_server_config).
             bridged_server_names = {s.name for s in bridge.mcp_server_configs}
-            for mcp_server in mcp_servers or []:
-                static_toml = codex_mcp_server_config(mcp_server, bridged_server_names)
-                if approve_static_mcp_tools:
-                    static_toml = codex_mcp_server_toml(
-                        static_toml, effective_approval_policy
-                    )
-                toml_config[f"mcp_servers.{mcp_server.name}"] = static_toml
-            for mcp_server in bridge.mcp_server_configs:
-                toml_config[f"mcp_servers.{mcp_server.name}"] = codex_mcp_server_toml(
-                    codex_mcp_server_config(mcp_server, bridged_server_names),
+            toml_config.update(
+                codex_mcp_servers_toml(
+                    mcp_servers or [],
+                    bridged_server_names,
                     effective_approval_policy,
+                    force_approve=approve_static_mcp_tools,
                 )
+            )
+            toml_config.update(
+                codex_mcp_servers_toml(
+                    bridge.mcp_server_configs,
+                    bridged_server_names,
+                    effective_approval_policy,
+                    force_approve=True,
+                )
+            )
 
             # model provider (use a custom provider name so we can set
             # stream_idle_timeout_ms -- built-in providers can't be overridden)
