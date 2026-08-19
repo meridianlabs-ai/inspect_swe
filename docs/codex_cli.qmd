@@ -22,6 +22,10 @@ The following options are supported for customizing the behavior of the agent:
 | `web_search` | Web search mode. Use `"live"` for live web search, `"cached"` for cached web search, or `"disabled"` to disable web search. Defaults to `"live"`. |
 | `goals` | Enable Codex goal tools. Defaults to `True`. |
 | `auto_review` | Enable Codex [automated approval review](https://developers.openai.com/codex/concepts/sandboxing/auto-review) (see [Auto Review](#auto-review) below for details). Defaults to `False`. |
+| `sandbox_mode` | Codex's own sandbox policy for model-generated shell commands (`-s`/`--sandbox`) — not the Inspect sandbox. One of `"read-only"`, `"workspace-write"`, or `"danger-full-access"`. Defaults to `"danger-full-access"`, which combined with `approval_policy="never"` reproduces the previous `--dangerously-bypass-approvals-and-sandbox` behavior. The restricted modes need a `bwrap` binary on Linux (see [Configuring Containers](#configuring-containers)). Managed by `auto_review` when that is enabled. |
+| `approval_policy` | Codex's approval policy (`AskForApproval`). One of `"untrusted"`, `"on-request"`, or `"never"`. Defaults to `"never"`. Headless `codex exec` overrides the runtime policy to `never`, so a prompting value raises unless you run in [Centaur Mode](#centaur-mode), enable `auto_review`, or configure an approvals reviewer via `config_overrides` (which requires Codex CLI >= 0.137.0). Managed by `auto_review` when that is enabled. |
+| `network_access` | Whether Codex's `"workspace-write"` sandbox may reach the network for model-generated commands. Defaults to `True`, which inverts Codex's own default (`false`) to preserve continuity with the previous unconditional full-access behavior; ignored by the other sandbox modes. Applies under `auto_review` too. |
+| `approve_static_mcp_tools` | Also auto-approve write-type tool calls on caller-supplied (static) MCP servers, not just bridged ones. Defaults to `False`. Takes effect only when the effective approval policy is `"never"`; raises if combined with `auto_review=True`, whose effective policy is always `"on-request"`. |
 | `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Codex CLI available to an Inspect `human_cli()` agent rather than running it unattended. | 
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
@@ -31,7 +35,7 @@ The following options are supported for customizing the behavior of the agent:
 | `cwd` | Working directory for {{< meta agent_name >}} session. |
 | `env` | Environment variables to set for {{< meta agent_name >}}. |
 | `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |
-| `config_overrides` | Additional Codex CLI configuration overrides. |
+| `config_overrides` | Additional Codex CLI configuration overrides. `approval_policy` and `sandbox_mode` are intercepted and validated here (invalid values raise), so that the command line and the bridged-MCP configuration are derived from one effective value rather than silently disagreeing. |
 
 : {tbl-colwidths=\[25,75\]}
 
@@ -51,7 +55,7 @@ For example, here we specify a custom system prompt and  disable the web search 
 
 ## Auto Review
 
-By default, the agent runs Codex with `--dangerously-bypass-approvals-and-sandbox`: Codex's internal sandbox and approval prompts are disabled, since the agent already runs inside the Inspect sandbox. The `auto_review` option instead runs Codex the way its own "Approve for me" mode ships: Codex's `workspace-write` sandbox is active, `approval_policy` is `on-request`, and escalation requests (network access, writes outside the workspace, MCP tool approvals) are adjudicated by an automated "guardian" reviewer model rather than a human:
+By default, the agent runs Codex with `--dangerously-bypass-approvals-and-sandbox`: Codex's internal sandbox and approval prompts are disabled, since the agent already runs inside the Inspect sandbox. The `auto_review` option instead runs Codex the way its own "Approve for me" mode ships: Codex's `workspace-write` sandbox is active, `approval_policy` is `on-request`, and escalation requests (writes outside the workspace, MCP tool approvals, and network access when `network_access=False`) are adjudicated by an automated "guardian" reviewer model rather than a human:
 
 ```python
 {{< meta agent >}}(auto_review=True)
@@ -63,7 +67,7 @@ Enabling `auto_review` requires Codex CLI >= 0.137.0.
 
 On Linux, Codex enforces the `workspace-write` sandbox by launching each command through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`), which needs a `bwrap` binary in the sandbox and a container that permits the namespace syscalls it uses (see [Configuring Containers](#configuring-containers)). What happens then depends on whether that sandbox can start:
 
-- **OS sandbox active** (both present): commands run sandboxed, and only genuine escalations (network access, out-of-workspace writes) reach the guardian.
+- **OS sandbox active** (both present): commands run sandboxed, and only genuine escalations (out-of-workspace writes, and network access when `network_access=False`) reach the guardian.
 - **OS sandbox unavailable** (the default for most images): `auto_review` still works, but review is model-driven rather than OS-enforced. Each sandboxed command fails before it runs (`bubblewrap is unavailable` when `bwrap` is missing, or `Creating new namespace failed: Operation not permitted` when its syscalls are blocked); Codex does *not* fall back to a review-only mode on its own. A capable model recovers by re-issuing with escalated permissions (`require_escalated`), which the guardian reviews and, if approved, runs unsandboxed, and it typically carries that forward. Review then depends on the model choosing to escalate rather than being enforced by Codex.
 
 Either way, the guardian may deny an escalation, and repeated denials interrupt the turn.
@@ -75,9 +79,9 @@ When the OS sandbox is active, `workspace-write` bounds what a command may do be
 - **Writes**: only the working directory (the `cwd` option), `/tmp`, and `$TMPDIR`.
 - **Reads**: the whole filesystem.
 - **`.git` and `.agents`**: read-only even inside the workspace, so e.g. `git commit` requires an escalation.
-- **Network**: unavailable by default.
+- **Network**: available by default, because `network_access` defaults to `True` and applies under `auto_review`. Codex's own default is `false`; pass `network_access=False` to restore it, which makes network use an escalation the guardian adjudicates.
 
-Actions outside these bounds fail in the sandbox and proceed only with a guardian-approved escalation. To widen them, pass `config_overrides` (applied before the auto_review settings, so they compose), for example `{"sandbox_workspace_write.network_access": "true"}` or `{"sandbox_workspace_write.writable_roots": '["/data"]'}`, and/or set `cwd` so the workspace root matches where the task's files live.
+Actions outside these bounds fail in the sandbox and proceed only with a guardian-approved escalation. To narrow them, pass `network_access=False` so network use requires an approved escalation. To widen them, pass `config_overrides` (applied before the auto_review settings, so they compose), for example `{"sandbox_workspace_write.writable_roots": '["/data"]'}`, and/or set `cwd` so the workspace root matches where the task's files live.
 
 ### Customizing Guardian
 
