@@ -21,7 +21,10 @@ from inspect_ai.tool import MCPServerConfig, MCPServerConfigHTTP
 from inspect_ai.util import ExecRemoteProcess
 from typing_extensions import TypedDict, Unpack
 
-from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
+from inspect_swe._util.mcp_ready import (
+    DEFAULT_MCP_READY_TIMEOUT,
+    wait_for_mcp_endpoints,
+)
 
 from .client import ACPError, acp_connection, format_acp_failure
 
@@ -60,6 +63,8 @@ class ACPAgentParams(TypedDict, total=False):
         env: Extra environment variables for the agent process.
         user: User to execute the agent as in the sandbox.
         sandbox: Sandbox environment name.
+        mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
+            tools before the agent launch errors.
     """
 
     model: str | Model | None
@@ -73,6 +78,7 @@ class ACPAgentParams(TypedDict, total=False):
     env: dict[str, str] | None
     user: str | None
     sandbox: str | None
+    mcp_ready_timeout: float
 
 
 class ACPAgent(Agent):
@@ -109,6 +115,12 @@ class ACPAgent(Agent):
         self.env: dict[str, str] = kwargs.get("env") or {}
         self.user = kwargs.get("user")
         self.sandbox = kwargs.get("sandbox")
+        mcp_ready_timeout = kwargs.get("mcp_ready_timeout")
+        self.mcp_ready_timeout = (
+            DEFAULT_MCP_READY_TIMEOUT
+            if mcp_ready_timeout is None
+            else mcp_ready_timeout
+        )
 
         self.model_map: dict[str, str | Model] = self._build_model_map()
         model_map_override = kwargs.get("model_map")
@@ -212,6 +224,7 @@ class ACPAgent(Agent):
                             bridged_http_configs,
                             bridge,
                             sandbox=self.sandbox,
+                            timeout=self.mcp_ready_timeout,
                             required=True,
                         )
 

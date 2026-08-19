@@ -6,6 +6,7 @@ from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_swe import codex_cli, interactive_codex_cli
 from inspect_swe._codex_cli.config import (
     GUARDIAN_MODEL_SLUG,
+    MCP_STARTUP_TIMEOUT_SEC,
     CodexApprovalPolicy,
     CodexAutoReview,
     CodexSandboxMode,
@@ -527,7 +528,7 @@ def test_bridged_mcp_server_is_marked_required() -> None:
         type="http", name="bridged-tools", url="http://localhost:9000/mcp"
     )
 
-    config = codex_mcp_server_config(server, {"bridged-tools"})
+    config = codex_mcp_server_config(server, {"bridged-tools"}, None)
 
     assert config["required"] is True
     assert "name" not in config
@@ -540,9 +541,39 @@ def test_static_mcp_server_is_not_marked_required() -> None:
         type="http", name="caller-tools", url="http://localhost:9001/mcp"
     )
 
-    config = codex_mcp_server_config(server, {"bridged-tools"})
+    config = codex_mcp_server_config(server, {"bridged-tools"}, None)
 
     assert "required" not in config
+
+
+def test_bridged_mcp_server_gets_the_startup_timeout() -> None:
+    server = MCPServerConfigHTTP(
+        type="http", name="bridged-tools", url="http://localhost:9000/mcp"
+    )
+
+    config = codex_mcp_server_config(server, {"bridged-tools"}, MCP_STARTUP_TIMEOUT_SEC)
+
+    assert config["startup_timeout_sec"] == 300
+
+
+def test_static_mcp_server_keeps_codex_default_startup_timeout() -> None:
+    server = MCPServerConfigHTTP(
+        type="http", name="caller-tools", url="http://localhost:9001/mcp"
+    )
+
+    config = codex_mcp_server_config(server, {"bridged-tools"}, MCP_STARTUP_TIMEOUT_SEC)
+
+    assert "startup_timeout_sec" not in config
+
+
+def test_bridged_mcp_server_accepts_an_explicit_startup_timeout() -> None:
+    server = MCPServerConfigHTTP(
+        type="http", name="bridged-tools", url="http://localhost:9000/mcp"
+    )
+
+    config = codex_mcp_server_config(server, {"bridged-tools"}, 60)
+
+    assert config["startup_timeout_sec"] == 60
 
 
 def test_codex_cli_rejects_non_bool_centaur() -> None:
@@ -595,13 +626,21 @@ def test_codex_mcp_servers_toml_gates_on_force_approve() -> None:
     bridged_server_names = {"bridged-tools"}
 
     static_toml = codex_mcp_servers_toml(
-        [static], bridged_server_names, "never", force_approve=False
+        [static],
+        bridged_server_names,
+        "never",
+        force_approve=False,
+        bridged_startup_timeout=MCP_STARTUP_TIMEOUT_SEC,
     )
     assert "default_tools_approval_mode" not in static_toml["mcp_servers.caller-tools"]
     assert "required" not in static_toml["mcp_servers.caller-tools"]
 
     static_opted_in = codex_mcp_servers_toml(
-        [static], bridged_server_names, "never", force_approve=True
+        [static],
+        bridged_server_names,
+        "never",
+        force_approve=True,
+        bridged_startup_timeout=MCP_STARTUP_TIMEOUT_SEC,
     )
     assert (
         static_opted_in["mcp_servers.caller-tools"]["default_tools_approval_mode"]
@@ -609,7 +648,11 @@ def test_codex_mcp_servers_toml_gates_on_force_approve() -> None:
     )
 
     bridged_toml = codex_mcp_servers_toml(
-        [bridged], bridged_server_names, "never", force_approve=True
+        [bridged],
+        bridged_server_names,
+        "never",
+        force_approve=True,
+        bridged_startup_timeout=MCP_STARTUP_TIMEOUT_SEC,
     )
     assert (
         bridged_toml["mcp_servers.bridged-tools"]["default_tools_approval_mode"]
