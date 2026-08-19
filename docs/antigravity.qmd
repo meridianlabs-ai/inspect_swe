@@ -17,6 +17,7 @@ The following options are supported for customizing the behavior of the agent:
 | `system_prompt` | Additional system prompt to append to default system prompt. |
 | `mcp_servers` | MCP servers to make available to the agent. localharness reaches servers over streamable HTTP, so `type="http"` configs are required and `type="sse"` is rejected rather than silently reconstructed. |
 | `bridged_tools` | Host-side Inspect tools to expose via MCP. |
+| `mcp_ready_timeout` | Seconds to wait for bridged MCP endpoints to serve tools before the agent launch errors. |
 | `model` | Model name to use for agent (defaults to main model for task). |
 | `model_aliases` | Mapping of model names to Model instances/strings; alias keys resolve against `endpoint_model`. |
 | `filter` | Filter for intercepting bridged model requests (Model-first `GenerateFilter` form only). |

@@ -19,6 +19,7 @@ from inspect_swe._util.agentcontext import (
     slug_map_classifier,
 )
 from inspect_swe._util.path import join_path
+from inspect_swe._util.websearch import web_search_tool_disallowed
 from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
 
@@ -136,6 +137,9 @@ class ClaudeCode(ACPAgent):
             ),
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
+            web_search=not web_search_tool_disallowed(
+                self._disallowed_tools, "WebSearch"
+            ),
             port=port,
         ) as bridge:
             # Install node and claude-agent-acp in the sandbox.

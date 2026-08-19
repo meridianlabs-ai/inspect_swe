@@ -199,7 +199,33 @@ def run_example(
 
     if sandbox is not None:
         task_args["sandbox"] = sandbox
-    return eval(example_file, model=model, limit=1, task_args=task_args)
+
+    # Bound the agent. These examples are trivial by construction -- guess a
+    # number without calling tools, answer "what is 2+2" -- so a run that
+    # reaches either limit is a runaway CLI loop, not slow honest work.
+    # Nothing else bounds them: the tasks set no limits and the agents'
+    # sbox.exec_remote() calls pass no timeout, so the only backstop is the
+    # pytest timeout, which reports as an opaque stall (and, under
+    # --timeout-method=thread, as a bare "worker crashed"). Seen in
+    # meridianlabs-ai/actions run 31968805891, where gemini_cli looped for
+    # 9m21s and 1.68M tokens on multiple_attempts before pytest killed it.
+    #
+    # Both limits earn their place: time catches a wedged process that has
+    # stopped generating, tokens cap the cost of one that has not.
+    #
+    # The token ceiling is deliberately loose. It is shared by every example
+    # (system_explorer and web_search are genuinely multi-turn), and cached
+    # reads count toward it -- they were 1.4M of that 1.68M -- so a tight cap
+    # would clip honest runs. 500k still trips a runaway inside ~3 minutes,
+    # ahead of the time limit, while sitting well clear of real usage.
+    return eval(
+        example_file,
+        model=model,
+        limit=1,
+        task_args=task_args,
+        time_limit=300,
+        token_limit=500_000,
+    )
 
 
 # --- Wheels cache utilities ---

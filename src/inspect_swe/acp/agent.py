@@ -21,6 +21,11 @@ from inspect_ai.tool import MCPServerConfig, MCPServerConfigHTTP
 from inspect_ai.util import ExecRemoteProcess
 from typing_extensions import TypedDict, Unpack
 
+from inspect_swe._util.mcp_ready import (
+    DEFAULT_MCP_READY_TIMEOUT,
+    wait_for_mcp_endpoints,
+)
+
 from .client import ACPError, acp_connection, format_acp_failure
 
 logger = logging.getLogger(__name__)
@@ -58,6 +63,8 @@ class ACPAgentParams(TypedDict, total=False):
         env: Extra environment variables for the agent process.
         user: User to execute the agent as in the sandbox.
         sandbox: Sandbox environment name.
+        mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
+            tools before the agent launch errors.
     """
 
     model: str | Model | None
@@ -71,6 +78,7 @@ class ACPAgentParams(TypedDict, total=False):
     env: dict[str, str] | None
     user: str | None
     sandbox: str | None
+    mcp_ready_timeout: float
 
 
 class ACPAgent(Agent):
@@ -107,6 +115,12 @@ class ACPAgent(Agent):
         self.env: dict[str, str] = kwargs.get("env") or {}
         self.user = kwargs.get("user")
         self.sandbox = kwargs.get("sandbox")
+        mcp_ready_timeout = kwargs.get("mcp_ready_timeout")
+        self.mcp_ready_timeout = (
+            DEFAULT_MCP_READY_TIMEOUT
+            if mcp_ready_timeout is None
+            else mcp_ready_timeout
+        )
 
         self.model_map: dict[str, str | Model] = self._build_model_map()
         model_map_override = kwargs.get("model_map")
@@ -193,13 +207,26 @@ class ACPAgent(Agent):
                     all_configs.extend(bridge.mcp_server_configs)
                     acp_mcp_servers = bridge_mcp_to_acp(all_configs)
 
-                    # Wait for the bridge proxy MCP endpoints to be
-                    # reachable before starting the ACP session.  Some
-                    # agents (e.g. gemini CLI) connect to MCP servers
-                    # synchronously during new_session and will silently
-                    # skip tools if the proxy isn't ready yet.
-                    if all_configs:
-                        await _wait_for_mcp_endpoints(all_configs, bridge)
+                    # Wait for the BRIDGE proxy MCP endpoints to be ready
+                    # before starting the ACP session. Some agents (e.g.
+                    # gemini CLI) connect to MCP servers synchronously during
+                    # new_session and will silently skip tools if the proxy
+                    # isn't ready yet. Static caller-provided servers are not
+                    # probed: they may require auth headers the probe does not
+                    # carry, and their availability is the caller's contract.
+                    bridged_http_configs = [
+                        c
+                        for c in bridge.mcp_server_configs
+                        if isinstance(c, MCPServerConfigHTTP)
+                    ]
+                    if bridged_http_configs:
+                        await wait_for_mcp_endpoints(
+                            bridged_http_configs,
+                            bridge,
+                            sandbox=self.sandbox,
+                            timeout=self.mcp_ready_timeout,
+                            required=True,
+                        )
 
                     async with acp_connection(proc) as (conn, feeder, error_info):
                         logger.info("ACP: initializing...")
@@ -236,42 +263,3 @@ class ACPAgent(Agent):
             logger.info("ACPAgent: cancelled, returning partial state")
 
         return state
-
-
-async def _wait_for_mcp_endpoints(
-    configs: list[MCPServerConfigHTTP],
-    bridge: SandboxAgentBridge,
-    timeout: float = 30.0,
-    interval: float = 0.5,
-) -> None:
-    """Wait until bridge MCP HTTP endpoints are reachable from the sandbox.
-
-    The bridge proxy starts asynchronously and may not be listening yet
-    when ``_start_agent`` yields.  This polls the first MCP endpoint
-    until it responds.
-    """
-    from inspect_ai.util import sandbox as sandbox_env
-
-    sbox = sandbox_env()
-    url = configs[0].url
-    elapsed = 0.0
-
-    while elapsed < timeout:
-        result = await sbox.exec(
-            [
-                "bash",
-                "-c",
-                f"curl -sf -o /dev/null --max-time 2 -X POST {url} 2>/dev/null && echo OK || echo FAIL",
-            ],
-        )
-        if "OK" in result.stdout:
-            logger.info("Bridge MCP endpoint ready at %s (%.1fs)", url, elapsed)
-            return
-        await anyio.sleep(interval)
-        elapsed += interval
-
-    logger.warning(
-        "Bridge MCP endpoint at %s not ready after %.0fs — proceeding anyway",
-        url,
-        timeout,
-    )

@@ -26,14 +26,15 @@ def test_resolve_version_literal() -> None:
 def install_opencode_in_sandbox(version: str = "stable") -> Solver:
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         sbox = sandbox()
-        opencode_binary, node_binary = await ensure_opencode_setup(
+        opencode_binary, dependency_bin_dirs = await ensure_opencode_setup(
             sbox, version=version, user=None
         )
         state.metadata["opencode_binary"] = opencode_binary
-        state.metadata["node_binary"] = node_binary
+        state.metadata["dependency_bin_dirs"] = dependency_bin_dirs
 
+        path = ":".join([*dependency_bin_dirs, "/usr/local/bin", "/usr/bin", "/bin"])
         version_result = await sbox.exec(
-            node_binary + [opencode_binary, "--version"], user=None
+            [opencode_binary, "--version"], env={"PATH": path}, user=None
         )
         state.metadata["version_ok"] = version_result.success
         state.metadata["reported_version"] = version_result.stdout.strip()

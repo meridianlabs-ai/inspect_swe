@@ -114,7 +114,7 @@ def test_codex_align_older_openai_passes_through() -> None:
 @skip_if_no_anthropic
 @skip_if_no_docker
 def test_codex_align_non_openai_uses_generic_fallback() -> None:
-    capture = _run_codex("anthropic/claude-sonnet-4-0")
+    capture = _run_codex("anthropic/claude-sonnet-4-5")
     assert capture.system_prompt, "expected a non-empty system prompt"
     assert not _offers_apply_patch(capture.tool_names or []), (
         f"expected no apply_patch for a non-OpenAI model, got tools: {capture.tool_names}"
