@@ -36,17 +36,21 @@ independently via its unique spawn `tool_call_id`.
 from dataclasses import dataclass
 from logging import getLogger
 
+from inspect_ai.agent import AgentBridgeContext, current_bridge_request
 from inspect_ai.event import CompactionEvent, SpanBeginEvent, SpanEndEvent
 from inspect_ai.event._model import ModelEvent
 from inspect_ai.log import transcript
+from inspect_ai.model import Model
 from inspect_ai.model._chat_message import (
     ChatMessage,
     ChatMessageTool,
     ChatMessageUser,
 )
 from inspect_ai.model._model import ModelEventSink
+from inspect_ai.tool import ToolInfo
 from inspect_ai.util._span import current_span_id
 
+from ..config import GUARDIAN_MODEL_SLUG
 from .detection import (
     agent_message_recipients,
     completed_thread_ids,
@@ -191,6 +195,47 @@ class CodexConsumer(ModelEventSink):
         if id(event) in self._emitted_events:
             self._emitted_events.discard(id(event))
             transcript()._event_updated(event)
+
+    # ------------------------------------------------------------------
+    # filter-time classification (AgentContextClassifier)
+    # ------------------------------------------------------------------
+
+    def classify(
+        self, _model: Model, messages: list[ChatMessage], _tools: list[ToolInfo]
+    ) -> AgentBridgeContext:
+        """Filter-time agent classification from the same maps as span attribution.
+
+        Runs inside the bridge filter (before generation), so it must not
+        assume `on_pending` has already seen this request — it does its own
+        `_harvest_bindings` + `_attribute`, exactly as `on_pending` would.
+
+        Two positive claims are checked first, since neither is visible to
+        `_attribute`: the guardian (`auto_review`) model slug and Codex's own
+        local-compaction marker both mean "utility" regardless of any open
+        sub-agent. Then a call addressed to the root thread itself — a
+        sub-agent's inbound `agent_message` with recipient "/root" — is a
+        positive root claim even while sub-agents are open; `_attribute` has
+        no such case (it only ever falls back to the outer span there), so
+        it's special-cased here. Everything else defers to `_attribute`:
+        a sub-agent span means "subagent"; the outer span means "root" only
+        when no sub-agents are open (an unattributed call with open
+        sub-agents is `_attribute`'s own ambiguity fallback, not a genuine
+        root signal) — otherwise "unknown".
+        """
+        request = current_bridge_request()
+        if request is not None and request.model == GUARDIAN_MODEL_SLUG:
+            return AgentBridgeContext("utility")
+        if is_compaction_request(messages):
+            return AgentBridgeContext("utility")
+
+        self._harvest_bindings(messages)
+        if agent_message_recipients(messages) == {"/root"}:
+            return AgentBridgeContext("root")
+
+        span_id = self._attribute(messages)
+        if span_id != self.outer_span_id:
+            return AgentBridgeContext("subagent")
+        return AgentBridgeContext("root" if not self._agents else "unknown")
 
     # ------------------------------------------------------------------
     # internal

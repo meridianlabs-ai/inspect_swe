@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from inspect_ai.agent import AgentState, SandboxAgentBridge, agent, sandbox_agent_bridge
-from inspect_ai.model import Model, get_model
+from inspect_ai.model import GenerateFilter, Model, get_model
 from inspect_ai.tool import Skill, install_skills, read_skills
 from inspect_ai.util import ExecRemoteProcess, ExecRemoteStreamingOptions, store
 from inspect_ai.util import sandbox as sandbox_env
@@ -15,11 +15,33 @@ from typing_extensions import Unpack
 
 from inspect_swe._gemini_cli.agentbinary import ensure_gemini_cli_setup
 from inspect_swe._gemini_cli.gemini_cli import build_gemini_settings
+from inspect_swe._gemini_cli.models import GEMINI_UTILITY_MODEL_KINDS
+from inspect_swe._util.agentcontext import (
+    ModelFilter,
+    classify_filter,
+    slug_map_classifier,
+)
 from inspect_swe._util.path import join_path
 from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
 
 logger = logging.getLogger(__name__)
+
+
+def build_gemini_acp_filter(
+    filter: GenerateFilter | None, primary_slug: str
+) -> ModelFilter:
+    """Gemini CLI (ACP) bridge filter: agent-context classification by requested slug.
+
+    ``primary_slug`` is ``model.name`` -- the presented slug passed as this
+    variant's ``--model`` -- mirroring the non-ACP variant's
+    ``build_gemini_filter`` (which keys on ``gemini_model`` instead, since
+    that variant takes the CLI-facing slug directly rather than deriving it
+    from a resolved ``Model``).
+    """
+    return classify_filter(
+        filter, slug_map_classifier({primary_slug}, GEMINI_UTILITY_MODEL_KINDS)
+    )
 
 
 class GeminiCli(ACPAgent):
@@ -74,7 +96,7 @@ class GeminiCli(ACPAgent):
             # env-var override; route all of them to this agent's target.
             model=str(model),
             model_aliases=self.model_map,
-            filter=self.filter,
+            filter=build_gemini_acp_filter(self.filter, model.name),
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
             web_search=self._web_search,

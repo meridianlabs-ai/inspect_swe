@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from inspect_ai.agent import AgentState, SandboxAgentBridge, agent, sandbox_agent_bridge
-from inspect_ai.model import get_model
+from inspect_ai.model import GenerateFilter, get_model
 from inspect_ai.tool import Skill, install_skills, read_skills
 from inspect_ai.util import (
     ExecRemoteProcess,
@@ -19,6 +19,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
 from inspect_swe._codex_cli.config import (
+    GUARDIAN_MODEL_SLUG,
     CodexAutoReview,
     CodexDeprecatedArgs,
     CodexWebSearch,
@@ -27,6 +28,11 @@ from inspect_swe._codex_cli.config import (
     resolve_codex_auto_review_model_aliases,
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
+)
+from inspect_swe._util.agentcontext import (
+    ModelFilter,
+    classify_filter,
+    slug_map_classifier,
 )
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import sandbox_exec
@@ -37,6 +43,23 @@ from inspect_swe.acp.agent import ACPAgentParams
 from .agentbinary import ensure_codex_acp_setup
 
 logger = logging.getLogger(__name__)
+
+
+def build_codex_acp_filter(
+    filter: GenerateFilter | None, default_model: str
+) -> ModelFilter:
+    """Codex CLI (ACP) bridge filter: agent-context classification by requested slug.
+
+    ``codex-acp`` has no JSONL/event stream for a `CodexConsumer` to parse,
+    so there's no spawn_agent thread tracking or compaction-marker detection
+    available here -- just the guardian slug's structural check from
+    `CodexConsumer.classify` (see `_codex_cli/_events/consumer.py`).
+    Unattributed subagent traffic (codex-acp's own delegation, if any) has
+    no known slug to key on and falls through to "unknown".
+    """
+    return classify_filter(
+        filter, slug_map_classifier({default_model}, {GUARDIAN_MODEL_SLUG: "utility"})
+    )
 
 
 class CodexACPAgentParams(ACPAgentParams, CodexDeprecatedArgs, total=False):
@@ -97,7 +120,7 @@ class CodexCli(ACPAgent):
                 # requests to this agent's model
                 default=get_model(self.model),
             ),
-            filter=self.filter,
+            filter=build_codex_acp_filter(self.filter, default_model),
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
             web_search=self._web_search != "disabled",

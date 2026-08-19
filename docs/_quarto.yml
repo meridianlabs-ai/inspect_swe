@@ -19,3 +19,5 @@ inspect-docs:
         - href: opencode.qmd
         - href: mini_swe_agent.qmd
         - href: antigravity.qmd
+    - text: Sub-Agent Context
+      href: sub-agent-context.qmd

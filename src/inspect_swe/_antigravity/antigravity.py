@@ -29,6 +29,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
+from inspect_swe._util.agentcontext import classify_filter, static_root_classifier
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -182,6 +183,13 @@ def _confine_declared_tools(
     return _filter
 
 
+def build_antigravity_filter(
+    filter: _ModelGenerateFilter | None,
+) -> _ModelGenerateFilter:
+    """Antigravity bridge filter: tool confinement + static root agent context."""
+    return classify_filter(_confine_declared_tools(filter), static_root_classifier)
+
+
 @dataclass(frozen=True, slots=True)
 class SDKExecutionSpec:
     command: list[str]
@@ -300,8 +308,8 @@ def antigravity(
         filter: Filter for intercepting bridged model requests. Note this agent's
             filter is typed Model-first (the non-deprecated GenerateFilter form);
             the deprecated str-first form is not accepted, unlike sibling agents,
-            because the confinement wrapper dispatches on the outermost filter's
-            first-parameter annotation.
+            because the confinement wrapper invokes the user filter Model-first
+            directly, with no legacy-dispatch branching of its own.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         user: Sandbox user to run the SDK as (defaults to the sandbox default user).
         cwd: Working directory for the SDK (defaults to the user's home directory).
@@ -321,7 +329,7 @@ def antigravity(
             state,
             model=bridge_model,
             model_aliases=model_aliases,
-            filter=_confine_declared_tools(filter),
+            filter=build_antigravity_filter(filter),
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=bridge_port,
