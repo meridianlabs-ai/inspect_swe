@@ -42,13 +42,32 @@ Three responsibilities, all driven from the same `LiveConsumer` instance:
    Claude Code re-sends the sub-agent's full conversation history on
    each request, with the original Task prompt always at `input[0]`.
    `_pending_subagents` and the open span are cleared in `_handle_user`
-   when the matching `tool_result` arrives.
+   when the matching `tool_result` arrives — for a *synchronous* Task.
+
+   **Async/background Task agents (`Task(..., async=True)` or
+   equivalent) are different**: the `tool_result` that arrives ~0.5s
+   after spawn is only a launch acknowledgment (its text starts
+   "Async agent launched successfully", verified live against CC
+   2.1.220 in `~/Development/test_evals/logs/agent-context/claude_code`)
+   — the sub-agent's real bridged calls arrive seconds later. If we
+   closed the span and cleared `_pending_subagents` on that ack (as a
+   sync Task's real `tool_result` would warrant), every later call would
+   find the registry empty and fall through to the outer span. So for an
+   async ack, `_handle_user` marks the `_OpenAgent` as `launched_async`
+   and leaves the span open / prompt registered; the span only closes
+   when the genuine completion signal arrives — a synthetic `user`
+   message whose text contains a `<task-notification>` block carrying
+   `<tool-use-id>`, which is (live-verified, same log) the *original*
+   Task tool_use_id verbatim, so it correlates directly to the
+   `_open_agents` entry without needing the CC-internal `<task-id>`.
 
 2. **JSONL consumer** — `process_jsonl_line` reads each line printed by
    Claude Code's `--output-format stream-json` and emits agent
-   `SpanEndEvent` (on `tool_result` for Task/Agent), and emits
-   `CompactionEvent` for `compact_boundary` system events. Span
-   *opening* is no longer driven from JSONL — see callback (1) above.
+   `SpanEndEvent` — on `tool_result` for a synchronous Task/Agent, or on
+   the correlated `<task-notification>` completion signal for an async
+   one — and emits `CompactionEvent` for `compact_boundary` system
+   events. Span *opening* is no longer driven from JSONL — see callback
+   (1) above.
 
 3. **`AgentContextClassifier`** — `classify()` is installed on the bridge
    filter (via `agentcontext.classify_filter`, see `claude_code.py`) so
@@ -62,6 +81,7 @@ Three responsibilities, all driven from the same `LiveConsumer` instance:
    presented slug. See `classify`'s docstring for the full truth table.
 """
 
+import re
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
@@ -99,12 +119,39 @@ _MIN_PROMPT_LENGTH = 16
 # `_check_subagent_slug_drift`).
 _SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD = 5
 
+# Prefix of an async/background Task's launch-acknowledgment tool_result text
+# (as opposed to a synchronous Task's real-result tool_result text).
+# Live-verified against CC 2.1.220 in
+# ~/Development/test_evals/logs/agent-context/claude_code/*.eval (msg[3]/
+# msg[4] of the recorded sample: two Task tool_results, both starting with
+# this exact string, arriving ~0.5s after the spawning assistant turn --
+# long before either sub-agent's real work could have finished).
+_ASYNC_LAUNCH_ACK_PREFIX = "Async agent launched successfully"
+
+# An async Task's genuine completion signal: a synthetic "user" turn (message
+# content is a plain string per Claude Code's synthetic-injection shape, not
+# a tool_result block) containing a <task-notification> block. Same recorded
+# sample, msg[6]/msg[8]: each notification carries a <tool-use-id> equal
+# (verbatim) to the *original* Task tool_use_id -- not the CC-internal
+# <task-id> also present in the block -- which is what lets us correlate the
+# notification back to the specific `_open_agents` entry without guessing.
+_TASK_NOTIFICATION_MARKER = "<task-notification>"
+_TASK_NOTIFICATION_TOOL_USE_ID_RE = re.compile(
+    r"<tool-use-id>\s*([^<\s]+)\s*</tool-use-id>"
+)
+
 
 @dataclass
 class _OpenAgent:
     """An agent span currently open (Task tool_use seen, no tool_result yet)."""
 
     span_id: str
+
+    # Set once we observe this agent's tool_result as an async launch
+    # acknowledgment (rather than a synchronous real result). Only
+    # async-launched agents close on a correlated <task-notification>;
+    # everything else keeps closing on tool_result as before.
+    launched_async: bool = False
 
 
 class LiveConsumer(ModelEventSink):
@@ -155,6 +202,13 @@ class LiveConsumer(ModelEventSink):
         self._requests_since_first_subagent_span = 0
         self._subagent_slug_drift_warned = False
 
+        # Drift canary for the async-launch-ack signal (see
+        # `_warn_unresolvable_task_notification`): whether we've already
+        # warned that a `<task-notification>` named a tool_use_id that
+        # isn't a currently-open launched-async agent -- warn once per
+        # consumer instance, not once per notification.
+        self._task_notification_drift_warned = False
+
     @property
     def last_stop_reason(self) -> StopReason | None:
         """Stop reason of the last completed model event this attempt."""
@@ -179,12 +233,13 @@ class LiveConsumer(ModelEventSink):
         balanced even if Claude Code crashed before its tool_result blocks
         were written.
 
-        Deliberately does NOT clear the subagent-slug drift canary fields
+        Deliberately does NOT clear the drift canary fields
         (`_subagent_slug_seen`, `_first_subagent_span_seen`,
-        `_subagent_slug_drift_warned`, `_requests_since_first_subagent_span`)
-        -- they track this consumer instance's lifetime, not any single
-        attempt, so a slug sighting (or a warning already issued) from
-        before a retry must still suppress/count against later attempts.
+        `_subagent_slug_drift_warned`, `_requests_since_first_subagent_span`,
+        `_task_notification_drift_warned`) -- they track this consumer
+        instance's lifetime, not any single attempt, so a slug sighting (or
+        a warning already issued) from before a retry must still
+        suppress/count against later attempts.
         """
         for tool_use_id in reversed(list(self._open_agents.keys())):
             agent = self._open_agents.pop(tool_use_id)
@@ -289,12 +344,57 @@ class LiveConsumer(ModelEventSink):
         Delegates the substring match to `_match_pending_prompt` (shared with
         `classify`) and resolves the matched sub-agent's span, falling back
         to the outer span whenever there's no unambiguous match.
+
+        Safety net for async Task agents: if the prompt-match fails but the
+        request is structurally known to be sub-agent traffic (its slug is
+        `models.subagent` -- see `classify`'s truth table), there is exactly
+        one async-launched agent currently open, AND it is the *only* open
+        agent of any kind (no concurrently-open sync agent it could be
+        confused with), attribute to it. Requiring sole occupancy of
+        `_open_agents` -- not just sole occupancy among async agents -- is
+        what makes this unambiguous: a concurrently-open sync agent with an
+        unmatchable prompt (below `_MIN_PROMPT_LENGTH`, or substring-
+        overlapping another) would otherwise let this net misattribute that
+        sync agent's own traffic to the async one. Any other combination
+        (zero async agents open, multiple open agents of any kind) falls
+        back to the outer span like any other unmatched call.
+
+        Known limitation (deferred, not implemented): Claude Code lets a
+        user resume a *completed* async agent via SendMessage (the
+        launch-ack text includes "Use SendMessage with to: '<agentId>' ...
+        to continue this agent", and a `<task-notification>`'s own
+        `<note>` says "the same task-id may notify more than once"). If a
+        resumed agent's continuation calls arrive after its span already
+        closed on `<task-notification>`, and some other async agent
+        happens to be the sole open agent at that moment, this safety net
+        would attribute the resumed agent's traffic to that *other* open
+        agent -- wrong-sibling attribution again, just via a different
+        path than the bug this net was added to guard against. Fixing this
+        would need a "tombstone": retaining a closed async agent's
+        span_id (keyed by its tool_use_id/agentId) for some bounded window
+        after close, so a later resume can still correlate to its own
+        (closed, but reopenable) span rather than falling through to the
+        net. Judged out of scope here -- the resume flow isn't exercised
+        by the recorded log this fix is based on, and a tombstone adds
+        real state (eviction policy, reopen-vs-new-span semantics) for a
+        case that hasn't been observed live yet.
         """
         tool_use_id = self._match_pending_prompt(input_messages)
         if tool_use_id is not None:
             agent = self._open_agents.get(tool_use_id)
             if agent is not None:
                 return agent.span_id
+
+        request = current_bridge_request()
+        if (
+            request is not None
+            and request.model == self._models.subagent
+            and len(self._open_agents) == 1
+        ):
+            (only_agent,) = self._open_agents.values()
+            if only_agent.launched_async:
+                return only_agent.span_id
+
         return self.outer_span_id
 
     def _match_pending_prompt(self, input_messages: list[ChatMessage]) -> str | None:
@@ -432,34 +532,160 @@ class LiveConsumer(ModelEventSink):
     # ------------------------------------------------------------------
 
     def _handle_user(self, raw: dict[str, Any]) -> None:
-        """Close agent spans and clear pending-sub-agent entries for tool_result blocks."""
+        """Route a "user" JSONL line to tool_result / task-notification handling.
+
+        Two shapes matter here (see the module-level marker constants for
+        live-verified provenance):
+
+        - `message.content` a list containing a `tool_result` block: a
+          Task/Agent tool_result. Synchronous Task -> close now, as always.
+          Async Task -> the block is only a launch acknowledgment; mark
+          launched-async and leave the span open (`_handle_tool_result`).
+        - `message.content` a plain string (or a list of `text` blocks,
+          tolerated the same way `extraction.py`'s offline extractor does)
+          containing a `<task-notification>` block: an async Task's genuine
+          completion signal, correlated by `<tool-use-id>`
+          (`_handle_task_notification`).
+        """
         message = raw.get("message", {})
         content = message.get("content", [])
+
+        if isinstance(content, str):
+            self._handle_task_notification(content)
+            return
         if not isinstance(content, list):
             return
 
+        text_blocks: list[str] = []
         for block in content:
             if not isinstance(block, dict):
                 continue
-            if block.get("type") != "tool_result":
+            block_type = block.get("type")
+            if block_type == "tool_result":
+                self._handle_tool_result(block)
+            elif block_type == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    text_blocks.append(text)
+
+        if text_blocks:
+            self._handle_task_notification("\n".join(text_blocks))
+
+    def _handle_tool_result(self, block: dict[str, Any]) -> None:
+        """Handle one `tool_result` content block from a "user" JSONL line."""
+        tool_use_id = block.get("tool_use_id")
+        if not tool_use_id:
+            return
+
+        agent = self._open_agents.get(tool_use_id)
+        if agent is not None and self._is_async_launch_ack(block):
+            # Async Task: this tool_result is only the launch acknowledgment,
+            # not completion. Keep the span open and the prompt registered
+            # (`_pending_subagents` untouched) so `_attribute` keeps routing
+            # this sub-agent's later bridge calls correctly; the span closes
+            # later on the correlated <task-notification>
+            # (`_handle_task_notification`), or at worst on `reset()`.
+            agent.launched_async = True
+            return
+
+        # Sync Task (or any non-Task tool_result): unchanged behavior --
+        # clear the pending entry and close the span now.
+        self._pending_subagents.pop(tool_use_id, None)
+        agent = self._open_agents.pop(tool_use_id, None)
+        if agent is None:
+            return
+        transcript()._event(SpanEndEvent(id=agent.span_id))
+
+    @staticmethod
+    def _is_async_launch_ack(block: dict[str, Any]) -> bool:
+        """Whether a tool_result block's text is an async-launch acknowledgment.
+
+        See `_ASYNC_LAUNCH_ACK_PREFIX` for provenance.
+        """
+        result_content = block.get("content")
+        text = ""
+        if isinstance(result_content, str):
+            text = result_content
+        elif isinstance(result_content, list):
+            for item in result_content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = str(item.get("text", ""))
+                    break
+        return text.startswith(_ASYNC_LAUNCH_ACK_PREFIX)
+
+    def _handle_task_notification(self, text: str) -> None:
+        """Close async Tasks' spans on their genuine completion signal.
+
+        See `_TASK_NOTIFICATION_MARKER` / `_TASK_NOTIFICATION_TOOL_USE_ID_RE`
+        for provenance. Scans for *every* `<tool-use-id>` in the text (not
+        just the first) since a batched turn can carry more than one
+        `<task-notification>` block -- e.g. two background agents finishing
+        close together and both notifications landing in the same JSONL
+        "user" line. Only closes agents already marked `launched_async`
+        (sync Tasks already closed on their real tool_result); if a
+        `<tool-use-id>` names an agent we don't have open (or don't have
+        marked launched-async), that one notification is a no-op --
+        conservative by design, per the module docs: an un-correlated async
+        agent's span just stays open until `reset()` closes it (innermost-
+        first) rather than guessing which one finished. That no-op is also
+        the live signature of `_is_async_launch_ack`'s prefix match having
+        gone stale (see `_warn_unresolvable_task_notification`).
+        """
+        if _TASK_NOTIFICATION_MARKER not in text:
+            return
+
+        matches = list(_TASK_NOTIFICATION_TOOL_USE_ID_RE.finditer(text))
+        if not matches:
+            return
+
+        for match in matches:
+            tool_use_id = match.group(1)
+            agent = self._open_agents.get(tool_use_id)
+            if agent is None or not agent.launched_async:
+                self._warn_unresolvable_task_notification(tool_use_id)
                 continue
-            tool_use_id = block.get("tool_use_id")
-            if not tool_use_id:
-                continue
-            # Clear pending-subagent entry (no-op for non-Task tool_results).
+
             self._pending_subagents.pop(tool_use_id, None)
-            agent = self._open_agents.pop(tool_use_id, None)
-            if agent is None:
-                continue
+            self._open_agents.pop(tool_use_id, None)
             transcript()._event(SpanEndEvent(id=agent.span_id))
+
+    def _warn_unresolvable_task_notification(self, tool_use_id: str) -> None:
+        """Warn (once, per consumer instance) of an unresolvable notification.
+
+        A `<task-notification>` naming a `tool_use_id` that isn't a
+        currently-open launched-async agent is the free-standing signature
+        of `_is_async_launch_ack`'s prefix match having gone stale (CC
+        reworded the launch-ack text, so `_handle_tool_result` never marked
+        the agent `launched_async` in the first place) -- the same failure
+        mode `_check_subagent_slug_drift` guards for the subagent-slug
+        signal. Silently no-op'ing forever would let async spans quietly
+        stop closing on notification (falling back to `reset()` only) with
+        nothing surfaced; this warns once instead.
+        """
+        if self._task_notification_drift_warned:
+            return
+        self._task_notification_drift_warned = True
+        logger.warning(
+            "claude code <task-notification> named tool_use_id %r that "
+            "isn't a currently-open launched-async agent -- async-launch-ack "
+            "detection may have gone stale (CC changed the launch-ack "
+            "text), or the notification arrived after the agent's span "
+            "already closed",
+            tool_use_id,
+        )
 
     def _handle_system(self, raw: dict[str, Any]) -> None:
         """Handle system events (only compaction boundaries today).
 
-        Sub-agent lifecycle (`task_started`/`task_notification`) intentionally
-        ignored: registration happens in `on_complete` (synchronous with the
-        parent's bridge call, ahead of any race), and cleanup happens in
-        `_handle_user` on the matching tool_result.
+        Sub-agent lifecycle is driven elsewhere, not from a `system`-typed
+        JSONL line: registration happens in `on_complete` (synchronous with
+        the parent's bridge call, ahead of any race), sync-Task cleanup
+        happens in `_handle_tool_result` on the matching `tool_result`, and
+        async-Task cleanup happens in `_handle_task_notification` on the
+        correlated `<task-notification>` completion signal -- which,
+        live-verified against CC 2.1.220, arrives as a `user`-typed JSONL
+        line (plain-string `message.content`), not a `system` one, despite
+        the "notification" in its name.
         """
         subtype = raw.get("subtype")
         if subtype == "compact_boundary":
