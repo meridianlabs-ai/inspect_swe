@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.71](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.70...0.2.71) (2026-08-21)
+
+
+### Features
+
+* **codex_cli:** configure sandbox and approval policies ([#88](https://github.com/meridianlabs-ai/inspect_swe/issues/88)) ([a038ece](https://github.com/meridianlabs-ai/inspect_swe/commit/a038ece49a6f296fb52625aa3b875efa61a3572b))
+
+
+### Bug Fixes
+
+* default Claude Code env to disable SDK retry watchdogs behind the bridge ([#99](https://github.com/meridianlabs-ai/inspect_swe/issues/99)) ([0ccc009](https://github.com/meridianlabs-ai/inspect_swe/commit/0ccc009694cc6f75023bf1dffffcf119885a5eef))
+* gate agent launch on bridged MCP readiness and block Claude Code's first model call on MCP connect ([#106](https://github.com/meridianlabs-ai/inspect_swe/issues/106)) ([cd03b95](https://github.com/meridianlabs-ai/inspect_swe/commit/cd03b957dc7ecdd0fddbef0c2794e078f043b1e5))
+* make bridged MCP readiness timeouts configurable ([#123](https://github.com/meridianlabs-ai/inspect_swe/issues/123)) ([d63ca56](https://github.com/meridianlabs-ai/inspect_swe/commit/d63ca5699c72033272e35a655731424d5f4c2e5d))
+* resolve npm agent versions once per process to avoid GitHub rate limits ([#127](https://github.com/meridianlabs-ai/inspect_swe/issues/127)) ([b4a988b](https://github.com/meridianlabs-ai/inspect_swe/commit/b4a988b5823bf515879018fef3ee7db24b5509d9))
+* retry agent binary downloads and raise the http timeout ([#130](https://github.com/meridianlabs-ai/inspect_swe/issues/130)) ([cdf1010](https://github.com/meridianlabs-ai/inspect_swe/commit/cdf10108e271bcf5f00fd9668c1ab519458c7cdd))
+
 ## [0.2.70](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.69...0.2.70) (2026-08-09)
 
 
