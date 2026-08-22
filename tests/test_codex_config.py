@@ -249,6 +249,10 @@ def test_codex_cli_accepts_auto_review() -> None:
     )
 
 
+def test_codex_cli_accepts_auto_review_with_transparent_proxy() -> None:
+    codex_cli(auto_review=True, transparent_proxy=True)
+
+
 def test_interactive_codex_cli_accepts_auto_review(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
