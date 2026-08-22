@@ -64,6 +64,7 @@ from .model import resolve_claude_code_models
 ClaudeCodePermissionMode = Literal[
     "acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"
 ]
+ClaudeCodeEffort = Literal["low", "medium", "high", "xhigh", "max"]
 
 
 class ClaudeCodeDeprecatedArgs(TypedDict, total=False):
@@ -128,6 +129,7 @@ def claude_code(
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     model_config: str | None = None,
+    effort: ClaudeCodeEffort | None = None,
     model_aliases: dict[str, str | Model] | None = None,
     opus_model: str | None = None,
     sonnet_model: str | None = None,
@@ -145,6 +147,7 @@ def claude_code(
     debug: bool | None = None,
     replace_system_prompt: str | None = None,
     allowlist_mcp_tools: bool = True,
+    allowlist_bridged_tools: bool = True,
     **deprecated_args: Unpack[ClaudeCodeDeprecatedArgs],
 ) -> Agent:
     """Claude Code agent.
@@ -185,6 +188,7 @@ def claude_code(
             bridged to the served Inspect model regardless. (Claude Code renders
             the genuine name/cutoff for recognized Anthropic ids and shows other
             ids verbatim.)
+        effort: Claude Code reasoning effort. ``None`` leaves the CLI default.
         model_aliases: Optional mapping of model names to Model instances or model name strings.
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
@@ -220,8 +224,23 @@ def claude_code(
             mode except `"bypassPermissions"`: in unattended runs, excluded
             static tools are denied without prompting. Set `False` with
             `permission_mode="auto"` when Claude Code's first-party classifier
-            should adjudicate those tools. Bridged Inspect tools remain allowlisted
-            because an evaluation may depend on them being callable.
+            should adjudicate those tools. Bridged Inspect tools are governed
+            separately by `allowlist_bridged_tools`.
+        allowlist_bridged_tools: Whether to add bridged Inspect tools to
+            `--allowed-tools` (default `True`, preserving the behavior every
+            existing caller gets). Bridged tools are allowlisted by default
+            because an evaluation may depend on them being callable, and in
+            every mode except `"auto"` a tool left off `--allowed-tools` is
+            denied without prompting in an unattended run.
+
+            Set `False` ONLY with `permission_mode="auto"`, where an excluded
+            tool is adjudicated by the classifier rather than denied. This is
+            required for an evaluation that measures Claude Code's own auto-mode
+            classifier acting on bridged tools: an allow rule resolves at step 1
+            of the permission flow, BEFORE the classifier, so an allowlisted
+            bridged call is never reviewed. Left `True` under `"auto"`, a run
+            whose entire tool surface is bridged produces ZERO adjudications and
+            looks clean while being wholly unreviewed.
         **deprecated_args: Supports the deprecated `auto_mode` argument. Set
             `auto_mode=True` maps to `permission_mode="auto"`.
     """
@@ -317,11 +336,7 @@ def claude_code(
                 if effective_permission_mode is not None
                 else ["--dangerously-skip-permissions"]
             )
-            cmd = [
-                *permission_flag,
-                "--model",
-                models.presented,
-            ]
+            cmd = claude_code_command(permission_flag, models.presented, effort)
 
             # add interactive options if not running as centaur
             if centaur is False:
@@ -351,6 +366,7 @@ def claude_code(
                         static_mcp_servers,
                         bridged_mcp_servers,
                         allowlist_mcp_tools,
+                        allowlist_bridged_tools,
                     )
                 )
 
@@ -617,6 +633,18 @@ def _system_prompt_args(
     return args
 
 
+def claude_code_effort_args(effort: ClaudeCodeEffort | None) -> list[str]:
+    if effort is None:
+        return []
+    return ["--effort", effort]
+
+
+def claude_code_command(
+    permission_flag: list[str], model: str, effort: ClaudeCodeEffort | None
+) -> list[str]:
+    return [*permission_flag, "--model", model, *claude_code_effort_args(effort)]
+
+
 async def _seed_claude_config(
     sbox: Any,
     api_key: str,
@@ -668,13 +696,18 @@ def resolve_allowed_mcp_tools(
     static_mcp_servers: Sequence[MCPServerConfig],
     bridged_mcp_servers: Sequence[MCPServerConfig],
     allowlist_mcp_tools: bool,
+    allowlist_bridged_tools: bool = True,
 ) -> list[str]:
     static_allowed_tools = (
         resolve_mcp_server_allowed_tools(static_mcp_servers)
         if allowlist_mcp_tools
         else []
     )
-    bridged_allowed_tools = resolve_mcp_server_allowed_tools(bridged_mcp_servers)
+    bridged_allowed_tools = (
+        resolve_mcp_server_allowed_tools(bridged_mcp_servers)
+        if allowlist_bridged_tools
+        else []
+    )
     return [*static_allowed_tools, *bridged_allowed_tools]
 
 
