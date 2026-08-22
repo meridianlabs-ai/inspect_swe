@@ -44,7 +44,7 @@ from inspect_swe._claude_code._events.stream import (
     StderrEvent,
     claude_code_event_stream,
 )
-from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.centaur import CentaurOptions, CommandsFilter, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -136,6 +136,7 @@ def claude_code(
     haiku_model: str | None = None,
     subagent_model: str | None = None,
     filter: GenerateFilter | None = None,
+    commands_filter: CommandsFilter | None = None,
     permission_mode: ClaudeCodePermissionMode | None = None,
     retry_refusals: int | None = 3,
     retry_uncaught_errors: int | None = 3,
@@ -214,6 +215,9 @@ def claude_code(
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
         subagent_model: The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`.
         filter: Filter for intercepting bridged model requests.
+        commands_filter: In centaur mode only, filter or augment the human agent's
+            task commands (for example to install project-specific submit/score
+            commands). Ignored outside centaur mode.
         permission_mode: Claude Code `--permission-mode`. The complete CLI set is
             `"acceptEdits"`, `"auto"`, `"bypassPermissions"`, `"default"`,
             `"dontAsk"`, and `"plan"`. `"bypassPermissions"` is near-equivalent
@@ -452,6 +456,8 @@ def claude_code(
                     claude_cmd=[claude_binary] + cmd,
                     agent_env=agent_env,
                     state=state,
+                    user=user,
+                    commands_filter=commands_filter,
                 )
             else:
                 # execute the agent (track debug output)
@@ -749,6 +755,8 @@ async def run_claude_code_centaur(
     claude_cmd: list[str],
     agent_env: dict[str, str],
     state: AgentState,
+    user: str | None = None,
+    commands_filter: CommandsFilter | None = None,
 ) -> None:
     instructions = "Claude Code:\n\n - You may also use Claude Code via the 'claude' command.\n - Use 'claude --resume' if you need to resume a previous claude session."
 
@@ -767,7 +775,9 @@ async def run_claude_code_centaur(
     )
 
     # run the human cli
-    await run_centaur(options, instructions, bashrc, state)
+    await run_centaur(
+        options, instructions, bashrc, state, user=user, commands_filter=commands_filter
+    )
 
 
 class ClaudeCodeDebug(StoreModel):
