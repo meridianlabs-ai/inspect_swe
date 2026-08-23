@@ -22,7 +22,7 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
-from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.centaur import CentaurOptions, CommandsFilter, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -49,6 +49,7 @@ def gemini_cli(
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     web_search: bool = True,
     centaur: bool | CentaurOptions = False,
+    commands_filter: CommandsFilter | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
@@ -81,6 +82,8 @@ def gemini_cli(
             tools before the agent launch errors.
         web_search: Enable the agent's web search tool (defaults to `True`).
         centaur: Run in 'centaur' mode, which makes Gemini CLI available to an Inspect `human_cli()` agent rather than running it unattended.
+        commands_filter: In centaur mode only, filter or augment the human agent's
+            command list (e.g. to add task-specific commands). Ignored outside centaur mode.
         attempts: Configure agent to make multiple attempts
         model: Model name to use for inspect bridge (defaults to main model for task)
         model_aliases: Optional mapping of model names to Model instances or model name strings.
@@ -237,6 +240,8 @@ def gemini_cli(
                     gemini_cmd=cmd,
                     agent_env=agent_env,
                     state=state,
+                    user=user,
+                    commands_filter=commands_filter,
                 )
             else:
                 # execute the agent (track debug output)
@@ -383,6 +388,8 @@ async def _run_gemini_cli_centaur(
     gemini_cmd: list[str],
     agent_env: dict[str, str],
     state: AgentState,
+    user: str | None = None,
+    commands_filter: CommandsFilter | None = None,
 ) -> None:
     instructions = "Gemini CLI:\n\n - You may also use Gemini CLI via the 'gemini' command.\n - Use 'gemini --resume latest' if you need to resume a previous gemini session."
 
@@ -395,4 +402,6 @@ async def _run_gemini_cli_centaur(
     bashrc = "\n".join(agent_env_vars + ["", alias_cmd])
 
     # run the human cli
-    await run_centaur(options, instructions, bashrc, state)
+    await run_centaur(
+        options, instructions, bashrc, state, user=user, commands_filter=commands_filter
+    )
