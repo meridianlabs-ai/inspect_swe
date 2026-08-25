@@ -38,8 +38,8 @@ class _FakeModel:
         return self._name
 
 
-def _spec(model: str) -> RolloutSpec:
-    return build_rollout(cwd="/w", prior=[], model=model, timestamp=_TS)
+def _spec(model: str, cwd: str = "/w") -> RolloutSpec:
+    return build_rollout(cwd=cwd, prior=[], model=model, timestamp=_TS)
 
 
 def test_resume_rollout_with_session_id_raises() -> None:
@@ -94,7 +94,7 @@ def _prepared_agent(
     messages: list[Any] | None = None,
     session_id: str | None = None,
     codex_home: str = "/home/user/.codex",
-    cwd: str = "/home/user",
+    cwd: str = "/w",
 ) -> mod.CodexCli:
     agent = object.__new__(mod.CodexCli)  # skip __init__ (needs an active sample)
     agent._resume_rollout = spec
@@ -128,6 +128,17 @@ def test_resolve_resume_writes_rollout_into_codex_home(
     assert sbox.writes == [
         (join_path("/home/user/.codex", spec.relative_path), spec.content)
     ]
+
+
+def test_resolve_resume_rejects_rollout_for_different_cwd() -> None:
+    spec = _spec("gpt-5.5")
+    agent = _prepared_agent("gpt-5.5", spec, cwd="/different")
+
+    async def run() -> None:
+        await agent._resolve_resume_session()
+
+    with pytest.raises(ValueError, match="built for cwd '/w'.*runs in '/different'"):
+        anyio.run(run)
 
 
 def test_resolve_codex_home_honors_env_and_quotes_paths(
@@ -264,7 +275,7 @@ def test_resolve_resume_warns_when_rollout_lands_in_cwd(
     monkeypatch.setattr(mod, "sandbox_env", lambda name=None: _FakeSbox())
     monkeypatch.setattr(mod, "get_model", lambda name=None: _FakeModel("gpt-5.5"))
 
-    spec = _spec("gpt-5.5")
+    spec = _spec("gpt-5.5", cwd="/home/user/work")
     agent = _prepared_agent(
         "gpt-5.5", spec, codex_home="/home/user/work/.codex", cwd="/home/user/work"
     )

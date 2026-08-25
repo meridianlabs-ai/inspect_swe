@@ -36,7 +36,9 @@ def test_header_rows_and_session_id_consistency() -> None:
 
     assert rows[0]["type"] == "session_meta"
     assert rows[0]["payload"]["id"] == spec.session_id  # id matches the spec
-    assert rows[0]["payload"]["base_instructions"]["text"]  # default present
+    assert spec.cwd == "/work"
+    # codex falls back to the model's own instructions when this row is empty
+    assert rows[0]["payload"]["base_instructions"] is None
     assert rows[1]["type"] == "turn_context"
     assert rows[1]["payload"]["model"] == "gpt-5.5"
     assert rows[2]["type"] == "response_item"
@@ -356,7 +358,9 @@ def test_parse_concatenates_multiblock_message_content() -> None:
 
 def test_build_parse_empty_prior() -> None:
     spec = build_rollout(cwd="/w", prior=[], model="gpt-5.4", timestamp=_TS)
-    assert parse_rollout(spec.content).prior == []
+    parsed = parse_rollout(spec.content)
+    assert parsed.prior == []
+    assert parsed.base_instructions is None
 
 
 def test_truncate_rebuild_preserves_raw_items() -> None:

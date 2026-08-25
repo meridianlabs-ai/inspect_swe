@@ -141,6 +141,12 @@ class ACPAgent(Agent):
                 "on disk) or `resume_messages` (synthesize a prior conversation), "
                 "not both."
             )
+        if self.resume_messages is not None and not self.resume_messages:
+            raise ValueError(
+                "`resume_messages` is empty, so there is no prior conversation to "
+                "synthesize — resuming would plant an empty session file that the "
+                "CLI reads as no history at all. Pass `None` to start fresh."
+            )
         mcp_ready_timeout = kwargs.get("mcp_ready_timeout")
         self.mcp_ready_timeout = (
             DEFAULT_MCP_READY_TIMEOUT

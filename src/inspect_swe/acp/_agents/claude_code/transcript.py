@@ -47,7 +47,7 @@ from inspect_ai.model import (
     ContentText,
 )
 from inspect_ai.tool import ToolCall, ToolCallError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 # Recorded in every row. Claude Code reads it for backwards compatibility
 # decisions, so it should look like a plausible recent CLI.
@@ -275,7 +275,9 @@ def parse_transcript(content: str) -> ParsedTranscript:
     Claude Code's own state rows (``mode``, ``file-history-snapshot``,
     ``attachment``, ``summary``, ...) are *not* preserved — they describe CLI
     state rather than conversation, and replaying stale state is worse than
-    dropping it. ``skipped_rows`` counts them.
+    dropping it. Nor are ``isSidechain`` rows, which belong to a Task-tool
+    subagent's separate conversation rather than the main thread.
+    ``skipped_rows`` counts both.
     """
     # Split on "\n" only — NOT str.splitlines(), which also breaks on the
     # unicode line separators that can appear inside JSON string values.
@@ -293,6 +295,12 @@ def parse_transcript(content: str) -> ParsedTranscript:
         version = row.get("version") or version
         role = row.get("type")
         if role not in ("user", "assistant") or "message" not in row:
+            skipped += 1
+            continue
+        # Sidechain rows are a Task-tool subagent's own conversation, written
+        # into the same file but never part of the main thread's context.
+        # Folding them in would replay a subagent's turns as the main model's.
+        if row.get("isSidechain"):
             skipped += 1
             continue
         blocks = _content_blocks(row["message"])
@@ -570,6 +578,20 @@ def _content_blocks(message: dict[str, Any]) -> list[dict[str, Any]]:
 def _block_to_item(
     block: dict[str, Any], role: Literal["user", "assistant"]
 ) -> TranscriptItem:
+    # A modelled block whose shape has drifted (a nested list where content
+    # blocks were expected, a missing key) must still round-trip verbatim
+    # rather than abort the parse of a real transcript.
+    try:
+        typed = _typed_block(block, role)
+    except ValidationError:
+        typed = None
+    return typed if typed is not None else RawBlock(role=role, block=block)
+
+
+def _typed_block(
+    block: dict[str, Any], role: Literal["user", "assistant"]
+) -> TranscriptItem | None:
+    """Map a content block to a modelled item, or ``None`` if it isn't one."""
     block_type = block.get("type")
     if block_type == "text":
         text = block.get("text") or ""
@@ -593,4 +615,4 @@ def _block_to_item(
                 content=content,
                 is_error=bool(block.get("is_error")),
             )
-    return RawBlock(role=role, block=block)
+    return None

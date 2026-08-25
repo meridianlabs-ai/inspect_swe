@@ -155,16 +155,11 @@ _ResponseItem = Annotated[
 PriorItem = _MessageItem | _ResponseItem
 
 
-_CODEX_BASE_INSTRUCTIONS = (
-    "You are Codex, a coding agent based on GPT-5. "
-    "Answer the user's questions concisely."
-)
-
-
 class RolloutSpec(BaseModel):
     """A built rollout, ready to write to a host fs or a sandbox fs."""
 
     session_id: str
+    cwd: str  # working directory recorded in session_meta and turn_context
     relative_path: str  # "sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl"
     content: str  # complete jsonl, newline-terminated
     model: str  # the model recorded in the rollout (resume must serve the same)
@@ -187,7 +182,9 @@ class ParsedRollout(BaseModel):
     session_id: str | None
     cwd: str
     model: str
-    base_instructions: str
+    # ``None`` when the rollout recorded none, which is how codex falls back to
+    # the model's own base instructions. Pass it back to build_rollout as-is.
+    base_instructions: str | None
     model_provider: str
     cli_version: str
     prior: list[PriorItem]
@@ -210,7 +207,7 @@ def build_rollout(
     cwd: str,
     prior: Sequence[PriorItem | ChatMessage],
     model: str,
-    base_instructions: str = _CODEX_BASE_INSTRUCTIONS,
+    base_instructions: str | None = None,
     cli_version: str = "0.130.0",
     model_provider: str = "openai",
     originator: str = "codex_exec",
@@ -230,6 +227,13 @@ def build_rollout(
     ``model`` is required and must match the model the resuming agent serves —
     a mismatch makes codex splice a ``<model_switch>`` banner into the resumed
     conversation (when resuming a parsed rollout, pass ``parsed.model``).
+
+    ``base_instructions`` is codex's *system prompt* for the resumed session:
+    codex prefers the rollout's over the model's own (config override > rollout >
+    model default), so a value here replaces the real prompt for the whole
+    session. Leave it ``None`` — the row is then written empty and codex renders
+    its own — unless you are rebuilding a parsed rollout, in which case pass
+    ``parsed.base_instructions`` to keep the original session's prompt.
     """
     prior_items = _as_prior_items(prior)
     now = timestamp or datetime.now(timezone.utc)
@@ -254,7 +258,14 @@ def build_rollout(
                 "cli_version": cli_version,
                 "source": "exec",
                 "model_provider": model_provider,
-                "base_instructions": {"text": base_instructions},
+                # codex resolves a resumed session's system prompt as
+                # config override > this row > the model's own instructions, so
+                # a placeholder here would silently replace the real prompt.
+                "base_instructions": (
+                    {"text": base_instructions}
+                    if base_instructions is not None
+                    else None
+                ),
                 "git": None,
             },
         },
@@ -276,6 +287,7 @@ def build_rollout(
     content = "".join(json.dumps(row) + "\n" for row in rows)
     return RolloutSpec(
         session_id=session_id,
+        cwd=cwd,
         relative_path=relative_path,
         content=content,
         model=model,
@@ -288,7 +300,7 @@ def synthesize_rollout(
     prior: Sequence[PriorItem | ChatMessage],
     codex_home: Path,
     model: str,
-    base_instructions: str = _CODEX_BASE_INSTRUCTIONS,
+    base_instructions: str | None = None,
     cli_version: str = "0.130.0",
     model_provider: str = "openai",
     originator: str = "codex_exec",
@@ -321,7 +333,14 @@ def parse_rollout(content: str) -> ParsedRollout:
 
         parsed = parse_rollout(saved_content)
         spec = build_rollout(
-            cwd=parsed.cwd, prior=parsed.prior[:n], model=parsed.model
+            cwd=parsed.cwd,
+            prior=parsed.prior[:n],
+            model=parsed.model,
+            # codex prefers the rollout's base instructions over the model's
+            # own, so dropping these swaps the session's system prompt.
+            base_instructions=parsed.base_instructions,
+            cli_version=parsed.cli_version,
+            model_provider=parsed.model_provider,
         )
 
     Preserves the fields represented by each modelled item type; extra payload
@@ -343,7 +362,8 @@ def parse_rollout(content: str) -> ParsedRollout:
         (r["payload"] for r in rows if r.get("type") == "turn_context"), {}
     )
     base = meta.get("base_instructions")
-    base_instructions = base.get("text", "") if isinstance(base, dict) else (base or "")
+    base_text = base.get("text") if isinstance(base, dict) else base
+    base_instructions = base_text if isinstance(base_text, str) else None
     prior = [
         _payload_to_item(r["payload"]) for r in rows if r.get("type") == "response_item"
     ]

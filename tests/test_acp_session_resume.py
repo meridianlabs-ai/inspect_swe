@@ -151,6 +151,13 @@ def test_resume_messages_makes_agent_resuming() -> None:
     assert _agent("sid").is_resuming is True
 
 
+def test_empty_resume_messages_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agent_mod, "sample_active", lambda: object())
+
+    with pytest.raises(ValueError, match="resume_messages.*empty"):
+        _ProbeAgent(model="mockllm/model", resume_messages=[])
+
+
 def test_resolve_resume_session_runs_strictly_before_load_session() -> None:
     # _resolve_resume_session materializes the on-disk session; it MUST complete
     # before load_session, or the server's session/load has nothing to read.

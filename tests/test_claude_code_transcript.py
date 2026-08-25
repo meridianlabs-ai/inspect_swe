@@ -209,6 +209,50 @@ def test_parse_skips_claude_code_state_rows() -> None:
     assert parsed.session_id == "s1"
 
 
+def test_parse_skips_task_tool_sidechain_rows() -> None:
+    rows = [
+        {
+            "type": "user",
+            "uuid": "main-user",
+            "sessionId": "s1",
+            "cwd": "/w",
+            "message": {"role": "user", "content": "main task"},
+        },
+        {
+            "type": "user",
+            "uuid": "side-user",
+            "sessionId": "s1",
+            "cwd": "/w",
+            "isSidechain": True,
+            "message": {"role": "user", "content": "subagent prompt"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "side-assistant",
+            "sessionId": "s1",
+            "cwd": "/w",
+            "isSidechain": True,
+            "message": {"role": "assistant", "content": "subagent reply"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "main-assistant",
+            "sessionId": "s1",
+            "cwd": "/w",
+            "message": {"role": "assistant", "content": "main reply"},
+        },
+    ]
+
+    parsed = parse_transcript("".join(json.dumps(row) + "\n" for row in rows))
+
+    assert parsed.items == [
+        UserText(text="main task"),
+        AssistantText(text="main reply"),
+    ]
+    assert parsed.item_uuids == ["main-user", "main-assistant"]
+    assert parsed.skipped_rows == 2
+
+
 def test_parse_multi_block_row_maps_blocks_to_one_uuid() -> None:
     # Real transcripts are one block per row, but the API allows several; every
     # block of a row resumes at the same point, so they share its uuid.
@@ -250,6 +294,24 @@ def test_parse_preserves_unmodelled_blocks_verbatim() -> None:
             block={"type": "web_search_tool_result", "content": [{"x": 1}]},
         )
     ]
+
+
+def test_parse_preserves_drifted_modelled_block_verbatim() -> None:
+    block = {
+        "type": "tool_result",
+        "tool_use_id": "toolu_1",
+        "content": ["plain string"],
+    }
+    row = {
+        "type": "user",
+        "uuid": "u1",
+        "cwd": "/w",
+        "message": {"role": "user", "content": [block]},
+    }
+
+    parsed = parse_transcript(json.dumps(row) + "\n")
+
+    assert parsed.items == [RawBlock(role="user", block=block)]
 
 
 def test_write_to_host_fs(tmp_path: Path) -> None:

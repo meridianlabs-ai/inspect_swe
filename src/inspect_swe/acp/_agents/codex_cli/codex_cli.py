@@ -267,6 +267,12 @@ class CodexCli(ACPAgent):
                 "CodexCli._resolve_resume_session invoked before _start_agent "
                 "resolved CODEX_HOME"
             )
+        if spec.cwd != self.cwd:
+            raise ValueError(
+                f"Resume rollout was built for cwd {spec.cwd!r} but this agent runs "
+                f"in {self.cwd!r}. Codex records cwd in both session metadata and "
+                f"turn context, so rebuild the rollout with cwd={self.cwd!r}."
+            )
         self._warn_on_model_mismatch(spec.model)
         self._warn_if_visible_to_agent()
         sbox = sandbox_env(self.sandbox)
@@ -361,10 +367,11 @@ def interactive_codex_cli(
         config_overrides: Extra Codex config.toml key-value pairs.
         resume_rollout: Resume from a prior session instead of starting fresh,
             with full control over the rollout. Build it with
-            :func:`build_rollout` (its ``model`` must match this agent's model);
-            the rollout is written into the sandbox's ``CODEX_HOME`` and loaded
-            via ACP ``session/load``. For the common case pass
-            ``resume_messages`` instead and the rollout is built for you.
+            :func:`build_rollout` (its ``cwd`` must match this agent's and its
+            ``model`` should match this agent's model); the rollout is written
+            into the sandbox's ``CODEX_HOME`` and loaded via ACP
+            ``session/load``. For the common case pass ``resume_messages``
+            instead and the rollout is built for you.
         **kwargs: See :class:`ACPAgentParams` for all base options, including
             ``resume_messages`` and ``resume_session_id``.
     """

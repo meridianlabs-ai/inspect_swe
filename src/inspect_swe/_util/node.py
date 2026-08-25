@@ -20,6 +20,7 @@ from .download import download_file
 from .sandbox import SANDBOX_INSTALL_DIR, SandboxPlatform, bash_command, sandbox_exec
 
 NODE_VERSION = "20.11.0"
+_MIN_NPM_LIBC_VERSION = (11, 5, 1)
 
 
 async def ensure_node_available(
@@ -123,6 +124,34 @@ def resolve_npm_package_version(package: str) -> str:
     return result.stdout.strip()
 
 
+def _require_npm_libc_support() -> None:
+    """Fail before bundling when npm would silently ignore ``--libc``."""
+    result = subprocess.run(
+        ["npm", "--version"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    version = result.stdout.strip()
+    try:
+        release = tuple(
+            int(part) for part in version.removeprefix("v").split("-", 1)[0].split(".")
+        )
+    except ValueError:
+        release = ()
+    if result.returncode != 0 or len(release) < 3:
+        raise RuntimeError(
+            "Could not determine the host npm version required for target-libc "
+            f"bundling: {result.stderr.strip() or version or 'no output'}"
+        )
+    if release[:3] < _MIN_NPM_LIBC_VERSION:
+        minimum = ".".join(str(part) for part in _MIN_NPM_LIBC_VERSION)
+        raise RuntimeError(
+            f"npm >= {minimum} is required to bundle for a target libc; host npm "
+            f"{version} silently ignores --libc and would produce a broken bundle."
+        )
+
+
 def create_npm_bundle(
     package: str,
     version: str,
@@ -155,8 +184,8 @@ def create_npm_bundle(
 
     cache_dir = package_cache_dir(cache_name)
     suffix = "-noscripts" if ignore_scripts else ""
-    # v2 avoids reusing bundles cached before the --libc fix.
-    cache_path = cache_dir / f"{cache_name}-{version}-{platform}{suffix}-v2.tar.gz"
+    # v3 avoids bundles that npm <11.5.1 cached after silently ignoring --libc.
+    cache_path = cache_dir / f"{cache_name}-{version}-{platform}{suffix}-v3.tar.gz"
 
     if cache_path.exists():
         with open(cache_path, "rb") as f:
@@ -168,6 +197,7 @@ def create_npm_bundle(
             "Please install Node.js (https://nodejs.org/) and ensure npm is on "
             "your PATH."
         )
+    _require_npm_libc_support()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         package_json = {
