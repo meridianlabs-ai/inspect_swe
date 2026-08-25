@@ -5,7 +5,10 @@ Covers ``build_rollout(prior=<messages>)``, ``prior_from_messages`` /
 (non-JSON custom tool input, unmodelled rows, images).
 """
 
+import ast
 from datetime import datetime, timezone
+from importlib.util import find_spec
+from pathlib import Path
 
 import pytest
 from inspect_ai.model import (
@@ -39,9 +42,21 @@ _ENCRYPTED_KEY = _REASONING_ENCRYPTED_CONTENT
 
 
 def test_reasoning_encrypted_key_matches_inspect() -> None:
-    from inspect_ai.model._openai_responses import REASONING_ENCRYPTED_CONTENT
+    spec = find_spec("inspect_ai.model._openai_responses")
+    assert spec is not None and spec.origin is not None
+    module = ast.parse(Path(spec.origin).read_text())
+    values = [
+        statement.value
+        for statement in module.body
+        if isinstance(statement, ast.Assign)
+        if any(
+            isinstance(target, ast.Name) and target.id == "REASONING_ENCRYPTED_CONTENT"
+            for target in statement.targets
+        )
+    ]
 
-    assert _REASONING_ENCRYPTED_CONTENT == REASONING_ENCRYPTED_CONTENT
+    assert len(values) == 1
+    assert _REASONING_ENCRYPTED_CONTENT == ast.literal_eval(values[0])
 
 
 def test_build_rollout_accepts_messages() -> None:
