@@ -329,19 +329,33 @@ def items_from_messages(
     reasoning came from an Anthropic endpoint with its signature intact
     (``ContentReasoning.signature``).
 
-    Also lossy in that system messages have no transcript row — Claude Code
-    takes its system prompt from the CLI, not the session file — so they are
-    skipped; pass them via ``system_prompt`` on the agent instead.
+    Raises ``ValueError`` for system messages (Claude Code transcripts have no
+    system-message row) and non-text content whose Inspect representation is
+    not a valid Anthropic content block. Pass system instructions via
+    ``system_prompt`` and native Anthropic blocks via :class:`RawBlock`.
     """
     items: list[TranscriptItem] = []
     for message in messages:
         if isinstance(message, ChatMessageSystem):
-            continue
+            raise ValueError(
+                "items_from_messages: system messages have no Claude Code "
+                "transcript row; pass the instruction via system_prompt instead."
+            )
         if isinstance(message, ChatMessageUser):
             items.extend(_user_items(message))
         elif isinstance(message, ChatMessageAssistant):
             items.extend(_assistant_items(message, include_thinking))
         elif isinstance(message, ChatMessageTool):
+            if (
+                message.error is None
+                and not isinstance(message.content, str)
+                and any(not isinstance(block, ContentText) for block in message.content)
+            ):
+                raise ValueError(
+                    "items_from_messages: non-text tool content has no safe "
+                    "Claude Code transcript conversion; pass a ToolResult with "
+                    "native Anthropic content blocks instead."
+                )
             items.append(
                 ToolResult(
                     tool_use_id=message.tool_call_id or "",
@@ -443,9 +457,11 @@ def _user_items(message: ChatMessageUser) -> list[TranscriptItem]:
         if isinstance(block, ContentText):
             items.append(UserText(text=block.text))
         else:
-            # Images and other modalities are valid Anthropic blocks; pass the
-            # model_dump through rather than inventing a typed shape for each.
-            items.append(RawBlock(role="user", block=block.model_dump()))
+            raise ValueError(
+                f"items_from_messages: user content of type {block.type!r} is an "
+                "Inspect block, not a valid Anthropic transcript block; pass a "
+                "RawBlock instead."
+            )
     return items
 
 
@@ -468,7 +484,11 @@ def _assistant_items(
             if block.text:
                 items.append(AssistantText(text=block.text))
         else:
-            items.append(RawBlock(role="assistant", block=block.model_dump()))
+            raise ValueError(
+                f"items_from_messages: assistant content of type {block.type!r} "
+                "is an Inspect block, not a valid Anthropic transcript block; "
+                "pass a RawBlock instead."
+            )
     for tool_call in message.tool_calls or []:
         items.append(
             ToolUse(id=tool_call.id, name=tool_call.function, input=tool_call.arguments)

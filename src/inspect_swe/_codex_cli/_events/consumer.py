@@ -48,7 +48,9 @@ from inspect_ai.model._model import ModelEventSink
 from inspect_ai.util._span import current_span_id
 
 from .detection import (
+    agent_message_recipients,
     completed_thread_ids,
+    final_answer_authors,
     find_close_targets,
     find_spawned_agents,
     is_compaction_request,
@@ -71,6 +73,7 @@ class _OpenAgent:
     call_id: str
     span_id: str
     prompt: str
+    name: str = "agent"
     thread_id: str | None = None
 
 
@@ -118,9 +121,12 @@ class CodexConsumer(ModelEventSink):
 
     def on_pending(self, event: ModelEvent) -> None:
         # bind thread ids from any spawn results, then close completed threads
+        # (V1: wait/close status dicts; V2: FINAL_ANSWER agent_messages)
         self._harvest_bindings(event.input)
         for thread_id in completed_thread_ids(event.input):
             self._close_thread(thread_id)
+        for author in final_answer_authors(event.input):
+            self._close_thread(author)
 
         # attribute this call to a span
         span_id = self._attribute(event.input)
@@ -161,8 +167,11 @@ class CodexConsumer(ModelEventSink):
                     call_id=spawned.call_id,
                     span_id=span_id,
                     prompt=spawned.message,
+                    name=spawned.name,
                 )
                 metadata: dict[str, str] = {"agent_type": spawned.agent_type}
+                if spawned.task_name:
+                    metadata["task_name"] = spawned.task_name
                 if spawned.reasoning_effort:
                     metadata["reasoning_effort"] = spawned.reasoning_effort
                 transcript()._event(
@@ -170,7 +179,7 @@ class CodexConsumer(ModelEventSink):
                         id=span_id,
                         parent_id=parent_span_id,
                         type="agent",
-                        name=spawned.agent_type,
+                        name=spawned.name,
                         metadata=metadata,
                     )
                 )
@@ -214,12 +223,20 @@ class CodexConsumer(ModelEventSink):
     def _attribute(self, input_messages: list[ChatMessage]) -> str | None:
         """Resolve the span_id for an incoming bridge call.
 
-        Substring-matches the call's user-message text against open spawn
-        prompts. Exactly one match → that sub-agent's span; zero/multiple →
-        outer span (defensive default).
+        Multi-Agent V2 first: every agent_message in a request is inbound to
+        the requester, so a single recipient path identifies the calling agent
+        exactly (spawn prompts are encrypted under V2, so substring matching
+        cannot work). Falls back to the V1 heuristic: substring-match the
+        call's user-message text against open spawn prompts. Exactly one
+        match → that sub-agent's span; zero/multiple → outer span (defensive
+        default).
         """
         if not self._agents:
             return self.outer_span_id
+
+        span_id = self._attribute_by_recipient(input_messages)
+        if span_id is not None:
+            return span_id
 
         user_text = self._user_text(input_messages)
         if not user_text:
@@ -233,6 +250,44 @@ class CodexConsumer(ModelEventSink):
         if len(matches) == 1:
             return matches[0].span_id
         return self.outer_span_id
+
+    def _attribute_by_recipient(self, input_messages: list[ChatMessage]) -> str | None:
+        """Resolve a call's span from its agent_message recipient (V2).
+
+        A bound thread id (from a spawn result or an earlier call) resolves
+        directly. Otherwise the recipient's final path segment is matched
+        against open spawns awaiting their first call (the spawn call carries
+        the relative task_name, the recipient carries the absolute path, e.g.
+        "write_fizzbuzz" vs "/root/write_fizzbuzz") — a unique match binds the
+        thread id so later calls and FINAL_ANSWER closes resolve directly.
+        Returns None (fall through) when no unambiguous match exists.
+        """
+        recipients = agent_message_recipients(input_messages)
+        if len(recipients) != 1:
+            return None
+        recipient = next(iter(recipients))
+
+        # already bound (spawn result or earlier call)
+        call_id = self._thread_index.get(recipient)
+        if call_id is not None:
+            agent = self._agents.get(call_id)
+            if agent is not None:
+                return agent.span_id
+
+        # first call from this thread: bind by task name (last path segment)
+        basename = recipient.rsplit("/", 1)[-1]
+        candidates = [
+            agent
+            for agent in self._agents.values()
+            if agent.thread_id is None and agent.name == basename
+        ]
+        if len(candidates) == 1:
+            agent = candidates[0]
+            agent.thread_id = recipient
+            self._thread_index[recipient] = agent.call_id
+            return agent.span_id
+
+        return None
 
     @staticmethod
     def _user_text(input_messages: list[ChatMessage]) -> str:

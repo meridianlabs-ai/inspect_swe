@@ -6,11 +6,14 @@ that ``_load_session_meta`` reaches the request, and that the base class rejects
 ``resume_messages`` it can't serialize.
 """
 
-from typing import Any
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from typing import Any, AsyncIterator, cast
 
 import anyio
 import pytest
 from inspect_ai.model import ChatMessageUser
+from inspect_swe.acp import agent as agent_mod
 from inspect_swe.acp.agent import ACPAgent
 from inspect_swe.acp.client import ACPError
 
@@ -187,3 +190,48 @@ def test_load_session_meta_is_forwarded() -> None:
         assert conn.load_calls == [("/work", "prior-session", None, meta)]
 
     anyio.run(run)
+
+
+def test_open_session_failure_clears_connection_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _agent("prior-session")
+    agent.mcp_servers = []
+    agent.sandbox = None
+    agent.mcp_ready_timeout = 1
+    agent.conn = cast(Any, object())  # stale state from an earlier invocation
+    agent.session_id = "stale-session"
+    conn = _FakeConn()
+
+    async def initialize(protocol_version: Any) -> _FakeInit:
+        return _FakeInit(load_session=True)
+
+    conn.initialize = initialize  # type: ignore[attr-defined]
+
+    @asynccontextmanager
+    async def fake_start(state: Any) -> AsyncIterator[tuple[object, Any]]:
+        bridge = SimpleNamespace(
+            mcp_server_configs=[],
+            state=SimpleNamespace(messages=[], output=None),
+        )
+        yield object(), bridge
+
+    @asynccontextmanager
+    async def fake_connection(proc: object) -> AsyncIterator[tuple[Any, Any, Any]]:
+        yield conn, object(), SimpleNamespace(exit_code=0)
+
+    async def fail_open(*args: Any, **kwargs: Any) -> str:
+        raise ACPError("load failed")
+
+    agent._start_agent = fake_start  # type: ignore[method-assign]
+    agent._open_session = fail_open  # type: ignore[method-assign]
+    monkeypatch.setattr(agent_mod, "acp_connection", fake_connection)
+    state = SimpleNamespace(messages=[], output=None)
+
+    async def run() -> None:
+        with pytest.raises(ACPError, match="load failed"):
+            await agent(state)  # type: ignore[arg-type]
+
+    anyio.run(run)
+    assert agent.conn is None
+    assert agent.session_id is None

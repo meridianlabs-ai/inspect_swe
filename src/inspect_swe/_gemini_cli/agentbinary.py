@@ -15,6 +15,7 @@ from .._util.sandbox import (
     bash_command,
     detect_sandbox_platform,
 )
+from .._util.versioncache import cached_version_resolution
 
 
 async def ensure_gemini_cli_setup(
@@ -40,10 +41,17 @@ async def resolve_gemini_version(
 ) -> str:
     """Resolve version string to an actual semver version."""
     if version in ["auto", "sandbox", "stable", "latest"]:
-        release = await _fetch_latest_release()
-        return str(release["tag_name"]).lstrip("v")
+        # cached so concurrent samples don't each hit the (rate-limited)
+        # GitHub API — all four aliases resolve to the same latest release
+        return await cached_version_resolution("gemini-cli", _fetch_latest_version)
 
     return version
+
+
+async def _fetch_latest_version() -> str:
+    """Fetch the latest released gemini-cli version from GitHub."""
+    release = await _fetch_latest_release()
+    return str(release["tag_name"]).lstrip("v")
 
 
 async def ensure_gemini_cli_installed(

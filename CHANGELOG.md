@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.2.70](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.69...0.2.70) (2026-08-09)
+
+
+### Features
+
+* pass web_search to sandbox_agent_bridge based on web search config ([#116](https://github.com/meridianlabs-ai/inspect_swe/issues/116)) ([5ba7549](https://github.com/meridianlabs-ai/inspect_swe/commit/5ba754967343786f79e8c59808bce2df531daaf5))
+
+## [0.2.69](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.68...0.2.69) (2026-08-08)
+
+
+### Bug Fixes
+
+* **codex_cli:** require inspect_ai&gt;=0.3.253 for Multi-Agent V2 delegation ([#109](https://github.com/meridianlabs-ai/inspect_swe/issues/109)) ([249479d](https://github.com/meridianlabs-ai/inspect_swe/commit/249479d31b79f2f481cebcab0f47dbe040ca30f6))
+* **codex_cli:** support Codex Multi-Agent V2 — package-archive install and sub-agent span reconstruction ([#107](https://github.com/meridianlabs-ai/inspect_swe/issues/107)) ([51adaf0](https://github.com/meridianlabs-ai/inspect_swe/commit/51adaf05990ef33825ea06fc9e38103935235cf2))
+
+## [0.2.68](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.67...0.2.68) (2026-08-04)
+
+
+### Features
+
+* **antigravity:** add native Antigravity SDK agent ([#94](https://github.com/meridianlabs-ai/inspect_swe/issues/94)) ([7d85ee9](https://github.com/meridianlabs-ai/inspect_swe/commit/7d85ee9bacc9955068c4333018067d726b7ce2c9))
+* support replacing Claude Code system prompt ([#98](https://github.com/meridianlabs-ai/inspect_swe/issues/98)) ([58638bc](https://github.com/meridianlabs-ai/inspect_swe/commit/58638bcb4cef191fd5bff7b1a961792f0d16e190))
+
+## [0.2.67](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.66...0.2.67) (2026-07-29)
+
+
+### Features
+
+* **claude_code:** add `permission_mode` option (deprecates `auto_mode`) ([5cc9e6d](https://github.com/meridianlabs-ai/inspect_swe/commit/5cc9e6d9a92ed71efc9d72d075528c598b4498d4))
+* **claude_code:** control static MCP allowlisting ([#91](https://github.com/meridianlabs-ai/inspect_swe/issues/91)) ([5cc9e6d](https://github.com/meridianlabs-ai/inspect_swe/commit/5cc9e6d9a92ed71efc9d72d075528c598b4498d4))
+* **codex_cli:** add auto_review option for automated approval review ([#102](https://github.com/meridianlabs-ai/inspect_swe/issues/102)) ([cc854fd](https://github.com/meridianlabs-ai/inspect_swe/commit/cc854fd00f6939f40d2004eb6e7d077283d8af18))
+* **kimi:** add `kimi_code()` agent with Inspect bridging, MCP, skills, and Centaur support ([#73](https://github.com/meridianlabs-ai/inspect_swe/issues/73)) ([7fca27f](https://github.com/meridianlabs-ai/inspect_swe/commit/7fca27f4481a02e39122efd0fd98b306274251bb))
+
+
+### Bug Fixes
+
+* **claude_code:** correct "all" tools MCP allowlist wildcard to ([5cc9e6d](https://github.com/meridianlabs-ai/inspect_swe/commit/5cc9e6d9a92ed71efc9d72d075528c598b4498d4))
+* **codex_cli:** refresh bundled model catalog snapshot to track live latest ([#95](https://github.com/meridianlabs-ai/inspect_swe/issues/95)) ([596be22](https://github.com/meridianlabs-ai/inspect_swe/commit/596be229bb3efb47adaab0edbb2997b7ae3c7d68))
+
 ## [0.2.66](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.65...0.2.66) (2026-07-14)
 
 

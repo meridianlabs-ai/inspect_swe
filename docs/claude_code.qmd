@@ -15,10 +15,12 @@ The following options are supported for customizing the behavior of the agent:
 
 | Option | Description |
 |------------------------------------|------------------------------------|
-| `system_prompt` | Additional system prompt to append to default system prompt. |
+| `system_prompt` | Additional instructions to append to Claude Code's built-in prompt. |
+| `replace_system_prompt` | System prompt that replaces Claude Code's built-in prompt. Cannot be combined with `system_prompt`. |
 | `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
 | `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
+| `mcp_ready_timeout` | Seconds to wait for bridged MCP endpoints to serve tools before the agent launch errors. |
 | `disallowed_tools` | Optionally disallow tools (e.g. `"{{< meta agent_disallowed_tool >}}"`) |
 | `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended. | 
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
@@ -37,12 +39,20 @@ The following options are supported for customizing the behavior of the agent:
 
 : {tbl-colwidths=\[25,75\]}
 
-For example, here we specify a custom system prompt and disallow the `{{< meta agent_disallowed_tool >}}` tool:
+For example, here we append instructions to Claude Code's built-in system prompt and disallow the `{{< meta agent_disallowed_tool >}}` tool:
 
 ```python
 {{< meta agent >}}(
     system_prompt="You are an ace system researcher.",
     disallowed_tools=["{{< meta agent_disallowed_tool >}}"]
+)
+```
+
+To replace Claude Code's built-in system prompt instead, use `replace_system_prompt`:
+
+```python
+{{< meta agent >}}(
+    replace_system_prompt="You are an ace system researcher.",
 )
 ```
 

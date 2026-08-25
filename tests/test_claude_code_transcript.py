@@ -317,8 +317,9 @@ def test_thinking_is_dropped_from_messages_by_default() -> None:
     ]
 
 
-def test_system_messages_have_no_transcript_row() -> None:
-    assert items_from_messages([ChatMessageSystem(content="be terse")]) == []
+def test_system_messages_raise_instead_of_disappearing() -> None:
+    with pytest.raises(ValueError, match="system messages"):
+        items_from_messages([ChatMessageSystem(content="be terse")])
 
 
 def test_tool_error_maps_to_is_error() -> None:
@@ -337,14 +338,31 @@ def test_tool_error_maps_to_is_error() -> None:
     ]
 
 
-def test_image_content_becomes_a_raw_block() -> None:
-    items = items_from_messages(
-        [ChatMessageUser(content=[ContentImage(image="data:image/png;base64,AAA")])]
-    )
-    assert len(items) == 1
-    raw = items[0]
-    assert isinstance(raw, RawBlock)
-    assert raw.role == "user"
+def test_non_text_tool_content_raises_instead_of_becoming_empty() -> None:
+    with pytest.raises(ValueError, match="non-text tool content"):
+        items_from_messages(
+            [
+                ChatMessageTool(
+                    content=[ContentImage(image="data:image/png;base64,AAA")],
+                    tool_call_id="toolu_1",
+                    function="ViewImage",
+                )
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        ChatMessageUser(content=[ContentImage(image="data:image/png;base64,AAA")]),
+        ChatMessageAssistant(content=[ContentImage(image="data:image/png;base64,AAA")]),
+    ],
+)
+def test_inspect_image_content_raises_instead_of_emitting_invalid_block(
+    message: ChatMessageUser | ChatMessageAssistant,
+) -> None:
+    with pytest.raises(ValueError, match="not a valid Anthropic transcript block"):
+        items_from_messages([message])
 
 
 def test_messages_from_items_groups_assistant_items() -> None:

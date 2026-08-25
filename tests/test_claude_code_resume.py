@@ -7,6 +7,7 @@ Covers the claude-specific resume glue: constructor fail-fast, that a
 ``session/load`` as the Agent SDK's ``resumeSessionAt``.
 """
 
+import logging
 from typing import Any
 
 import anyio
@@ -74,6 +75,21 @@ def test_resume_message_uuid_without_a_resume_input_raises(
         mod.ClaudeCode(resume_message_uuid="row-uuid")
 
 
+def test_resume_message_uuid_with_messages_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_init(self: Any, **kwargs: Any) -> None:
+        self.resume_session_id = kwargs.get("resume_session_id")
+        self.resume_messages = kwargs.get("resume_messages")
+
+    monkeypatch.setattr(ACPAgent, "__init__", fake_init)
+    with pytest.raises(ValueError, match="fresh row uuids"):
+        mod.ClaudeCode(
+            resume_message_uuid="row-uuid",
+            resume_messages=[ChatMessageUser(content="hi")],
+        )
+
+
 def test_resume_transcript_wires_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
@@ -129,6 +145,7 @@ def _prepared_agent(
     agent._resolved_config_dir = config_dir
     agent.sandbox = None
     agent.user = None
+    agent.env = {}
     agent.model = "claude-opus-5"
     agent.cwd = cwd
     agent.resume_messages = messages
@@ -166,6 +183,46 @@ def test_resolve_resume_writes_transcript_into_config_dir(
     assert sbox.writes[0][0] == (
         f"/root/.claude/projects/-home-user/{spec.session_id}.jsonl"
     )
+
+
+def test_resolve_config_dir_honors_env_and_quotes_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[str] = []
+
+    async def fake_exec(sbox: Any, cmd: str, **kwargs: Any) -> str:
+        commands.append(cmd)
+        return ""
+
+    monkeypatch.setattr(mod, "sandbox_exec", fake_exec)
+    agent = _prepared_agent(None, config_dir=None, session_id="sid")
+    agent.env = {"CLAUDE_CONFIG_DIR": "/custom claude"}
+
+    async def run() -> str:
+        return await agent._resolve_config_dir(_FakeSbox())  # type: ignore[arg-type]
+
+    assert anyio.run(run) == "/custom claude"
+    assert commands == ["mkdir -p '/custom claude'"]
+
+
+def test_explicit_config_dir_wins_over_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[str] = []
+
+    async def fake_exec(sbox: Any, cmd: str, **kwargs: Any) -> str:
+        commands.append(cmd)
+        return ""
+
+    monkeypatch.setattr(mod, "sandbox_exec", fake_exec)
+    agent = _prepared_agent(None, config_dir="/explicit dir", session_id="sid")
+    agent.env = {"CLAUDE_CONFIG_DIR": "/env-dir"}
+
+    async def run() -> str:
+        return await agent._resolve_config_dir(_FakeSbox())  # type: ignore[arg-type]
+
+    assert anyio.run(run) == "/explicit dir"
+    assert commands == ["mkdir -p '/explicit dir'"]
 
 
 def test_resolve_resume_builds_transcript_from_messages(
@@ -231,6 +288,21 @@ def test_transcript_lands_under_the_resolved_cwd_slug(
     assert sbox.writes[0][0] == (
         f"/root/.claude/projects/-private-tmp-work/{session_id}.jsonl"
     )
+
+
+def test_resolve_resume_warns_when_transcript_lands_in_cwd(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(mod, "sandbox_env", lambda name=None: _FakeSbox())
+    _fake_realpath(monkeypatch, "/home/user")
+    agent = _prepared_agent(_spec(), config_dir="/home/user/.claude", cwd="/home/user")
+
+    async def run() -> None:
+        await agent._resolve_resume_session()
+
+    with caplog.at_level(logging.WARNING, logger=mod.logger.name):
+        anyio.run(run)
+    assert any("working directory" in record.message for record in caplog.records)
 
 
 def test_resolve_resume_rejects_cwd_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:

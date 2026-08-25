@@ -17,7 +17,7 @@ from tests.conftest import (
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_claude_code_attempts(sandbox: str) -> None:
-    check_attempts("claude_code", "anthropic/claude-sonnet-4-0", sandbox)
+    check_attempts("claude_code", "anthropic/claude-sonnet-4-5", sandbox)
 
 
 @skip_if_no_openai
@@ -45,7 +45,7 @@ def test_mini_swe_attempts(sandbox: str) -> None:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_opencode_attempts(sandbox: str) -> None:
-    check_attempts("opencode", "anthropic/claude-sonnet-4-0", sandbox)
+    check_attempts("opencode", "anthropic/claude-sonnet-4-5", sandbox)
 
 
 def check_attempts(

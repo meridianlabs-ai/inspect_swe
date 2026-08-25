@@ -20,7 +20,7 @@ via ``sandbox.write_file`` (see ``CodexCli`` resume), or on the host via
 ``build_rollout`` takes either a list of Inspect ``ChatMessage`` (the ergonomic
 form — most callers already have messages) or a list of :data:`PriorItem` (the
 codex-native form). ``ChatMessage`` is a lossy input for a few codex constructs,
-so the typed items remain available as the full-fidelity layer; see
+so the typed items remain available as the higher-fidelity layer; see
 :func:`prior_from_messages` for what does not survive the conversion.
 """
 
@@ -197,8 +197,9 @@ class ParsedRollout(BaseModel):
 
         Convenience wrapper around :func:`messages_from_prior`. To *resume* from
         a rollout, pass ``prior`` back to :func:`build_rollout` rather than
-        round-tripping through messages — the item form is lossless, messages
-        are not (see :func:`messages_from_prior`). ``base_instructions`` is
+        round-tripping through messages — the item form preserves every field
+        it models, while messages are more lossy (see
+        :func:`messages_from_prior`). ``base_instructions`` is
         codex's own system prompt and is not included.
         """
         return messages_from_prior(self.prior)
@@ -323,11 +324,13 @@ def parse_rollout(content: str) -> ParsedRollout:
             cwd=parsed.cwd, prior=parsed.prior[:n], model=parsed.model
         )
 
-    Round-trips losslessly for the modelled item types. Reasoning whose
-    plaintext codex withheld comes back as ``text=""`` with its
-    ``encrypted_content`` signature preserved. Rows this module doesn't model
-    (or a modelled row whose shape drifted) come back as :class:`RawResponseItem`
-    carrying the verbatim payload, so they too rebuild faithfully.
+    Preserves the fields represented by each modelled item type; extra payload
+    fields such as response-item ``id``, ``status``, or message ``phase`` are
+    not represented and are dropped. Reasoning whose plaintext codex withheld
+    comes back as ``text=""`` with its ``encrypted_content`` signature
+    preserved. Rows this module doesn't model (or a modelled row whose shape
+    drifted) come back as :class:`RawResponseItem` carrying the verbatim payload,
+    so those rebuild faithfully.
     """
     # Split on "\n" only — NOT str.splitlines(), which also breaks on the
     # unicode line separators (U+2028/U+2029, VT, FF, NEL) that appear inside
@@ -397,6 +400,16 @@ def prior_from_messages(messages: Sequence[ChatMessage]) -> list[PriorItem]:
             prior.extend(_assistant_items(message))
         elif isinstance(message, ChatMessageTool):
             # codex has no error flag on a call output; fold the error text in.
+            if (
+                message.error is None
+                and not isinstance(message.content, str)
+                and any(not isinstance(block, ContentText) for block in message.content)
+            ):
+                raise ValueError(
+                    "prior_from_messages: non-text tool content has no codex "
+                    "rollout equivalent; pass a FunctionCallOutput with native "
+                    "codex content blocks instead."
+                )
             output = message.error.message if message.error else message.text
             prior.append(
                 FunctionCallOutput(call_id=message.tool_call_id or "", output=output)

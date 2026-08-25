@@ -11,7 +11,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Detect whether anything outside docs changed, so the build matrix can be
+  # skipped on documentation-only changes. A skipped job-level `if` still
+  # reports a (non-blocking) check, unlike workflow-level `paths-ignore`
+  # which would strand the required checks.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          predicate-quantifier: 'every'
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+
   py-ruff:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -26,6 +51,8 @@ jobs:
           args: "format --check"
 
   py-mypy:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -52,6 +79,8 @@ jobs:
           mypy --python-executable $(which python)
 
   py-test:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -77,6 +106,8 @@ jobs:
         run: pytest
 
   py-build:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:

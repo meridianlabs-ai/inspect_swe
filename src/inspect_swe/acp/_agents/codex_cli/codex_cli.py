@@ -1,6 +1,7 @@
 """Codex CLI agent via the ``codex-acp`` ACP adapter."""
 
 import logging
+import shlex
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
@@ -19,14 +20,17 @@ from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
 from inspect_swe._codex_cli.config import (
+    CodexAutoReview,
     CodexDeprecatedArgs,
     CodexWebSearch,
     codex_config_options,
+    resolve_codex_auto_review,
+    resolve_codex_auto_review_model_aliases,
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
 from inspect_swe._util.path import join_path
-from inspect_swe._util.sandbox import sandbox_exec
+from inspect_swe._util.sandbox import expand_sandbox_home, sandbox_exec
 from inspect_swe._util.toml import to_toml
 from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
@@ -53,6 +57,7 @@ class CodexCli(ACPAgent):
         *,
         web_search: CodexWebSearch = "live",
         goals: bool = True,
+        auto_review: bool | CodexAutoReview = False,
         skills: list[str | Path | Skill] | None = None,
         home_dir: str | None = None,
         config_overrides: dict[str, str] | None = None,
@@ -65,6 +70,7 @@ class CodexCli(ACPAgent):
         )
         self._web_search = resolve_codex_web_search(web_search, self._disallowed_tools)
         self._goals = goals
+        self._auto_review = resolve_codex_auto_review(auto_review)
         self._resolved_skills = read_skills(skills) if skills else None
         self._home_dir = home_dir
         self._config_overrides = config_overrides or {}
@@ -104,10 +110,18 @@ class CodexCli(ACPAgent):
         async with sandbox_agent_bridge(
             state,
             model=None,
-            model_aliases=self.model_map,
+            model_aliases=resolve_codex_auto_review_model_aliases(
+                self._auto_review,
+                self.model_map,
+                # the ACP bridge has no fallback model (model=None), so the
+                # guardian slug must be bound explicitly; default guardian
+                # requests to this agent's model
+                default=get_model(self.model),
+            ),
             filter=self.filter,
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
+            web_search=self._web_search != "disabled",
             port=port,
         ) as bridge:
             # Install node and codex-acp in the sandbox.
@@ -115,20 +129,8 @@ class CodexCli(ACPAgent):
             node_dir = str(Path(node_binary).parent)
 
             # Resolve CODEX_HOME (mirrors the non-ACP codex_cli agent).
-            if self._home_dir is None:
-                working_dir = await sandbox_exec(
-                    sbox, "pwd", user=self.user, cwd=self.cwd
-                )
-                codex_home = join_path(working_dir, ".codex")
-            else:
-                codex_home = await sandbox_exec(
-                    sbox,
-                    f'eval echo "{self._home_dir}"',
-                    user=self.user,
-                    cwd=self.cwd,
-                )
-            await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=self.user)
-            # Stash for _prepare_resume (base class calls it after this yields).
+            codex_home = await self._resolve_codex_home(sbox)
+            # Stash for _resolve_resume_session (base class calls it after this yields).
             self._codex_home = codex_home
 
             # Write system prompt to AGENTS.md (Codex convention).
@@ -151,6 +153,7 @@ class CodexCli(ACPAgent):
             toml_config: dict[str, Any] = {
                 "model": default_model,
                 "preferred_auth_method": "apikey",
+                # overridden below by codex_config_options() when auto_review is enabled
                 "approval_policy": "never",
                 "sandbox_mode": "danger-full-access",
                 "model_provider": "openai-proxy",
@@ -163,7 +166,9 @@ class CodexCli(ACPAgent):
                 },
             }
             toml_config.update(self._config_overrides)
-            toml_config.update(codex_config_options(self._web_search, self._goals))
+            toml_config.update(
+                codex_config_options(self._web_search, self._goals, self._auto_review)
+            )
             await sbox.write_file(config_toml_path, to_toml(toml_config))
 
             # Environment variables (same as the non-ACP codex agent).
@@ -175,6 +180,9 @@ class CodexCli(ACPAgent):
                 "NO_BROWSER": "1",
                 "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
             } | self.env
+            # Pin the resolved spelling so the adapter reads the same directory
+            # that setup and synthetic-session materialization wrote to.
+            agent_env["CODEX_HOME"] = codex_home
 
             # Start ACP adapter process.
             logger.info("Starting codex-acp adapter...")
@@ -190,9 +198,29 @@ class CodexCli(ACPAgent):
 
             yield proc, bridge
 
+    async def _resolve_codex_home(self, sbox: SandboxEnvironment) -> str:
+        """Resolve and create the effective ``CODEX_HOME`` in the sandbox."""
+        target = (
+            self._home_dir if self._home_dir is not None else self.env.get("CODEX_HOME")
+        )
+        if target is None:
+            working_dir = await sandbox_exec(sbox, "pwd", user=self.user, cwd=self.cwd)
+            codex_home = join_path(working_dir, ".codex")
+        else:
+            codex_home = await expand_sandbox_home(
+                sbox, target, user=self.user, cwd=self.cwd
+            )
+        await sandbox_exec(
+            sbox,
+            cmd=f"mkdir -p {shlex.quote(codex_home)}",
+            user=self.user,
+            cwd=self.cwd,
+        )
+        return codex_home
+
     def _agents_md_path(self, codex_home: str) -> str:
         """Determine where to write AGENTS.md."""
-        if self._home_dir is not None:
+        if self._home_dir is not None or "CODEX_HOME" in self.env:
             return join_path(codex_home, "AGENTS.md")
         elif self.cwd is not None:
             return join_path(self.cwd, "AGENTS.md")
@@ -204,10 +232,12 @@ class CodexCli(ACPAgent):
         codex_home: str,
     ) -> str:
         """Determine where to write config.toml."""
-        if self._home_dir is not None:
+        if self._home_dir is not None or "CODEX_HOME" in self.env:
             return join_path(codex_home, "config.toml")
         directory = ".codex" if self.cwd is None else join_path(self.cwd, ".codex")
-        await sandbox_exec(sbox, cmd=f"mkdir -p {directory}", user=self.user)
+        await sandbox_exec(
+            sbox, cmd=f"mkdir -p {shlex.quote(directory)}", user=self.user
+        )
         return join_path(directory, "config.toml")
 
     async def _resolve_resume_session(self) -> str:
@@ -301,6 +331,7 @@ def interactive_codex_cli(
     # Codex-specific
     web_search: CodexWebSearch = "live",
     goals: bool = True,
+    auto_review: bool | CodexAutoReview = False,
     skills: list[str | Path | Skill] | None = None,
     home_dir: str | None = None,
     config_overrides: dict[str, str] | None = None,
@@ -316,6 +347,15 @@ def interactive_codex_cli(
     Args:
         web_search: Web search mode. Use ``"live"`` for live web search, ``"cached"`` for cached web search, or ``"disabled"`` to disable web search.
         goals: Enable Codex goal tools.
+        auto_review: Enable Codex automated approval review (guardian): Codex runs
+            with its own ``workspace-write`` sandbox and ``on-request`` approvals,
+            with escalations adjudicated by a guardian model. Pass
+            :class:`CodexAutoReview` to customize the guardian policy and model.
+            Note: guardian adjudication depends on the codex-core embedded in the
+            ``codex-acp`` adapter honoring ``approvals_reviewer`` (Codex CLI >=
+            0.137.0 behavior); unlike `codex_cli()`, this cannot be version-checked
+            here. If the embedded core instead surfaces an escalation as an ACP
+            permission request, it is auto-approved.
         skills: Additional skills to make available.
         home_dir: Override for ``CODEX_HOME`` directory in the sandbox.
         config_overrides: Extra Codex config.toml key-value pairs.
@@ -331,6 +371,7 @@ def interactive_codex_cli(
     return CodexCli(
         web_search=web_search,
         goals=goals,
+        auto_review=auto_review,
         skills=skills,
         home_dir=home_dir,
         config_overrides=config_overrides,

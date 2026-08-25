@@ -19,6 +19,7 @@ from inspect_ai.model import (
 )
 from inspect_ai.tool import ToolCall, ToolCallError
 from inspect_swe.acp._agents.codex_cli.rollout import (
+    _REASONING_ENCRYPTED_CONTENT,
     AssistantText,
     CustomToolCall,
     DeveloperText,
@@ -34,7 +35,13 @@ from inspect_swe.acp._agents.codex_cli.rollout import (
 )
 
 _TS = datetime(2026, 6, 11, 12, 30, 0, tzinfo=timezone.utc)
-_ENCRYPTED_KEY = "reasoning_encrypted_content"
+_ENCRYPTED_KEY = _REASONING_ENCRYPTED_CONTENT
+
+
+def test_reasoning_encrypted_key_matches_inspect() -> None:
+    from inspect_ai.model._openai_responses import REASONING_ENCRYPTED_CONTENT
+
+    assert _REASONING_ENCRYPTED_CONTENT == REASONING_ENCRYPTED_CONTENT
 
 
 def test_build_rollout_accepts_messages() -> None:
@@ -98,6 +105,19 @@ def test_tool_error_text_becomes_the_output() -> None:
         ]
     )
     assert prior == [FunctionCallOutput(call_id="call_1", output="command not found")]
+
+
+def test_non_text_tool_content_raises_instead_of_becoming_empty() -> None:
+    with pytest.raises(ValueError, match="non-text tool content"):
+        prior_from_messages(
+            [
+                ChatMessageTool(
+                    content=[ContentImage(image="data:image/png;base64,AAA")],
+                    tool_call_id="call_1",
+                    function="view_image",
+                )
+            ]
+        )
 
 
 def test_empty_assistant_text_alongside_tool_call_is_dropped() -> None:

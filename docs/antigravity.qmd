@@ -1,0 +1,47 @@
+---
+title: Antigravity
+agent: antigravity
+agent_provider: "Google"
+agent_name: "Antigravity"
+agent_url: "https://pypi.org/project/google-antigravity/"
+---
+
+Runs Google's Antigravity SDK (`google-antigravity`, which bundles the `localharness` engine) headless inside an Inspect sandbox. Model calls are routed through the sandbox agent bridge: the SDK's native connection speaks the Gemini `generateContent` wire directly to the bridge via a `GeminiAPIEndpoint` `base_url` override (no OpenAI translation), so only a placeholder API key ever enters the sandbox.
+
+## Options
+
+The following options are supported for customizing the behavior of the agent:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Additional system prompt to append to default system prompt. |
+| `mcp_servers` | MCP servers to make available to the agent. localharness reaches servers over streamable HTTP, so `type="http"` configs are required and `type="sse"` is rejected rather than silently reconstructed. |
+| `bridged_tools` | Host-side Inspect tools to expose via MCP. |
+| `mcp_ready_timeout` | Seconds to wait for bridged MCP endpoints to serve tools before the agent launch errors. |
+| `model` | Model name to use for agent (defaults to main model for task). |
+| `model_aliases` | Mapping of model names to Model instances/strings; alias keys resolve against `endpoint_model`. |
+| `filter` | Filter for intercepting bridged model requests (Model-first `GenerateFilter` form only). |
+| `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
+| `user` | Sandbox user to run the SDK as (defaults to the sandbox default user). |
+| `cwd` | Working directory for the SDK (defaults to the user's home directory). |
+| `version` | Version of the `google-antigravity` SDK to provision when not already present in the image. |
+| `endpoint_model` | Model name the SDK client presents to the bridge endpoint. |
+| `debug` | Trace the full runner output. |
+
+: {tbl-colwidths=\[25,75\]}
+
+## Tool Confinement
+
+The agent confines the model's tool surface to the configured MCP servers and one read-back builtin. The SDK's builtin capabilities are delegated off via its own configuration (`enabled_tools=[BuiltinTools.VIEW_FILE]`), and the residual engine tools that the SDK's typed configuration cannot disable are stripped from the model's tool declaration by a `GenerateFilter`. Tool calls dispatch through localharness's `call_mcp_tool` wrapper, gated by an execution policy that only allows the configured servers, and a per-server `tools` allowlist is carried through to `enabled_tools` and to per-tool policies so a server exposes only what Inspect declared. If a future SDK version declares tools outside the known surface, the agent drops them (fail closed) and logs a warning naming the drifted tools.
+
+`view_file` is the one builtin left enabled, because localharness offloads any large MCP tool result to a file and returns the model only a `file://` pointer. Without a read-back path every tool observation above its internal cap (~4KB) is silently lost. A policy predicate confines `view_file` to the agent's own `app_data_dir`, where those offloaded results are written: both the requested path and that directory are canonicalized with symlinks resolved, an unresolvable path is denied, and containment is compared on resolved path segments. Note this confines `view_file` to the directory rather than absolutely bounding what the harness can open, since the predicate runs in the SDK process while the file is opened by localharness.
+
+Everything the agent itself writes — the runner, `request.json` (which serializes the MCP server configs, including any `headers` an authenticated server needs), and the SDK's session store — lives in a sibling state directory outside that tree, so a server credential or the agent's own configuration is never inside `view_file`'s reach.
+
+## Installation
+
+If the `google-antigravity` SDK is already importable in the sandbox image (recommended for sandboxes without network egress), it is used directly. Otherwise the agent provisions the pinned SDK version into a dedicated virtual environment inside the sandbox, which requires network egress.
+
+## Conversation Resumption
+
+On re-invocation (handoff back, operator follow-up) the agent resumes the SDK conversation recorded from the previous run. If the transcript already contains assistant turns but no saved conversation exists for the sample, the agent raises rather than silently dropping prior context.

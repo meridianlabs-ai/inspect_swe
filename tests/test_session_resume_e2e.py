@@ -70,7 +70,9 @@ PROBE_KEY = "resume_probe"
 
 
 @solver
-def open_session_and_probe(agent_factory: Any, session_glob: str) -> Solver:
+def open_session_and_probe(
+    agent_factory: Any, session_glob: str, process_marker: str = "--resume="
+) -> Solver:
     """Start the agent, then record what resuming actually put in the sandbox.
 
     ``ACPAgent.__call__`` blocks until cancelled, so it runs in a task group that
@@ -96,7 +98,7 @@ def open_session_and_probe(agent_factory: Any, session_glob: str) -> Solver:
                 # Wait until both the session file is planted and the CLI that
                 # reads it is running, so the probe can't catch a half-set-up
                 # sandbox and report a false negative.
-                while not (session_files and "--resume=" in argv):
+                while not (session_files and process_marker in argv):
                     await anyio.sleep(2)
                     listed = await sbox.exec(
                         ["bash", "-c", f"ls -1 {session_glob} 2>/dev/null || true"]
@@ -355,6 +357,7 @@ def test_codex_resume_messages_plants_a_loadable_rollout() -> None:
                 resume_messages=list(PRIOR_MESSAGES),
             ),
             "/opt/codex-home/sessions/*/*/*/rollout-*.jsonl",
+            "codex-acp",
         )
     )
     probe = _probe(log)

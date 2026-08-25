@@ -46,6 +46,7 @@ Then, try out one or more of the available agents:
 | [`kimi_code()`](kimi_code.qmd) | Moonshot AI's terminal-based coding agent [Kimi Code](https://github.com/MoonshotAI/kimi-code) |
 | [`opencode()`](opencode.qmd) | Provider-independent terminal-based coding agent. |
 | [`mini_swe_agent()`](mini_swe_agent.qmd) | SWE-agent's minimal 100-line agent. |
+| [`antigravity()`](antigravity.qmd) | Google's Antigravity SDK agent (`google-antigravity` / localharness). |
 
 
 : {tbl-colwidths=\[30,70\]}

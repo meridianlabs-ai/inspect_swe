@@ -18,7 +18,7 @@ from tests.conftest import (
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_claude_code_multi_call(sandbox: str) -> None:
-    check_multi_call("claude_code", "anthropic/claude-sonnet-4-0", sandbox)
+    check_multi_call("claude_code", "anthropic/claude-sonnet-4-5", sandbox)
 
 
 @skip_if_no_anthropic
@@ -35,7 +35,7 @@ def test_claude_code_system_prompt_not_duplicated(sandbox: str) -> None:
     (``ModelEvent.call.request``).
     """
     log = run_example(
-        "multi_call", "claude_code", "anthropic/claude-sonnet-4-0", sandbox=sandbox
+        "multi_call", "claude_code", "anthropic/claude-sonnet-4-5", sandbox=sandbox
     )[0]
     assert log.samples
     sample = log.samples[0]
@@ -114,7 +114,7 @@ def test_mini_swe_agent_multi_call_anthropic(sandbox: str) -> None:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_opencode_multi_call(sandbox: str) -> None:
-    check_multi_call("opencode", "anthropic/claude-sonnet-4-0", sandbox)
+    check_multi_call("opencode", "anthropic/claude-sonnet-4-5", sandbox)
 
 
 def check_multi_call(
@@ -140,7 +140,10 @@ def check_multi_call(
             assert len(user_messages) == 4
             assert len(assistant_messages) == 4
         case "codex_cli":
-            assert len(user_messages) == 5
+            # scaffold count varies by codex version (e.g. newer versions
+            # inject an "# AGENTS.md instructions" user message), so only
+            # lower-bound the user messages
+            assert len(user_messages) >= 4
             assert len(assistant_messages) == 4
         case "gemini_cli":
             assert len(user_messages) >= 4

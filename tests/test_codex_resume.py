@@ -99,7 +99,10 @@ def _prepared_agent(
     agent = object.__new__(mod.CodexCli)  # skip __init__ (needs an active sample)
     agent._resume_rollout = spec
     agent._codex_home = codex_home
+    agent._home_dir = None
     agent.sandbox = None
+    agent.user = None
+    agent.env = {}
     agent.model = model
     agent.cwd = cwd
     agent.resume_messages = messages
@@ -125,6 +128,46 @@ def test_resolve_resume_writes_rollout_into_codex_home(
     assert sbox.writes == [
         (join_path("/home/user/.codex", spec.relative_path), spec.content)
     ]
+
+
+def test_resolve_codex_home_honors_env_and_quotes_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[str] = []
+
+    async def fake_exec(sbox: Any, cmd: str, **kwargs: Any) -> str:
+        commands.append(cmd)
+        return ""
+
+    monkeypatch.setattr(mod, "sandbox_exec", fake_exec)
+    agent = _prepared_agent("gpt-5.5", None, session_id="sid")
+    agent.env = {"CODEX_HOME": "/custom codex"}
+
+    async def run() -> str:
+        return await agent._resolve_codex_home(_FakeSbox())  # type: ignore[arg-type]
+
+    assert anyio.run(run) == "/custom codex"
+    assert commands == ["mkdir -p '/custom codex'"]
+    assert agent._agents_md_path("/custom codex") == "/custom codex/AGENTS.md"
+
+
+def test_explicit_home_dir_wins_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[str] = []
+
+    async def fake_exec(sbox: Any, cmd: str, **kwargs: Any) -> str:
+        commands.append(cmd)
+        return ""
+
+    monkeypatch.setattr(mod, "sandbox_exec", fake_exec)
+    agent = _prepared_agent("gpt-5.5", None, session_id="sid")
+    agent._home_dir = "/explicit home"
+    agent.env = {"CODEX_HOME": "/env-home"}
+
+    async def run() -> str:
+        return await agent._resolve_codex_home(_FakeSbox())  # type: ignore[arg-type]
+
+    assert anyio.run(run) == "/explicit home"
+    assert commands == ["mkdir -p '/explicit home'"]
 
 
 def test_resolve_resume_builds_rollout_from_messages(

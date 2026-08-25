@@ -2,10 +2,11 @@ from typing import Any
 
 import anyio
 from inspect_ai.util import ExecResult
-from inspect_swe._util.sandbox import resolve_agent_cwd
+from inspect_swe._util.sandbox import expand_sandbox_home, resolve_agent_cwd
 
 PWD_CMD = "pwd"
 HOME_CMD = 'cd ~ 2>/dev/null && pwd || echo "/"'
+PRINT_HOME_CMD = 'printf "%s" "$HOME"'
 
 
 class StubSandbox:
@@ -60,3 +61,29 @@ def test_root_working_dir_falls_back_to_home() -> None:
 def test_root_home_stays_at_root() -> None:
     result, _ = resolve({PWD_CMD: "/", HOME_CMD: "/"}, None)
     assert result == "/"
+
+
+def test_expand_sandbox_home_only_expands_leading_home_tokens() -> None:
+    sandbox = StubSandbox({PRINT_HOME_CMD: "/root"})
+
+    async def run() -> str:
+        return await expand_sandbox_home(
+            sandbox,  # type: ignore[arg-type]
+            "$HOME/config dir",
+        )
+
+    result = anyio.run(run)
+    assert result == "/root/config dir"
+    assert sandbox.commands == [(PRINT_HOME_CMD, None)]
+
+
+def test_expand_sandbox_home_does_not_evaluate_shell_syntax() -> None:
+    sandbox = StubSandbox({})
+    path = "/tmp/it's; touch injected; $(echo bad)"
+
+    async def run() -> str:
+        return await expand_sandbox_home(sandbox, path)  # type: ignore[arg-type]
+
+    result = anyio.run(run)
+    assert result == path
+    assert sandbox.commands == []

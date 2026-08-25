@@ -23,6 +23,10 @@ from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.mcp_ready import (
+    DEFAULT_MCP_READY_TIMEOUT,
+    wait_for_mcp_endpoints,
+)
 from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
@@ -42,6 +46,7 @@ def opencode(
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+    mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
@@ -71,6 +76,8 @@ def opencode(
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP
+        mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
+            tools before the agent launch errors.
         centaur: Run in 'centaur' mode, which makes OpenCode available to an Inspect `human_cli()` agent rather than running it unattended.
         attempts: Configure agent to make multiple attempts
         model: Model name to use for inspect bridge (defaults to main model for task)
@@ -129,6 +136,9 @@ def opencode(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
+            # granted unconditionally to preserve today's behaviour; a grant is
+            # inert unless the CLI declares a native web tool
+            web_search=True,
         ) as bridge:
             # resolve sandbox
             sbox = sandbox_env(sandbox)
@@ -228,6 +238,25 @@ def opencode(
                 "HOME": sandbox_home,
             } | (env or {})
 
+            # Compute bridged HTTP configs once at the outer scope so both the
+            # centaur and non-centaur paths gate on the same set. OpenCode's
+            # headless mode blocks the first turn on MCP connect, but the
+            # endpoint has to be answering `tools/list` first -- this pre-launch
+            # gate covers the endpoint half in both centaur and non-centaur modes.
+            _http_mcp_configs = [
+                c
+                for c in bridge.mcp_server_configs
+                if isinstance(c, MCPServerConfigHTTP)
+            ]
+            if _http_mcp_configs:
+                await wait_for_mcp_endpoints(
+                    _http_mcp_configs,
+                    bridge,
+                    sandbox=sandbox,
+                    timeout=mcp_ready_timeout,
+                    required=True,
+                )
+
             if centaur:
                 await _run_opencode_centaur(
                     options=centaur,
@@ -251,7 +280,19 @@ def opencode(
                     # add prompt as positional argument at the end
                     agent_cmd.append(agent_prompt)
 
-                    # run agent
+                    # Retry-loop gate: fires ONLY when this loop is actually
+                    # retrying (attempt_count > 0), so the cold-start
+                    # pre-centaur gate is not paid for twice on the first
+                    # iteration.
+                    if _http_mcp_configs and attempt_count > 0:
+                        await wait_for_mcp_endpoints(
+                            _http_mcp_configs,
+                            bridge,
+                            sandbox=sandbox,
+                            timeout=mcp_ready_timeout,
+                            required=True,
+                        )
+
                     result = await sbox.exec_remote(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
