@@ -55,11 +55,61 @@ class AgentBinarySource:
 # because it only guards synchronous dict reads/writes — never held across
 # an await — and avoids issues with module-level anyio.Lock binding to a
 # stale event loop across multiple anyio.run() calls. No expiry: entries
-# live for the process lifetime. Two callers may race on the same key and
-# both call resolve_version(), but this is benign (same result) and unlikely
-# given the per-binary concurrency(1) lock in ensure_agent_binary_installed.
+# live for the process lifetime.
 _resolve_version_lock = threading.Lock()
 _resolved_versions: dict[tuple[str, str, SandboxPlatform], AgentBinaryVersion] = {}
+# per key: (number of failed resolutions so far, exception from the latest
+# one). Lets callers already queued behind a failing resolution share its
+# exception instead of each retrying in turn — mirrors
+# versioncache.cached_version_resolution's idiom for npm-installed agents.
+_failed_resolutions: dict[tuple[str, str, SandboxPlatform], tuple[int, Exception]] = {}
+
+
+async def _resolve_agent_binary_version(
+    source: AgentBinarySource,
+    version: Literal["stable", "latest"] | str,
+    platform: SandboxPlatform,
+) -> AgentBinaryVersion:
+    """Resolve a binary's version, reusing the result for the process lifetime.
+
+    Concurrent/queued callers for the same (binary, version, platform) key
+    share a single resolution — including its failure, so a burst of samples
+    hitting a rate-limited API produces one error, not one retry per queued
+    sample. Failures are not cached: a call arriving after a failed
+    resolution has completed retries.
+    """
+    cache_key = (source.binary, version, platform)
+    with _resolve_version_lock:
+        cached = _resolved_versions.get(cache_key)
+        if cached is not None:
+            return cached
+        failure = _failed_resolutions.get(cache_key)
+        failures_at_arrival = failure[0] if failure is not None else 0
+
+    # serialize per key so a burst of samples starting together makes one
+    # request rather than one each (in addition to, and independent of, the
+    # per-binary install concurrency(1) lock in ensure_agent_binary_installed)
+    async with concurrency(
+        f"{source.binary}-version-resolution-{version}-{platform}", 1, visible=False
+    ):
+        # another sample may have resolved (or failed) while we were waiting
+        with _resolve_version_lock:
+            cached = _resolved_versions.get(cache_key)
+            if cached is not None:
+                return cached
+            failure = _failed_resolutions.get(cache_key)
+        if failure is not None and failure[0] > failures_at_arrival:
+            raise failure[1]
+
+        try:
+            resolved = await source.resolve_version(version, platform)
+        except Exception as ex:
+            with _resolve_version_lock:
+                _failed_resolutions[cache_key] = (failures_at_arrival + 1, ex)
+            raise
+        with _resolve_version_lock:
+            _resolved_versions[cache_key] = resolved
+        return resolved
 
 
 async def ensure_agent_binary_installed(
@@ -187,16 +237,10 @@ async def download_agent_binary_async(
     logger = logger or print
 
     # determine version and checksum (cached so concurrent samples don't
-    # repeat upstream API calls that may be rate-limited)
-    cache_key = (source.binary, version, platform)
-    with _resolve_version_lock:
-        cached = _resolved_versions.get(cache_key)
-    if cached is not None:
-        resolved = cached
-    else:
-        resolved = await source.resolve_version(version, platform)
-        with _resolve_version_lock:
-            _resolved_versions[cache_key] = resolved
+    # repeat upstream API calls that may be rate-limited, sharing a failure
+    # too so a queue of samples behind a rate-limited call doesn't each
+    # retry it in turn)
+    resolved = await _resolve_agent_binary_version(source, version, platform)
     version = resolved.version
     expected_checksum = resolved.expected_checksum
     download_url = resolved.download_url

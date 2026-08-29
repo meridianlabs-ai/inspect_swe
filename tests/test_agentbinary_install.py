@@ -245,3 +245,111 @@ def test_offline_pinned_version_falls_back_to_cached_binary(tmp_path: Path) -> N
 
     assert binary_path == f"{SANDBOX_INSTALL_DIR}/codex-9.9.6-linux-arm64"
     assert sandbox.written == [binary_path]
+
+
+def test_concurrent_version_resolution_shares_one_request(tmp_path: Path) -> None:
+    # a cold-start burst of concurrent installs for the same (binary,
+    # version, platform) key shares one resolve_version call, not one each
+    calls = 0
+
+    async def resolve_version(version: str, platform: str) -> AgentBinaryVersion:
+        nonlocal calls
+        calls += 1
+        # suspend so the other tasks reach the cache miss while this one is
+        # still in flight
+        await anyio.sleep(0.05)
+        return AgentBinaryVersion("9.5.1", "checksum", "https://example.com/pkg.tar.gz")
+
+    source = AgentBinarySource(
+        agent="test agent",
+        binary="test-agent-concurrent-ok",
+        resolve_version=resolve_version,
+        cached_binary_path=lambda v, p: tmp_path / f"{v}-{p}",
+        list_cached_binaries=lambda: [],
+        post_download=None,
+        post_install=None,
+    )
+    results: list[AgentBinaryVersion] = []
+
+    async def run() -> None:
+        async def one() -> None:
+            results.append(
+                await agentbinary._resolve_agent_binary_version(
+                    source, "9.5.1", "linux-x64"
+                )
+            )
+
+        async with anyio.create_task_group() as tg:
+            for _ in range(10):
+                tg.start_soon(one)
+
+    anyio.run(run)
+    assert calls == 1
+    assert results == [results[0]] * 10
+    assert results[0].version == "9.5.1"
+
+
+def test_concurrent_version_resolution_failure_is_shared(tmp_path: Path) -> None:
+    # callers queued behind a failing resolve_version share its exception —
+    # a rate-limit cascade across queued samples produces one failed API
+    # call, not one retry per queued sample
+    calls = 0
+    errors: list[Exception] = []
+
+    async def failing_resolve_version(
+        version: str, platform: str
+    ) -> AgentBinaryVersion:
+        nonlocal calls
+        calls += 1
+        await anyio.sleep(0.05)
+        raise RuntimeError("403 rate limited")
+
+    source = AgentBinarySource(
+        agent="test agent",
+        binary="test-agent-concurrent-fail",
+        resolve_version=failing_resolve_version,
+        cached_binary_path=lambda v, p: tmp_path / f"{v}-{p}",
+        list_cached_binaries=lambda: [],
+        post_download=None,
+        post_install=None,
+    )
+
+    async def run() -> None:
+        async def one() -> None:
+            try:
+                await agentbinary._resolve_agent_binary_version(
+                    source, "9.5.2", "linux-x64"
+                )
+            except RuntimeError as ex:
+                errors.append(ex)
+
+        async with anyio.create_task_group() as tg:
+            for _ in range(10):
+                tg.start_soon(one)
+
+    anyio.run(run)
+    assert calls == 1
+    assert len(errors) == 10
+    assert all(error is errors[0] for error in errors)
+
+    # a genuinely later call (after the failure completed) retries rather
+    # than replaying the stale failure forever — same (binary, version,
+    # platform) key, a fresh source whose resolve_version now succeeds
+    async def recovered_resolve_version(
+        version: str, platform: str
+    ) -> AgentBinaryVersion:
+        return AgentBinaryVersion("9.5.2", "checksum", "https://example.com/pkg.tar.gz")
+
+    retry_source = AgentBinarySource(
+        agent="test agent",
+        binary="test-agent-concurrent-fail",
+        resolve_version=recovered_resolve_version,
+        cached_binary_path=lambda v, p: tmp_path / f"{v}-{p}",
+        list_cached_binaries=lambda: [],
+        post_download=None,
+        post_install=None,
+    )
+    resolved = anyio.run(
+        agentbinary._resolve_agent_binary_version, retry_source, "9.5.2", "linux-x64"
+    )
+    assert resolved.version == "9.5.2"

@@ -15,7 +15,6 @@ from .._util.download import download_text_file
 from .._util.node import ensure_node_available
 from .._util.ripgrep import ensure_ripgrep_available
 from .._util.sandbox import SandboxPlatform, detect_sandbox_platform
-from .._util.tarball import extract_tarball
 
 
 async def ensure_opencode_setup(
@@ -53,20 +52,31 @@ def opencode_binary_source() -> AgentBinarySource:
     async def resolve_version(
         version: Literal["stable", "latest"] | str, platform: SandboxPlatform
     ) -> AgentBinaryVersion:
-        # Resolve version alias if needed
+        # Resolve the version and its release assets together:
+        # /releases/latest returns both the tag name and the full asset list
+        # in one response, so "stable"/"latest" resolves with exactly one
+        # API call rather than a tag lookup followed by a second, per-tag
+        # lookup. Halving the request count also halves how often a sample
+        # queued behind a rate-limited neighbor has to repeat the exact call
+        # that just failed. A pinned version still needs its own,
+        # unavoidable per-tag lookup.
         if version in ["stable", "latest"]:
-            version = await _fetch_latest_version()
+            release = await _fetch_latest_release()
+            version = str(release["tag_name"]).lstrip("v")
+        else:
+            release = await _fetch_release_assets(version)
 
-        # The release asset name is the platform string verbatim, and each variant
-        # is dynamically linked against its own libc (glibc for linux-x64, musl for
-        # linux-x64-musl, ...) — so the platform-matched asset is correct by
-        # construction. detect_sandbox_platform picks the right libc for the sandbox.
-        release = await _fetch_release_assets(version)
-        asset_name = f"opencode-{platform}.tar.gz"
         assets = {a["name"]: a for a in release.get("assets", [])}
-        asset = assets.get(asset_name)
+        asset = None
+        for asset_name in _asset_name_candidates(platform):
+            asset = assets.get(asset_name)
+            if asset is not None:
+                break
         if asset is None:
-            raise RuntimeError(f"No asset {asset_name!r} in opencode release {version}")
+            raise RuntimeError(
+                f"No matching asset for platform {platform!r} in opencode "
+                f"release {version}"
+            )
 
         # Extract checksum (format: "sha256:xxx")
         digest = asset.get("digest", "")
@@ -75,10 +85,25 @@ def opencode_binary_source() -> AgentBinarySource:
         expected_checksum = digest[7:]  # Remove "sha256:" prefix
 
         download_url = asset["browser_download_url"]
-        return AgentBinaryVersion(version, expected_checksum, download_url)
+        # The release asset is a tar.gz wrapping the single opencode binary.
+        # Cache it verbatim, checksum and all — as a "package" archive in
+        # AgentBinarySource terms — and let ensure_agent_binary_installed
+        # extract it in the sandbox at install time, rather than transforming
+        # it host-side (post_download) into a blob a later cache hit can no
+        # longer verify against the release digest.
+        return AgentBinaryVersion(
+            version, expected_checksum, download_url, package=True
+        )
 
     def cached_binary_path(version: str, platform: SandboxPlatform) -> Path:
+        # Legacy single-binary cache layout. No longer written (resolve_version
+        # always returns package=True now), kept only so a cache populated
+        # before opencode moved to package-archive caching still serves as an
+        # offline fallback.
         return cached_binary_dir / f"opencode-{version}-{platform}"
+
+    def cached_package_path(version: str, platform: SandboxPlatform) -> Path:
+        return cached_binary_dir / f"opencode-package-{version}-{platform}.tar.gz"
 
     def list_cached_binaries() -> list[Path]:
         return list(cached_binary_dir.glob("opencode-*"))
@@ -89,23 +114,47 @@ def opencode_binary_source() -> AgentBinarySource:
         resolve_version=resolve_version,
         cached_binary_path=cached_binary_path,
         list_cached_binaries=list_cached_binaries,
-        # The release asset is a tar.gz wrapping a single binary; unwrap it
-        # host-side so the staged file is the executable itself.
-        post_download=extract_tarball,
+        post_download=None,
         post_install=None,
+        package_entrypoint="opencode",
+        cached_package_path=cached_package_path,
     )
 
 
-async def _fetch_latest_version() -> str:
-    """Fetch the latest released opencode version from GitHub."""
+def _asset_name_candidates(platform: SandboxPlatform) -> list[str]:
+    """Ordered release-asset name candidates for a platform, most preferred first.
+
+    Every x64 release ships two builds: the default, compiled with AVX2
+    instructions, and a "-baseline" build without them. OpenCode's own npm
+    postinstall probes the *host's* CPU at install time and picks between
+    them; we install host-side, before any in-sandbox probe ever runs, and
+    can't reliably read the underlying host's CPU flags from out here — the
+    sandbox may be scheduled onto a different physical host than the one
+    that eventually runs the binary, and some sandbox providers don't expose
+    real CPU flags at all. We deliberately prefer the baseline asset on
+    every x64 platform: it trades a little performance on modern hosts for
+    never staging a binary that SIGILLs on any host predating AVX2 (~2013),
+    which is the safer default for sandbox portability. arm64 has no
+    baseline variant (AVX2 is an x86 extension) and needs no fallback.
+    """
+    if platform in ("linux-x64", "linux-x64-musl"):
+        musl = "-musl" if platform.endswith("-musl") else ""
+        return [
+            f"opencode-linux-x64-baseline{musl}.tar.gz",
+            f"opencode-linux-x64{musl}.tar.gz",
+        ]
+    return [f"opencode-{platform}.tar.gz"]
+
+
+async def _fetch_latest_release() -> dict[str, Any]:
+    """Fetch the latest opencode release, tag and assets together."""
     latest_url = "https://api.github.com/repos/anomalyco/opencode/releases/latest"
-    latest = json.loads(await download_text_file(latest_url))
-    tag_name = str(latest["tag_name"])
-    return tag_name.lstrip("v")
+    result: dict[str, Any] = json.loads(await download_text_file(latest_url))
+    return result
 
 
 async def _fetch_release_assets(version: str) -> dict[str, Any]:
-    """Fetch release assets for a specific version."""
+    """Fetch release assets for a specific pinned version."""
     tag = f"v{version}"
     release_url = f"https://api.github.com/repos/anomalyco/opencode/releases/tags/{tag}"
     release_json = await download_text_file(release_url)
