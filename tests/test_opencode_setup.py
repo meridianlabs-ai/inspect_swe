@@ -1,25 +1,124 @@
 """Tests for the OpenCode agent install/setup utilities."""
 
-import asyncio
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
 from inspect_ai import Task, eval
 from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Score, Scorer, Target, scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
-from inspect_swe._opencode.agentbinary import (
-    ensure_opencode_setup,
-    resolve_opencode_version,
-)
+from inspect_swe._opencode import agentbinary
+from inspect_swe._opencode.agentbinary import ensure_opencode_setup
 
 from tests.conftest import skip_if_no_docker
 
+_RELEASE_ASSETS = {
+    "assets": [
+        {
+            "name": "opencode-linux-x64.tar.gz",
+            "digest": "sha256:aaa",
+            "browser_download_url": "https://example.com/opencode-linux-x64.tar.gz",
+        },
+        {
+            "name": "opencode-linux-arm64.tar.gz",
+            "digest": "sha256:bbb",
+            "browser_download_url": "https://example.com/opencode-linux-arm64.tar.gz",
+        },
+    ]
+}
 
-def test_resolve_version_literal() -> None:
-    """Explicit semver strings are returned as-is without hitting the network."""
-    assert asyncio.run(resolve_opencode_version("1.14.30")) == "1.14.30"
-    assert asyncio.run(resolve_opencode_version("0.42.0")) == "0.42.0"
+
+def test_opencode_resolve_version_matches_platform_asset() -> None:
+    # each platform has its own dynamically-linked build; the resolved asset
+    # must be the one whose name matches the sandbox's detected platform, not
+    # just any asset in the release
+    source = agentbinary.opencode_binary_source()
+    with patch.object(
+        agentbinary,
+        "_fetch_release_assets",
+        AsyncMock(return_value=_RELEASE_ASSETS),
+    ):
+        resolved = anyio.run(source.resolve_version, "0.42.0", "linux-arm64")
+    assert resolved.version == "0.42.0"
+    assert resolved.expected_checksum == "bbb"
+    assert resolved.download_url.endswith("opencode-linux-arm64.tar.gz")
+    assert resolved.package is False
+
+
+def test_opencode_resolve_version_resolves_alias_before_fetching() -> None:
+    # "stable"/"latest" must resolve to a concrete version before the
+    # per-version release lookup, so the asset request targets a real tag
+    source = agentbinary.opencode_binary_source()
+    with (
+        patch.object(
+            agentbinary, "_fetch_latest_version", AsyncMock(return_value="1.14.30")
+        ),
+        patch.object(
+            agentbinary,
+            "_fetch_release_assets",
+            AsyncMock(return_value=_RELEASE_ASSETS),
+        ) as mock_fetch_assets,
+    ):
+        resolved = anyio.run(source.resolve_version, "stable", "linux-x64")
+    mock_fetch_assets.assert_awaited_once_with("1.14.30")
+    assert resolved.version == "1.14.30"
+    assert resolved.expected_checksum == "aaa"
+
+
+def test_opencode_resolve_version_raises_when_platform_asset_missing() -> None:
+    source = agentbinary.opencode_binary_source()
+    with patch.object(
+        agentbinary,
+        "_fetch_release_assets",
+        AsyncMock(return_value=_RELEASE_ASSETS),
+    ):
+        with pytest.raises(RuntimeError, match="No asset"):
+            anyio.run(source.resolve_version, "0.42.0", "windows-x64")
+
+
+def test_opencode_resolve_version_raises_on_malformed_digest() -> None:
+    release = {
+        "assets": [
+            {
+                "name": "opencode-linux-x64.tar.gz",
+                "digest": "md5:not-sha256",
+                "browser_download_url": "https://example.com/opencode-linux-x64.tar.gz",
+            }
+        ]
+    }
+    source = agentbinary.opencode_binary_source()
+    with patch.object(
+        agentbinary, "_fetch_release_assets", AsyncMock(return_value=release)
+    ):
+        with pytest.raises(RuntimeError, match="Invalid digest format"):
+            anyio.run(source.resolve_version, "0.42.0", "linux-x64")
+
+
+def test_opencode_source_caches_by_version_and_platform(tmp_path: Path) -> None:
+    # the standalone binary is not a package archive: no package_entrypoint or
+    # cached_package_path, and cached files are keyed by version + platform so
+    # concurrent samples on different platforms don't collide
+    with patch.object(agentbinary, "package_cache_dir", return_value=tmp_path):
+        source = agentbinary.opencode_binary_source()
+    assert source.package_entrypoint is None
+    assert source.cached_package_path is None
+    cache_path = source.cached_binary_path("0.42.0", "linux-arm64")
+    assert cache_path == tmp_path / "opencode-0.42.0-linux-arm64"
+
+
+def test_opencode_list_cached_binaries(tmp_path: Path) -> None:
+    with patch.object(agentbinary, "package_cache_dir", return_value=tmp_path):
+        source = agentbinary.opencode_binary_source()
+    (tmp_path / "opencode-0.42.0-linux-arm64").write_bytes(b"binary")
+    (tmp_path / "opencode-0.41.0-linux-x64").write_bytes(b"binary")
+    (tmp_path / "unrelated-file").write_bytes(b"noise")
+    assert {p.name for p in source.list_cached_binaries()} == {
+        "opencode-0.42.0-linux-arm64",
+        "opencode-0.41.0-linux-x64",
+    }
 
 
 @solver

@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, patch
 import anyio
 import pytest
 from inspect_swe._gemini_cli import agentbinary as gemini_agentbinary
-from inspect_swe._opencode import agentbinary as opencode_agentbinary
 from inspect_swe._util import versioncache
 from inspect_swe._util.versioncache import cached_version_resolution
 
@@ -62,7 +61,6 @@ def _const(value: str) -> Any:
     "module,resolve_name,cache_key",
     [
         (gemini_agentbinary, "resolve_gemini_version", "gemini-cli"),
-        (opencode_agentbinary, "resolve_opencode_version", "opencode"),
     ],
 )
 def test_latest_resolution_fetches_once_across_calls(
@@ -85,7 +83,6 @@ def test_latest_resolution_fetches_once_across_calls(
     "module,resolve_name",
     [
         (gemini_agentbinary, "resolve_gemini_version"),
-        (opencode_agentbinary, "resolve_opencode_version"),
     ],
 )
 def test_version_aliases_share_a_cache_entry(module: Any, resolve_name: str) -> None:
@@ -106,7 +103,6 @@ def test_version_aliases_share_a_cache_entry(module: Any, resolve_name: str) -> 
     "module,resolve_name",
     [
         (gemini_agentbinary, "resolve_gemini_version"),
-        (opencode_agentbinary, "resolve_opencode_version"),
     ],
 )
 def test_explicit_version_never_fetches(module: Any, resolve_name: str) -> None:
@@ -127,7 +123,6 @@ def test_explicit_version_never_fetches(module: Any, resolve_name: str) -> None:
     "module,resolve_name",
     [
         (gemini_agentbinary, "resolve_gemini_version"),
-        (opencode_agentbinary, "resolve_opencode_version"),
     ],
 )
 def test_concurrent_resolution_makes_one_request(
@@ -165,7 +160,6 @@ def test_concurrent_resolution_makes_one_request(
     "module,resolve_name",
     [
         (gemini_agentbinary, "resolve_gemini_version"),
-        (opencode_agentbinary, "resolve_opencode_version"),
     ],
 )
 def test_concurrent_failure_is_shared(module: Any, resolve_name: str) -> None:
@@ -215,7 +209,6 @@ def test_concurrent_failure_is_shared(module: Any, resolve_name: str) -> None:
     "module,resolve_name",
     [
         (gemini_agentbinary, "resolve_gemini_version"),
-        (opencode_agentbinary, "resolve_opencode_version"),
     ],
 )
 def test_failed_resolution_is_not_cached(module: Any, resolve_name: str) -> None:
