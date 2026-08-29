@@ -46,7 +46,7 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
-from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.centaur import CentaurOptions, CommandsFilter, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -117,6 +117,7 @@ def kimi_code(
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     centaur: bool | CentaurOptions = False,
+    commands_filter: CommandsFilter | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     max_context_size: int | None = None,
@@ -154,6 +155,8 @@ def kimi_code(
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
         centaur: Run in 'centaur' mode, which makes Kimi Code available to an Inspect `human_cli()` agent rather than running it unattended.
+        commands_filter: In centaur mode only, filter or augment the human agent's
+            command list (e.g. to add task-specific commands). Ignored outside centaur mode.
         attempts: Configure agent to make multiple attempts
         model: Model name to use for inspect bridge (defaults to main model for task)
         max_context_size: Context window to configure for Kimi. Defaults to the
@@ -329,6 +332,8 @@ def kimi_code(
                     kimi_cmd=cmd,
                     agent_env=agent_env,
                     state=state,
+                    user=user,
+                    commands_filter=commands_filter,
                 )
             else:
                 debug_output: list[str] = []
@@ -596,6 +601,8 @@ async def _run_kimi_code_centaur(
     kimi_cmd: list[str],
     agent_env: dict[str, str],
     state: AgentState,
+    user: str | None = None,
+    commands_filter: CommandsFilter | None = None,
 ) -> None:
     instructions = (
         "Kimi Code:\n\n"
@@ -610,4 +617,6 @@ async def _run_kimi_code_centaur(
     alias_cmd = "alias kimi='" + alias_cmd.replace("'", "'\\''") + "'"
     bashrc = "\n".join(agent_env_vars + ["", alias_cmd])
 
-    await run_centaur(options, instructions, bashrc, state)
+    await run_centaur(
+        options, instructions, bashrc, state, user=user, commands_filter=commands_filter
+    )

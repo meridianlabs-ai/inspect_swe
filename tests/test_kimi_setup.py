@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import anyio
 import pytest
+from inspect_ai.agent import AgentState
+from inspect_ai.agent._human.commands.command import HumanAgentCommand
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageAssistant,
@@ -32,8 +34,10 @@ from inspect_swe._kimi_code.kimi_code import (
     _mcp_json,
     _resolve_max_context_size,
     _resolve_model,
+    _run_kimi_code_centaur,
     _strip_repeat_reminders,
 )
+from inspect_swe._util.centaur import CentaurOptions
 
 from tests.conftest import skip_if_github_action
 
@@ -417,6 +421,40 @@ def test_is_legacy_str_filter_dispatch() -> None:
 
     assert _is_legacy_str_filter(legacy) is True
     assert _is_legacy_str_filter(modern) is False
+
+
+def test_run_kimi_code_centaur_forwards_user_and_commands_filter() -> None:
+    captured: dict[str, object] = {}
+
+    def _commands_filter(
+        commands: list[HumanAgentCommand],
+    ) -> list[HumanAgentCommand]:
+        return commands
+
+    async def fake_run_centaur(
+        options: CentaurOptions,
+        instructions: str,
+        bashrc: str,
+        state: AgentState,
+        user: str | None = None,
+        commands_filter: object = None,
+    ) -> None:
+        captured["user"] = user
+        captured["commands_filter"] = commands_filter
+
+    with patch.object(_KIMI_CODE_MODULE, "run_centaur", fake_run_centaur):
+        anyio.run(
+            _run_kimi_code_centaur,
+            CentaurOptions(),
+            ["kimi"],
+            {},
+            AgentState(messages=[]),
+            "agent",
+            _commands_filter,
+        )
+
+    assert captured["user"] == "agent"
+    assert captured["commands_filter"] is _commands_filter
 
 
 @skip_if_github_action
