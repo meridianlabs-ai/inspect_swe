@@ -1,3 +1,4 @@
+import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +9,7 @@ from inspect_ai.util import sandbox as sandbox_env
 
 from inspect_swe._util.trace import trace
 
-from .checksum import verify_checksum
+from .checksum import ChecksumMismatchError, verify_checksum
 from .download import download_file
 from .sandbox import (
     SANDBOX_INSTALL_DIR,
@@ -17,6 +18,8 @@ from .sandbox import (
     detect_sandbox_platform,
     sandbox_exec,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AgentBinaryVersion(NamedTuple):
@@ -169,13 +172,31 @@ async def ensure_agent_binary_installed(
                 )
                 resolved_version = resolved.version
                 package = resolved.package
+            except ChecksumMismatchError:
+                # integrity failure: the freshly-downloaded (or shared,
+                # already-failed) bytes did not match the expected digest.
+                # never mask this by silently installing unverified bytes
+                # from the legacy single-binary cache — a corrupted cache
+                # or a poisoned download must fail loudly, not fall through.
+                raise
             except Exception:
                 # offline fallback: a pinned version with a cached single
-                # binary still installs (without companion executables)
+                # binary still installs (without companion executables) when
+                # resolution/download failed for a network or availability
+                # reason (checksum failures are excluded above and always
+                # propagate).
                 if version not in ["stable", "latest"]:
                     binary_bytes = read_cached_binary(source, version, platform, None)
                 if binary_bytes is None:
                     raise
+                cache_path = source.cached_binary_path(version, platform)
+                logger.warning(
+                    f"{source.agent} {version} could not be resolved or "
+                    f"downloaded over the network; installing the cached "
+                    f"binary at {cache_path} ({platform}) WITHOUT checksum "
+                    "verification, because no digest can be obtained "
+                    "offline to verify it."
+                )
                 trace(
                     f"Unable to resolve {source.agent} {version}; using cached "
                     f"single binary ({platform})"
@@ -265,7 +286,7 @@ async def download_agent_binary_async(
         # not in cache, download and verify checksum
         binary_data = await download_file(download_url)
         if not verify_checksum(binary_data, expected_checksum):
-            raise ValueError("Checksum verification failed")
+            raise ChecksumMismatchError("Checksum verification failed")
 
         # apply post-download processing if provided (e.g., extract from tar.gz)
         if not resolved.package and source.post_download is not None:

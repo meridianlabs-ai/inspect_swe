@@ -1,6 +1,7 @@
 """Unit tests for package-archive installs in the agent binary machinery."""
 
 import hashlib
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -16,6 +17,7 @@ from inspect_swe._util.agentbinary import (
     download_agent_binary_async,
     ensure_agent_binary_installed,
 )
+from inspect_swe._util.checksum import ChecksumMismatchError
 from inspect_swe._util.sandbox import SANDBOX_INSTALL_DIR
 
 
@@ -219,11 +221,15 @@ def test_stale_single_binary_cache_still_installs_package(tmp_path: Path) -> Non
     assert not stale.exists()
 
 
-def test_offline_pinned_version_falls_back_to_cached_binary(tmp_path: Path) -> None:
-    # when resolution fails (offline) a pinned version with a cached single
-    # binary still installs, without the package
+def test_offline_pinned_version_falls_back_to_cached_binary(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # when resolution fails for a network/availability reason (offline) a
+    # pinned version with a cached single binary still installs, without the
+    # package -- and a loud warning names the unverified fallback
     source = _package_source(tmp_path)  # resolve_version raises (resolved=None)
-    source.cached_binary_path("9.9.6", "linux-arm64").write_bytes(b"single-binary")
+    cache_path = source.cached_binary_path("9.9.6", "linux-arm64")
+    cache_path.write_bytes(b"single-binary")
 
     sandbox = _FakeSandbox(installed=False)
     with (
@@ -234,6 +240,7 @@ def test_offline_pinned_version_falls_back_to_cached_binary(tmp_path: Path) -> N
         ),
         patch.object(agentbinary, "trace", lambda msg: None),
         patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value="")),
+        caplog.at_level(logging.WARNING, logger="inspect_swe._util.agentbinary"),
     ):
         binary_path = anyio.run(
             ensure_agent_binary_installed,
@@ -245,6 +252,92 @@ def test_offline_pinned_version_falls_back_to_cached_binary(tmp_path: Path) -> N
 
     assert binary_path == f"{SANDBOX_INSTALL_DIR}/codex-9.9.6-linux-arm64"
     assert sandbox.written == [binary_path]
+    assert len(caplog.records) == 1
+    warning = caplog.records[0].getMessage()
+    assert "9.9.6" in warning
+    assert str(cache_path) in warning
+    assert "WITHOUT checksum" in warning
+
+
+def test_checksum_mismatch_raises_without_cached_fallback(tmp_path: Path) -> None:
+    # a checksum failure is an integrity failure, not a network/resolution
+    # failure -- it must propagate rather than being treated like offline
+    # unavailability and swallowed into the unverified-cache fallback
+    resolved = AgentBinaryVersion(
+        "9.9.3",
+        hashlib.sha256(b"correct-bytes").hexdigest(),
+        "https://example.com/codex.tar.gz",
+        False,
+    )
+    source = _package_source(tmp_path, resolved)
+
+    sandbox = _FakeSandbox(installed=False)
+    with (
+        patch.object(
+            agentbinary,
+            "detect_sandbox_platform",
+            AsyncMock(return_value="linux-arm64"),
+        ),
+        patch.object(agentbinary, "trace", lambda msg: None),
+        patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value="")),
+        patch.object(
+            agentbinary, "download_file", AsyncMock(return_value=b"tampered-bytes")
+        ),
+        pytest.raises(ChecksumMismatchError),
+    ):
+        anyio.run(
+            ensure_agent_binary_installed,
+            source,
+            "9.9.3",
+            None,
+            cast(SandboxEnvironment, sandbox),
+        )
+
+    assert sandbox.written == []
+
+
+def test_corrupted_package_download_does_not_fall_back_to_legacy_cache(
+    tmp_path: Path,
+) -> None:
+    # regression: a package-capable source whose download fails checksum
+    # verification (tampered/corrupted release asset) must not silently
+    # install an untouched legacy single-binary cache left by an older
+    # inspect_swe -- that cache lives at a different path than the package
+    # cache, so it survives the failed download and must still not be used
+    resolved = AgentBinaryVersion(
+        "9.9.5",
+        hashlib.sha256(b"correct-bytes").hexdigest(),
+        "https://example.com/pkg.tar.gz",
+        True,
+    )
+    source = _package_source(tmp_path, resolved)
+    legacy = source.cached_binary_path("9.9.5", "linux-arm64")
+    legacy.write_bytes(b"legacy-single-binary")
+
+    sandbox = _FakeSandbox(installed=False)
+    with (
+        patch.object(
+            agentbinary,
+            "detect_sandbox_platform",
+            AsyncMock(return_value="linux-arm64"),
+        ),
+        patch.object(agentbinary, "trace", lambda msg: None),
+        patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value="")),
+        patch.object(
+            agentbinary, "download_file", AsyncMock(return_value=b"tampered-bytes")
+        ),
+        pytest.raises(ChecksumMismatchError),
+    ):
+        anyio.run(
+            ensure_agent_binary_installed,
+            source,
+            "9.9.5",
+            None,
+            cast(SandboxEnvironment, sandbox),
+        )
+
+    assert sandbox.written == []
+    assert legacy.read_bytes() == b"legacy-single-binary"
 
 
 def test_concurrent_version_resolution_shares_one_request(tmp_path: Path) -> None:
