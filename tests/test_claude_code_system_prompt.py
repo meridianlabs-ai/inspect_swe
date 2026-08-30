@@ -1,5 +1,5 @@
 import pytest
-from inspect_ai.model import ChatMessageSystem, ChatMessageUser
+from inspect_ai.model import ChatMessage, ChatMessageSystem, ChatMessageUser
 from inspect_swe import claude_code
 from inspect_swe._claude_code.claude_code import (
     _centaur_claude_cmd,
@@ -60,7 +60,7 @@ def test_append_and_replace_system_prompts_are_mutually_exclusive() -> None:
 
 
 def test_system_texts_takes_task_messages_then_caller_prompt() -> None:
-    messages = [
+    messages: list[ChatMessage] = [
         ChatMessageSystem(content="Task prompt"),
         ChatMessageUser(content="Do the thing"),
     ]
