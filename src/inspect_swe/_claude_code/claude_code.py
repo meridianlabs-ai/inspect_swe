@@ -189,17 +189,17 @@ def claude_code(
         model_aliases: Optional mapping of model names to Model instances or model name strings.
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
-        transparent_proxy: Run the bridge as a faithful transparent proxy (defaults
-            to `False`). When `True`, each request is routed to the model the agent
-            actually asked for -- no alias table and no fallback collapse onto the
-            session model -- and the client's generation parameters are treated as
-            authoritative. Required when the agent makes internal model calls of its
-            own that must reach their real provider model rather than being served by
-            the session model, e.g. Claude Code's auto-mode security classifier under
-            `auto_mode=True`. With the default `False`, the presented-identity aliases
-            and the fallback model collapse such a request onto the session model, so
-            the classifier is served by the wrong model (and its generation parameters,
-            e.g. `max_tokens`, are dropped).
+        transparent_proxy: Forward the client's generation parameters as
+            authoritative instead of merging in the eval's active
+            `GenerateConfig` (defaults to `False`). Claude Code's auto-mode
+            security classifier makes its own internal model call under
+            `permission_mode="auto"`, and by default the classifier's own
+            generation parameters (e.g. `max_tokens`) are dropped in favor of
+            the eval's `GenerateConfig`. The classifier's model identity is
+            unaffected either way -- it already resolves through the
+            presented-identity/role aliases above (or the fallback model, for
+            any identity not covered by those), the same as every other
+            bridged request.
         opus_model: The model to use for `opus`, or for `opusplan` when Plan Mode is active. Defaults to `model`.
         sonnet_model: The model to use for `sonnet`, or for `opusplan` when Plan Mode is not active. Defaults to `model`.
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
@@ -295,8 +295,8 @@ def claude_code(
             checkpointer() as cp,
             sandbox_agent_bridge(
                 state,
-                model=None if transparent_proxy else models.bridge_model,
-                model_aliases=None if transparent_proxy else models.aliases,
+                model=models.bridge_model,
+                model_aliases=models.aliases,
                 forward_generation_config=transparent_proxy,
                 filter=filter,
                 sandbox=sandbox,
