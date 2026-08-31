@@ -4,6 +4,7 @@ from typing import Literal, NamedTuple
 
 from .._claude_code.agentbinary import claude_code_binary_source
 from .._codex_cli.agentbinary import codex_cli_binary_source
+from .._opencode.agentbinary import opencode_binary_source
 from .._util._async import run_coroutine
 from .._util.agentbinary import (
     AgentBinarySource,
@@ -15,7 +16,7 @@ from .._util.sandbox import SandboxPlatform
 class AgentBinary(NamedTuple):
     """Agent binary."""
 
-    agent: Literal["claude_code", "codex_cli"]
+    agent: Literal["claude_code", "codex_cli", "opencode"]
     """Agent type."""
 
     version: str
@@ -51,7 +52,7 @@ class AgentBinaries(list[AgentBinary]):
 
 
 def download_agent_binary(
-    binary: Literal["claude_code", "codex_cli"],
+    binary: Literal["claude_code", "codex_cli", "opencode"],
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform,
 ) -> None:
@@ -66,19 +67,14 @@ def download_agent_binary(
         version: Version to download ("stable", "latest", or an explicit version number).
         platform: Target platform ("linux-x64", "linux-arm64", "linux-x64-musl", or "linux-arm64-musl")
     """
-    match binary:
-        case "claude_code":
-            source = claude_code_binary_source()
-        case "codex_cli":
-            source = codex_cli_binary_source()
-        case _:
-            raise ValueError(f"Unsuported agent binary type: {binary}")
+    source = _agent_binary_source(binary)
 
     run_coroutine(download_agent_binary_async(source, version, platform))
 
 
 def cached_agent_binaries(
-    binary: Literal["claude_code", "codex_cli"] | None = None, quiet: bool = False
+    binary: Literal["claude_code", "codex_cli", "opencode"] | None = None,
+    quiet: bool = False,
 ) -> AgentBinaries:
     """List the agent binaries which have been cached on this system.
 
@@ -92,7 +88,9 @@ def cached_agent_binaries(
     """
     if binary is None:
         return AgentBinaries(
-            cached_agent_binaries("claude_code") + cached_agent_binaries("codex_cli")
+            cached_agent_binaries("claude_code")
+            + cached_agent_binaries("codex_cli")
+            + cached_agent_binaries("opencode")
         )
 
     source = _agent_binary_source(binary)
@@ -139,12 +137,14 @@ def cached_agent_binaries(
 
 
 def _agent_binary_source(
-    binary: Literal["claude_code", "codex_cli"],
+    binary: Literal["claude_code", "codex_cli", "opencode"],
 ) -> AgentBinarySource:
     match binary:
         case "claude_code":
             return claude_code_binary_source()
         case "codex_cli":
             return codex_cli_binary_source()
+        case "opencode":
+            return opencode_binary_source()
         case _:
             raise ValueError(f"Unsuported agent binary type: {binary}")

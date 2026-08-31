@@ -1,3 +1,4 @@
+import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +9,7 @@ from inspect_ai.util import sandbox as sandbox_env
 
 from inspect_swe._util.trace import trace
 
-from .checksum import verify_checksum
+from .checksum import ChecksumMismatchError, verify_checksum
 from .download import download_file
 from .sandbox import (
     SANDBOX_INSTALL_DIR,
@@ -17,6 +18,8 @@ from .sandbox import (
     detect_sandbox_platform,
     sandbox_exec,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AgentBinaryVersion(NamedTuple):
@@ -55,11 +58,61 @@ class AgentBinarySource:
 # because it only guards synchronous dict reads/writes — never held across
 # an await — and avoids issues with module-level anyio.Lock binding to a
 # stale event loop across multiple anyio.run() calls. No expiry: entries
-# live for the process lifetime. Two callers may race on the same key and
-# both call resolve_version(), but this is benign (same result) and unlikely
-# given the per-binary concurrency(1) lock in ensure_agent_binary_installed.
+# live for the process lifetime.
 _resolve_version_lock = threading.Lock()
 _resolved_versions: dict[tuple[str, str, SandboxPlatform], AgentBinaryVersion] = {}
+# per key: (number of failed resolutions so far, exception from the latest
+# one). Lets callers already queued behind a failing resolution share its
+# exception instead of each retrying in turn — mirrors
+# versioncache.cached_version_resolution's idiom for npm-installed agents.
+_failed_resolutions: dict[tuple[str, str, SandboxPlatform], tuple[int, Exception]] = {}
+
+
+async def _resolve_agent_binary_version(
+    source: AgentBinarySource,
+    version: Literal["stable", "latest"] | str,
+    platform: SandboxPlatform,
+) -> AgentBinaryVersion:
+    """Resolve a binary's version, reusing the result for the process lifetime.
+
+    Concurrent/queued callers for the same (binary, version, platform) key
+    share a single resolution — including its failure, so a burst of samples
+    hitting a rate-limited API produces one error, not one retry per queued
+    sample. Failures are not cached: a call arriving after a failed
+    resolution has completed retries.
+    """
+    cache_key = (source.binary, version, platform)
+    with _resolve_version_lock:
+        cached = _resolved_versions.get(cache_key)
+        if cached is not None:
+            return cached
+        failure = _failed_resolutions.get(cache_key)
+        failures_at_arrival = failure[0] if failure is not None else 0
+
+    # serialize per key so a burst of samples starting together makes one
+    # request rather than one each (in addition to, and independent of, the
+    # per-binary install concurrency(1) lock in ensure_agent_binary_installed)
+    async with concurrency(
+        f"{source.binary}-version-resolution-{version}-{platform}", 1, visible=False
+    ):
+        # another sample may have resolved (or failed) while we were waiting
+        with _resolve_version_lock:
+            cached = _resolved_versions.get(cache_key)
+            if cached is not None:
+                return cached
+            failure = _failed_resolutions.get(cache_key)
+        if failure is not None and failure[0] > failures_at_arrival:
+            raise failure[1]
+
+        try:
+            resolved = await source.resolve_version(version, platform)
+        except Exception as ex:
+            with _resolve_version_lock:
+                _failed_resolutions[cache_key] = (failures_at_arrival + 1, ex)
+            raise
+        with _resolve_version_lock:
+            _resolved_versions[cache_key] = resolved
+        return resolved
 
 
 async def ensure_agent_binary_installed(
@@ -119,13 +172,31 @@ async def ensure_agent_binary_installed(
                 )
                 resolved_version = resolved.version
                 package = resolved.package
+            except ChecksumMismatchError:
+                # integrity failure: the freshly-downloaded (or shared,
+                # already-failed) bytes did not match the expected digest.
+                # never mask this by silently installing unverified bytes
+                # from the legacy single-binary cache — a corrupted cache
+                # or a poisoned download must fail loudly, not fall through.
+                raise
             except Exception:
                 # offline fallback: a pinned version with a cached single
-                # binary still installs (without companion executables)
+                # binary still installs (without companion executables) when
+                # resolution/download failed for a network or availability
+                # reason (checksum failures are excluded above and always
+                # propagate).
                 if version not in ["stable", "latest"]:
                     binary_bytes = read_cached_binary(source, version, platform, None)
                 if binary_bytes is None:
                     raise
+                cache_path = source.cached_binary_path(version, platform)
+                logger.warning(
+                    f"{source.agent} {version} could not be resolved or "
+                    f"downloaded over the network; installing the cached "
+                    f"binary at {cache_path} ({platform}) WITHOUT checksum "
+                    "verification, because no digest can be obtained "
+                    "offline to verify it."
+                )
                 trace(
                     f"Unable to resolve {source.agent} {version}; using cached "
                     f"single binary ({platform})"
@@ -187,16 +258,10 @@ async def download_agent_binary_async(
     logger = logger or print
 
     # determine version and checksum (cached so concurrent samples don't
-    # repeat upstream API calls that may be rate-limited)
-    cache_key = (source.binary, version, platform)
-    with _resolve_version_lock:
-        cached = _resolved_versions.get(cache_key)
-    if cached is not None:
-        resolved = cached
-    else:
-        resolved = await source.resolve_version(version, platform)
-        with _resolve_version_lock:
-            _resolved_versions[cache_key] = resolved
+    # repeat upstream API calls that may be rate-limited, sharing a failure
+    # too so a queue of samples behind a rate-limited call doesn't each
+    # retry it in turn)
+    resolved = await _resolve_agent_binary_version(source, version, platform)
     version = resolved.version
     expected_checksum = resolved.expected_checksum
     download_url = resolved.download_url
@@ -221,7 +286,7 @@ async def download_agent_binary_async(
         # not in cache, download and verify checksum
         binary_data = await download_file(download_url)
         if not verify_checksum(binary_data, expected_checksum):
-            raise ValueError("Checksum verification failed")
+            raise ChecksumMismatchError("Checksum verification failed")
 
         # apply post-download processing if provided (e.g., extract from tar.gz)
         if not resolved.package and source.post_download is not None:
