@@ -512,7 +512,6 @@ def codex_cli(
             image_files = await _stage_prompt_images(
                 collect_user_images(state.messages), sbox, user, codex_home
             )
-            image_args = [arg for file in image_files for arg in ("--image", file)]
 
             # build agent cmd
             cmd = [codex_binary]
@@ -657,7 +656,11 @@ def codex_cli(
                 # send `incorrect_message` (text-only), and a checkpoint
                 # resume replays a prompt codex already received, with the
                 # images already embedded in its rollout
-                agent_image_args = [] if cp.attempt == "resume" else image_args
+                agent_image_args = (
+                    []
+                    if cp.attempt == "resume"
+                    else [arg for file in image_files for arg in ("--image", file)]
+                )
                 attempt_count = cp.track(
                     "codex_attempt_count", lambda: attempt_count, 0
                 )
@@ -884,7 +887,9 @@ async def _run_codex_cli_centaur(
         instructions += (
             "\n - The task input includes image file(s), which the 'codex' "
             "command attaches to your first invocation automatically: "
-            f"{', '.join(image_files)}"
+            f"{', '.join(image_files)}\n"
+            " - If that first invocation fails before the images are sent, "
+            f"delete {marker} to re-attach them on your next invocation."
         )
     else:
         alias_cmd = shlex.join(codex_cmd)
