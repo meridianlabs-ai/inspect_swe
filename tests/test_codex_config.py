@@ -1,7 +1,8 @@
 from typing import Any
 
 import pytest
-from inspect_ai.model import Model
+from inspect_ai.agent._bridge.util import resolve_inspect_model
+from inspect_ai.model import Model, get_model
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_swe import codex_cli, interactive_codex_cli
 from inspect_swe._codex_cli.config import (
@@ -247,6 +248,42 @@ def test_codex_cli_accepts_auto_review() -> None:
     codex_cli(
         auto_review=CodexAutoReview(policy="Deny package installs.", model="guardian")
     )
+
+
+def test_codex_cli_accepts_auto_review_with_transparent_proxy() -> None:
+    codex_cli(auto_review=True, transparent_proxy=True)
+
+
+def test_transparent_proxy_binds_guardian_without_explicit_model() -> None:
+    # reproduces the review finding on #100: with auto_review enabled but no
+    # explicit CodexAutoReview(model=...), codex's guardian request (hardcoded
+    # to GUARDIAN_MODEL_SLUG regardless of configuration) must still resolve
+    # to the real target model rather than raising or falling through to some
+    # other model -- this is exactly what codex_cli()'s execute() computes
+    # for the bridge's model_aliases under transparent_proxy=True.
+    real_model = get_model("mockllm/model")
+    aliases = resolve_codex_auto_review_model_aliases(
+        resolve_codex_auto_review(True), None, default=real_model
+    )
+    resolved = resolve_inspect_model(GUARDIAN_MODEL_SLUG, aliases, None)
+    assert resolved is real_model
+
+
+def test_transparent_proxy_keeps_main_line_fallback() -> None:
+    # the review also found that codex's own --model slug (a bare, unprefixed
+    # catalog slug like "gpt-5.1-codex") can't resolve as a raw model name --
+    # get_model() requires "<api_name>/<model_name>". codex_cli()'s execute()
+    # keeps passing the bridge sentinel as the fallback under
+    # transparent_proxy=True precisely so this ordinary request still
+    # resolves, the same as when transparent_proxy=False.
+    model = "mockllm/model"
+    real_model = get_model(model)
+    bridge_model = f"inspect/{model}"  # mirrors codex_cli()'s own bridge_model
+    aliases = resolve_codex_auto_review_model_aliases(
+        resolve_codex_auto_review(True), None, default=real_model
+    )
+    resolved = resolve_inspect_model("gpt-5.1-codex", aliases, bridge_model)
+    assert resolved.name == real_model.name
 
 
 def test_interactive_codex_cli_accepts_auto_review(

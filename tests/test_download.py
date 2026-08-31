@@ -1,14 +1,17 @@
+import asyncio
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from inspect_swe import (
     cached_agent_binaries,
     download_agent_binary,
     download_wheels_tarball,
 )
+from inspect_swe._util.download import download_file
 
 
 @pytest.mark.slow
@@ -235,6 +238,81 @@ def test_ensure_pip_available_bootstraps_when_missing() -> None:
             capture_output=True,
             text=True,
         )
+
+
+def _download_with_transport(
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> bytes:
+    """Run download_file against a mock transport with zero retry delays."""
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+
+    def client_with_mock_transport(**kwargs: object) -> httpx.AsyncClient:
+        return real_async_client(transport=transport, **kwargs)  # type: ignore[arg-type]
+
+    with (
+        patch("httpx.AsyncClient", client_with_mock_transport),
+        patch("inspect_swe._util.download._RETRY_DELAYS", (0.0, 0.0, 0.0)),
+    ):
+        return asyncio.run(download_file("https://example.com/file"))
+
+
+def test_download_file_retries_transient_errors() -> None:
+    """Transient transport errors (e.g. read timeouts) are retried."""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise httpx.ReadTimeout("timed out", request=request)
+        return httpx.Response(200, content=b"ok")
+
+    assert _download_with_transport(handler) == b"ok"
+    assert calls == 3
+
+
+def test_download_file_retries_server_errors() -> None:
+    """5xx responses are treated as transient and retried."""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, content=b"ok")
+
+    assert _download_with_transport(handler) == b"ok"
+    assert calls == 2
+
+
+def test_download_file_does_not_retry_client_errors() -> None:
+    """4xx responses are permanent and raise immediately."""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(404)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _download_with_transport(handler)
+    assert calls == 1
+
+
+def test_download_file_raises_after_retries_exhausted() -> None:
+    """The last error is raised once all attempts are used."""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    with pytest.raises(httpx.ReadTimeout):
+        _download_with_transport(handler)
+    assert calls == 4
 
 
 def test_ensure_pip_available_raises_on_failure() -> None:
