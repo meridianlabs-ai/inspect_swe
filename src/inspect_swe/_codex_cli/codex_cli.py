@@ -1,9 +1,11 @@
+import mimetypes
 import shlex
 from logging import getLogger
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence, cast
 
+from inspect_ai._util.images import file_as_data
 from inspect_ai.agent import (
     Agent,
     AgentAttempts,
@@ -15,6 +17,7 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import (
     ChatMessageSystem,
+    ContentImage,
     GenerateFilter,
     Model,
     ModelName,
@@ -39,7 +42,7 @@ from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
 )
-from inspect_swe._util.messages import build_user_prompt
+from inspect_swe._util.messages import build_user_prompt, collect_user_images
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import resolve_agent_cwd, sandbox_exec
 from inspect_swe._util.toml import to_toml
@@ -124,6 +127,10 @@ def codex_cli(
     """Codex CLI.
 
     Agent that uses OpenAI [Codex CLI](https://github.com/openai/codex) running in a sandbox.
+
+    Image content in the input is written to files in the sandbox and attached
+    to the prompt via `codex exec --image` (requires a codex version that
+    supports the `--image` option).
 
     Use the `attempts` option to enable additional submissions if the initial
     submission(s) are incorrect (by default, no additional attempts are permitted).
@@ -499,6 +506,12 @@ def codex_cli(
 
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
+            # stage input images as files in the sandbox (`--image` args
+            # attach them to the prompt; empty if the input has no images)
+            image_args = await _stage_prompt_images(
+                collect_user_images(state.messages), sbox, user, codex_home
+            )
+
             # build agent cmd
             cmd = [codex_binary]
 
@@ -637,6 +650,9 @@ def codex_cli(
                 # execute the agent (track debug output)
                 debug_output: list[str] = []
                 agent_prompt = prompt
+                # images accompany the original prompt only (retry attempts
+                # send `incorrect_message`, which is text-only)
+                agent_image_args = image_args
                 attempt_count = cp.track(
                     "codex_attempt_count", lambda: attempt_count, 0
                 )
@@ -652,6 +668,12 @@ def codex_cli(
                         or cp.attempt == "resume"
                     ):
                         agent_cmd.extend(["resume", "--last"])
+
+                    # Image args go LAST: `--image` is multi-value, so a
+                    # following positional (the prompt, or the `resume`
+                    # subcommand) would be swallowed as another image path.
+                    # Trailing, it binds to `exec` or `exec resume` alike.
+                    agent_cmd.extend(agent_image_args)
 
                     # Retry-loop gate: fires ONLY when this loop is actually
                     # retrying (attempt_count > 0 or the checkpoint says
@@ -716,6 +738,7 @@ def codex_cli(
                             )
                         else:
                             agent_prompt = attempts.incorrect_message
+                        agent_image_args = []
 
                 # trace debug info
                 if debug:
@@ -726,6 +749,32 @@ def codex_cli(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+async def _stage_prompt_images(
+    images: list[ContentImage],
+    sandbox: SandboxEnvironment,
+    user: str | None,
+    codex_home: str,
+) -> list[str]:
+    """Write prompt images to files in the sandbox, returning `--image` args.
+
+    `codex exec` cannot accept image content inline in its prompt argument
+    (the prompt is plain argv text), so images ride along as files attached
+    via `--image`, one flag per file.
+    """
+    if not images:
+        return []
+    images_dir = join_path(codex_home, "images")
+    await sandbox_exec(sandbox, f"mkdir -p {images_dir}", user=user)
+    args: list[str] = []
+    for idx, image in enumerate(images):
+        image_bytes, mime_type = await file_as_data(image.image)
+        extension = mimetypes.guess_extension(mime_type, strict=False) or ".png"
+        image_file = join_path(images_dir, f"image-{idx}{extension}")
+        await sandbox.write_file(image_file, image_bytes)
+        args.extend(["--image", image_file])
+    return args
 
 
 async def resolve_codex_model(
