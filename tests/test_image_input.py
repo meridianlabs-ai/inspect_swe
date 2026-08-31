@@ -1,9 +1,13 @@
 from typing import Any
 
+import anyio
 import pytest
 from inspect_ai import eval
+from inspect_ai.agent import AgentState
 from inspect_ai.log import EvalSample, resolve_sample_attachments
 from inspect_ai.model import ChatMessageAssistant, ChatMessageUser
+from inspect_swe._codex_cli import codex_cli as codex_cli_module
+from inspect_swe._util.centaur import CentaurOptions
 
 from tests.conftest import (
     get_available_sandboxes,
@@ -52,6 +56,81 @@ def test_codex_cli_image_input(sandbox: str) -> None:
     assert any(color in turn_2_answer.lower() for color in GREEN_NAMES), (
         f"second answer did not identify the green image: {turn_2_answer!r}"
     )
+
+
+def test_codex_cli_centaur_alias_attaches_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The centaur `codex` alias carries the staged `--image` args.
+
+    Regression test: image args were only consumed by the headless exec
+    branch, so in centaur mode images were staged as files but the alias
+    never attached them -- a silent drop (the image-content warning is
+    suppressed because the content is declared handled).
+    """
+    captured: dict[str, str] = {}
+
+    async def fake_run_centaur(
+        options: CentaurOptions, instructions: str, bashrc: str, state: AgentState
+    ) -> None:
+        captured["instructions"] = instructions
+        captured["bashrc"] = bashrc
+
+    monkeypatch.setattr(codex_cli_module, "run_centaur", fake_run_centaur)
+
+    image_file = "/home/user/.codex/images/image-0.png"
+    anyio.run(
+        lambda: codex_cli_module._run_codex_cli_centaur(
+            options=CentaurOptions(),
+            codex_cmd=["/usr/bin/codex", "--model", "gpt-5", "-c", "key=value"],
+            image_args=["--image", image_file],
+            agent_env={},
+            state=AgentState(messages=[]),
+        )
+    )
+
+    alias = next(
+        line
+        for line in captured["bashrc"].splitlines()
+        if line.startswith("alias codex=")
+    )
+    assert f"--image {image_file}" in alias
+
+    # image args must be spliced after the binary, not appended: `--image` is
+    # multi-value, so an alias ending with it would swallow whatever the human
+    # types next (`codex resume`, or a prompt) as another image path
+    assert alias.index("--image") < alias.index("--model")
+
+    # the human is told about the attached images
+    assert image_file in captured["instructions"]
+
+
+def test_codex_cli_centaur_alias_without_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No image args: the alias and instructions are unchanged."""
+    captured: dict[str, str] = {}
+
+    async def fake_run_centaur(
+        options: CentaurOptions, instructions: str, bashrc: str, state: AgentState
+    ) -> None:
+        captured["instructions"] = instructions
+        captured["bashrc"] = bashrc
+
+    monkeypatch.setattr(codex_cli_module, "run_centaur", fake_run_centaur)
+
+    anyio.run(
+        lambda: codex_cli_module._run_codex_cli_centaur(
+            options=CentaurOptions(),
+            codex_cmd=["/usr/bin/codex", "--model", "gpt-5"],
+            image_args=[],
+            agent_env={},
+            state=AgentState(messages=[]),
+        )
+    )
+
+    assert "--image" not in captured["bashrc"]
+    assert "image" not in captured["instructions"].lower()
 
 
 def _turn_answers(sample: EvalSample) -> tuple[str, str]:

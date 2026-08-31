@@ -645,6 +645,7 @@ def codex_cli(
                 await _run_codex_cli_centaur(
                     options=centaur,
                     codex_cmd=cmd,
+                    image_args=image_args,
                     agent_env=agent_env,
                     state=state,
                 )
@@ -826,10 +827,20 @@ async def resolve_codex_model(
 async def _run_codex_cli_centaur(
     options: CentaurOptions,
     codex_cmd: list[str],
+    image_args: list[str],
     agent_env: dict[str, str],
     state: AgentState,
 ) -> None:
+    # Attach input images inside the alias, spliced right after the binary
+    # rather than trailing: `--image` is multi-value, so tokens the human
+    # types after the alias (a prompt, or `resume`) would be swallowed as
+    # image paths if the alias ended with an `--image` flag.
+    codex_cmd = codex_cmd[:1] + image_args + codex_cmd[1:]
+
     instructions = "Codex CLI:\n\n - You may also use Codex CLI via the 'codex' command.\n - Use 'codex resume' if you need to resume a previous codex session."
+    if image_args:
+        image_files = ", ".join(image_args[1::2])
+        instructions += f"\n - The task input includes image file(s), which the 'codex' alias attaches to your prompt automatically: {image_files}"
 
     # build .bashrc content
     agent_env_vars = [f'export {k}="{v}"' for k, v in agent_env.items()]
