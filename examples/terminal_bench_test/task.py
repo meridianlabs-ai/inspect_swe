@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from inspect_ai import Task, task
-from inspect_ai.tool import bash, python
 from inspect_swe import mini_swe_agent
 
 
@@ -86,5 +85,4 @@ def terminal_bench_task(
         dataset=dataset,
         solver=solver,
         scorer=terminal_bench_2_scorer(),
-        tools=[bash(timeout=60), python(timeout=60)],
     )
