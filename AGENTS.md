@@ -1,9 +1,43 @@
 # AGENTS.md
 
+This file provides guidance to AI coding agents working in this repository.
+
+## Build/Lint/Test Commands
+
+- Install dev environment: `pip install -e ".[dev]"`, or with uv: `make sync`
+- Format, lint, and type check: `make check` (runs `ruff format`, `ruff check --fix`, `mypy`)
+- Run fast tests: `make test` (or `pytest`)
+- Run a single test: `pytest tests/test_file.py::test_name -v`
+
+## Type Checking
+
+- mypy runs with `strict = true` over `src` and `tests`. All functions need type annotations, and an unused `type: ignore` comment is a hard error (`warn_unused_ignores`).
+- CI installs the latest unpinned mypy, so a new mypy release can turn `main` red with no code change (e.g. a `type: ignore` that a newer mypy considers unused). If the mypy check fails on a line your diff didn't touch, check whether `main` has the same failure before debugging your change — and if so, fix it in your PR and note that it was pre-existing.
+
+## Test Suite Topology
+
+- Three opt-in gates skip tests by default: `--runslow` (integration tests that drive real agents end-to-end), `--runapi` (tests needing model API access), and `--runflaky`. PR CI runs only the fast suite; the slow suite runs nightly via `meridianlabs-ai/actions` ("Inspect SWE Nightly Tests").
+- Slow tests call real model APIs (skipped without the relevant `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`GOOGLE_API_KEY`) and need a sandbox: docker and/or k8s are auto-detected from your environment and sandbox-dependent tests are parametrized over whatever is available. `pytest --co` shows what would actually run.
+- The end-to-end example tests all route through the `run_example` helper in `tests/conftest.py`, which bounds each eval with `time_limit` and `token_limit` (see the comments there for the rationale before changing them). The nightly runs pytest with `--timeout=900`, so any per-eval time limit must stay comfortably under that or a timeout surfaces as an opaque pytest kill instead of a clean eval failure.
+
 ## Pull Requests
 
 - Title PRs as Conventional Commits (`<type>: <description>`)—we squash-merge, so the PR title becomes the commit message that drives releases; `pr-title-lint` enforces it
 - `feat:`/`fix:` are for user-facing changes only: they headline the release notes and bump the version. `perf:`/`revert:` also appear in the notes (no bump); `docs:`, `refactor:`, `chore:`, `build:`, `ci:`, `test:`, `style:` are hidden
+- In the description part of the title, state the user-facing outcome — the problem a user hit or the capability they gain — not the mechanism of the fix: `fix: agent hang when sandbox startup races container pull`, not `fix: add lock around container init`. For changes with no user-facing outcome (refactoring, CI, docs), describe the change itself.
 - Body lines starting with `<type>:` are parsed as extra changelog entries—don't begin description lines with a conventional-commit prefix unless that's intended
 - Never edit `CHANGELOG.md`, version numbers, or `.release-please-manifest.json`—Release Please owns them
+- Before opening a non-trivial PR, run at least one code review pass in a fresh context (e.g. `/code-review` or a subagent that hasn't seen the authoring conversation) using a frontier-class model — the authoring context is blind to its own assumptions, and in our experience reviews from small fast-tier models rarely surface real issues. Fix or explicitly dismiss each finding before opening the PR, and disclose the pass in the description (see "Agent Review Disclosure" below).
+- After opening a PR, don't stop at creation: watch its checks (`gh pr checks <number> --watch`) until they complete, report the outcome, and investigate and fix any failures. If the branch falls behind `main`, update it so CI runs against current code.
 - See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines
+
+## Agent Review Disclosure
+
+When an AI agent authored or co-authored a change, include an `### Agent review` section in the PR description summarizing the pre-PR review passes described above: what model/tool reviewed, whether the review ran in a fresh context and/or on a different model from the author, how many passes, and the findings — issues found, which were fixed, and which were dismissed with a one-line reason each. Maintainers weight the disclosed reviewer model and pass count when deciding how much independent review a PR still needs. If no review pass was run, say so explicitly — never report a review that didn't happen; a content-free claim ("reviewed, looks good") is worse than disclosing none. Example:
+
+```
+### Agent review
+- Reviewer: Claude Fable 5 via /code-review (fresh context), 2 passes
+- Findings: 3 — 2 fixed, 1 dismissed (flagged a missing None check that is
+  guarded upstream)
+```
