@@ -29,3 +29,14 @@ This file provides guidance to AI coding agents working in this repository.
 - Never edit `CHANGELOG.md`, version numbers, or `.release-please-manifest.json`—Release Please owns them
 - After opening a PR, don't stop at creation: watch its checks (`gh pr checks <number> --watch`) until they complete, report the outcome, and investigate and fix any failures. If the branch falls behind `main`, update it so CI runs against current code.
 - See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines
+
+## Agent Review Disclosure
+
+When an AI agent authored or co-authored a change, include an `### Agent review` section in the PR description summarizing pre-PR review passes: what model/tool reviewed, whether the review ran in a fresh context and/or on a different model from the author, how many passes, and the findings — issues found, which were fixed, and which were dismissed with a one-line reason each. Fresh-context passes catch issues the authoring context misses; prefer at least one for non-trivial changes. If no review pass was run, say so explicitly — never report a review that didn't happen; a content-free claim ("reviewed, looks good") is worse than disclosing none. Example:
+
+```
+### Agent review
+- Reviewer: Claude Fable 5 via /code-review (fresh context), 2 passes
+- Findings: 3 — 2 fixed, 1 dismissed (flagged a missing None check that is
+  guarded upstream)
+```
