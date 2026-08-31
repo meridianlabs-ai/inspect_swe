@@ -762,6 +762,11 @@ async def _stage_prompt_images(
     `codex exec` cannot accept image content inline in its prompt argument
     (the prompt is plain argv text), so images ride along as files attached
     via `--image`, one flag per file.
+
+    Filenames restart at image-0 on each execution, so a follow-up turn
+    overwrites the previous turn's files. This is harmless: codex embeds the
+    image bytes into its rollout history at launch (verified on 0.151.0 --
+    a resumed turn's request still carries the original bytes).
     """
     if not images:
         return []
