@@ -200,12 +200,19 @@ def run_example(
     # reads count toward it -- they were 1.4M of that 1.68M -- so a tight cap
     # would clip honest runs. 500k still trips a runaway inside ~3 minutes,
     # ahead of the time limit, while sitting well clear of real usage.
+    #
+    # gemini_cli gets double the time: its healthy multi-turn runs (multi_call,
+    # skills) already take ~300s, so any burst of Gemini API retries pushes it
+    # over the limit and fails the run with a truncated transcript rather than
+    # an obvious timeout (e.g. meridianlabs-ai/actions run 33373083766, where 8
+    # HTTP retries left only 1 of the expected 4+ user messages). 600s still
+    # sits well under the 900s pytest --timeout backstop in the nightly.
     return eval(
         example_file,
         model=model,
         limit=1,
         task_args=task_args,
-        time_limit=300,
+        time_limit=600 if agent == "gemini_cli" else 300,
         token_limit=500_000,
     )
 
