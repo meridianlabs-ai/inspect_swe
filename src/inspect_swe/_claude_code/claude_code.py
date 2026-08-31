@@ -130,6 +130,7 @@ def claude_code(
     model_config: str | None = None,
     effort: ClaudeCodeEffort | None = None,
     model_aliases: dict[str, str | Model] | None = None,
+    transparent_proxy: bool = False,
     opus_model: str | None = None,
     sonnet_model: str | None = None,
     haiku_model: str | None = None,
@@ -197,6 +198,17 @@ def claude_code(
         model_aliases: Optional mapping of model names to Model instances or model name strings.
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
+        transparent_proxy: Forward the client's generation parameters as
+            authoritative instead of merging in the eval's active
+            `GenerateConfig` (defaults to `False`). Claude Code's auto-mode
+            security classifier makes its own internal model call under
+            `permission_mode="auto"`, and by default the classifier's own
+            generation parameters (e.g. `max_tokens`) are dropped in favor of
+            the eval's `GenerateConfig`. The classifier's model identity is
+            unaffected either way -- it already resolves through the
+            presented-identity/role aliases above (or the fallback model, for
+            any identity not covered by those), the same as every other
+            bridged request.
         opus_model: The model to use for `opus`, or for `opusplan` when Plan Mode is active. Defaults to `model`.
         sonnet_model: The model to use for `sonnet`, or for `opusplan` when Plan Mode is not active. Defaults to `model`.
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
@@ -318,6 +330,7 @@ def claude_code(
                 state,
                 model=models.bridge_model,
                 model_aliases=models.aliases,
+                forward_generation_config=transparent_proxy,
                 filter=filter,
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,

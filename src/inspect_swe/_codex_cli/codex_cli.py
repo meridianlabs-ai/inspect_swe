@@ -105,6 +105,7 @@ def codex_cli(
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
+    transparent_proxy: bool = False,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     home_dir: str | None = None,
@@ -161,6 +162,20 @@ def codex_cli(
         model_aliases: Optional mapping of model names to Model instances or model name strings.
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
+        transparent_proxy: Bind the `auto_review` guardian slug
+            (`codex-auto-review`) to the real target model even when
+            `auto_review` doesn't configure its own `model`, and forward the
+            client's generation parameters as authoritative instead of merging
+            in the eval's active `GenerateConfig` (defaults to `False`). Codex
+            hardcodes that guardian slug into every reviewer request
+            regardless of configuration, so without this the request has no
+            alias, falls through to the session model instead of the intended
+            guardian, and the guardian's own generation parameters (e.g.
+            `max_tokens`) are dropped. Required for `auto_review=True` with
+            `approval_policy="on-request"` when no explicit
+            `CodexAutoReview(model=...)` is set. The ordinary bridged request
+            (Codex's own `--model` slug) is unaffected -- it keeps resolving
+            to the real target model exactly as it does with `transparent_proxy=False`.
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         home_dir: Home directory to use for codex cli. If set, AGENTS.md, skills, and the MCP configuration will be written here.
@@ -351,8 +366,11 @@ def codex_cli(
                 state,
                 model=bridge_model,
                 model_aliases=resolve_codex_auto_review_model_aliases(
-                    resolved_auto_review, model_aliases
+                    resolved_auto_review,
+                    model_aliases,
+                    default=get_model(model) if transparent_proxy else None,
                 ),
+                forward_generation_config=transparent_proxy,
                 filter=filter,
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
