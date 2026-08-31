@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 from typing import Literal
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from inspect_swe import (
@@ -45,6 +45,32 @@ def test_codex_cli_binary_download() -> None:
     assert cached[0].agent == "codex_cli"
     assert cached[0].path.exists()
     assert cached[0].path.stat().st_size > 0
+
+
+def test_opencode_download_routes_to_opencode_source() -> None:
+    # the docs' offline-install path (download_agent_binary("opencode", ...))
+    # must route to the opencode binary source rather than raising ValueError
+    from inspect_swe._tools import download as download_tool
+
+    mock_download = AsyncMock(return_value=(b"", None))
+    with patch.object(download_tool, "download_agent_binary_async", mock_download):
+        download_agent_binary("opencode", "1.14.30", "linux-x64")
+
+    assert mock_download.await_args is not None
+    source, version, platform = mock_download.await_args.args
+    assert source.agent == "opencode"
+    assert version == "1.14.30"
+    assert platform == "linux-x64"
+
+
+def test_cached_agent_binaries_lists_opencode(tmp_path: Path) -> None:
+    from inspect_swe._opencode import agentbinary as opencode_agentbinary
+
+    with patch.object(opencode_agentbinary, "package_cache_dir", return_value=tmp_path):
+        (tmp_path / "opencode-package-1.14.30-linux-x64.tar.gz").write_bytes(b"x")
+        cached = cached_agent_binaries("opencode")
+
+    assert [(b.agent, b.version) for b in cached] == [("opencode", "1.14.30")]
 
 
 @pytest.mark.slow

@@ -78,8 +78,10 @@ def opencode_binary_source() -> AgentBinarySource:
                 f"release {version}"
             )
 
-        # Extract checksum (format: "sha256:xxx")
-        digest = asset.get("digest", "")
+        # Extract checksum (format: "sha256:xxx"). GitHub serves
+        # "digest": null for assets uploaded before digest support, so
+        # normalize None to "" rather than crashing on .startswith.
+        digest = asset.get("digest") or ""
         if not digest.startswith("sha256:"):
             raise RuntimeError(f"Invalid digest format: {digest}")
         expected_checksum = digest[7:]  # Remove "sha256:" prefix
@@ -96,10 +98,10 @@ def opencode_binary_source() -> AgentBinarySource:
         )
 
     def cached_binary_path(version: str, platform: SandboxPlatform) -> Path:
-        # Legacy single-binary cache layout. No longer written (resolve_version
-        # always returns package=True now), kept only so a cache populated
-        # before opencode moved to package-archive caching still serves as an
-        # offline fallback.
+        # Never written or read in practice: resolve_version always returns
+        # package=True, and opencode never shipped a single-binary cache (the
+        # npm era cached bundles under "opencode-bundles"). Defined only
+        # because AgentBinarySource requires it.
         return cached_binary_dir / f"opencode-{version}-{platform}"
 
     def cached_package_path(version: str, platform: SandboxPlatform) -> Path:
