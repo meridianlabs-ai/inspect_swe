@@ -504,7 +504,9 @@ def codex_cli(
                     resolved_skills, sbox, user, join_path(codex_home, "skills")
                 )
 
-            prompt, has_assistant_response = build_user_prompt(state.messages)
+            prompt, has_assistant_response = build_user_prompt(
+                state.messages, handled_content=("image",)
+            )
 
             # stage input images as files in the sandbox (`--image` args
             # attach them to the prompt; empty if the input has no images)

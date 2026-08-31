@@ -44,6 +44,41 @@ def test_build_user_prompt_rejects_trailing_assistant() -> None:
         build_user_prompt(messages)
 
 
+def test_build_user_prompt_warns_on_dropped_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    messages: list[ChatMessage] = [
+        ChatMessageUser(content=[ContentText(text="describe this"), IMAGE_1]),
+    ]
+    with caplog.at_level("WARNING"):
+        prompt, _ = build_user_prompt(messages)
+    assert prompt == "describe this"
+    assert any("image" in r.message for r in caplog.records)
+
+
+def test_build_user_prompt_no_warning_for_handled_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    messages: list[ChatMessage] = [
+        ChatMessageUser(content=[ContentText(text="describe this"), IMAGE_1]),
+    ]
+    with caplog.at_level("WARNING"):
+        build_user_prompt(messages, handled_content=("image",))
+    assert not caplog.records
+
+
+def test_build_user_prompt_no_warning_for_text_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    messages: list[ChatMessage] = [
+        ChatMessageUser(content="plain"),
+        ChatMessageUser(content=[ContentText(text="structured")]),
+    ]
+    with caplog.at_level("WARNING"):
+        build_user_prompt(messages)
+    assert not caplog.records
+
+
 def test_collect_user_images_initial_turn() -> None:
     messages: list[ChatMessage] = [
         ChatMessageUser(content=[ContentText(text="look at these"), IMAGE_1, IMAGE_2]),

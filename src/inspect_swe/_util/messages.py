@@ -1,4 +1,5 @@
-from typing import NamedTuple
+from logging import getLogger
+from typing import Collection, NamedTuple
 
 from inspect_ai.model import (
     ChatMessage,
@@ -6,6 +7,8 @@ from inspect_ai.model import (
     ChatMessageUser,
     ContentImage,
 )
+
+logger = getLogger(__name__)
 
 
 class UserTurn(NamedTuple):
@@ -40,8 +43,29 @@ def user_turn(messages: list[ChatMessage]) -> UserTurn:
     )
 
 
-def build_user_prompt(messages: list[ChatMessage]) -> tuple[str, bool]:
+def build_user_prompt(
+    messages: list[ChatMessage], handled_content: Collection[str] = ()
+) -> tuple[str, bool]:
+    """Prompt text for the next agent turn.
+
+    The prompt is the text of the user messages after the last assistant
+    response. Non-text content in those messages cannot ride along in the
+    prompt and is dropped with a warning — pass `handled_content` to name
+    content types (e.g. "image") the calling agent delivers by other means.
+    """
     turn = user_turn(messages)
+    dropped = {
+        content.type
+        for m in turn.messages
+        if isinstance(m.content, list)
+        for content in m.content
+        if content.type != "text" and content.type not in handled_content
+    }
+    if dropped:
+        logger.warning(
+            f"Input contains {', '.join(sorted(dropped))} content, which this "
+            "agent does not support; it was dropped from the prompt."
+        )
     prompt = "\n\n".join(m.text for m in turn.messages)
     return prompt, turn.has_assistant_response
 
