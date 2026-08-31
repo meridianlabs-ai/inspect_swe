@@ -138,14 +138,21 @@ def test_opencode_resolve_version_resolves_alias_with_a_single_api_call() -> Non
 
 
 def test_opencode_resolve_version_raises_when_platform_asset_missing() -> None:
+    release = {
+        "assets": [
+            {
+                "name": "opencode-linux-x64.tar.gz",
+                "digest": "sha256:default-x64",
+                "browser_download_url": "https://example.com/opencode-linux-x64.tar.gz",
+            }
+        ]
+    }
     source = agentbinary.opencode_binary_source()
     with patch.object(
-        agentbinary,
-        "_fetch_release_assets",
-        AsyncMock(return_value=_RELEASE_ASSETS),
+        agentbinary, "_fetch_release_assets", AsyncMock(return_value=release)
     ):
         with pytest.raises(RuntimeError, match="No matching asset"):
-            anyio.run(source.resolve_version, "0.42.0", "windows-x64")
+            anyio.run(source.resolve_version, "0.42.0", "linux-arm64")
 
 
 def test_opencode_resolve_version_raises_on_malformed_digest() -> None:
