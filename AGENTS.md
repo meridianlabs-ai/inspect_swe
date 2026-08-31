@@ -27,12 +27,13 @@ This file provides guidance to AI coding agents working in this repository.
 - In the description part of the title, state the user-facing outcome — the problem a user hit or the capability they gain — not the mechanism of the fix: `fix: agent hang when sandbox startup races container pull`, not `fix: add lock around container init`. For changes with no user-facing outcome (refactoring, CI, docs), describe the change itself.
 - Body lines starting with `<type>:` are parsed as extra changelog entries—don't begin description lines with a conventional-commit prefix unless that's intended
 - Never edit `CHANGELOG.md`, version numbers, or `.release-please-manifest.json`—Release Please owns them
+- Before opening a non-trivial PR, run at least one code review pass in a fresh context (e.g. `/code-review` or a subagent that hasn't seen the authoring conversation) using a frontier-class model — the authoring context is blind to its own assumptions, and in our experience reviews from small fast-tier models rarely surface real issues. Fix or explicitly dismiss each finding before opening the PR, and disclose the pass in the description (see "Agent Review Disclosure" below).
 - After opening a PR, don't stop at creation: watch its checks (`gh pr checks <number> --watch`) until they complete, report the outcome, and investigate and fix any failures. If the branch falls behind `main`, update it so CI runs against current code.
 - See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines
 
 ## Agent Review Disclosure
 
-When an AI agent authored or co-authored a change, include an `### Agent review` section in the PR description summarizing pre-PR review passes: what model/tool reviewed, whether the review ran in a fresh context and/or on a different model from the author, how many passes, and the findings — issues found, which were fixed, and which were dismissed with a one-line reason each. Fresh-context passes catch issues the authoring context misses; prefer at least one for non-trivial changes. If no review pass was run, say so explicitly — never report a review that didn't happen; a content-free claim ("reviewed, looks good") is worse than disclosing none. Example:
+When an AI agent authored or co-authored a change, include an `### Agent review` section in the PR description summarizing the pre-PR review passes described above: what model/tool reviewed, whether the review ran in a fresh context and/or on a different model from the author, how many passes, and the findings — issues found, which were fixed, and which were dismissed with a one-line reason each. Maintainers weight the disclosed reviewer model and pass count when deciding how much independent review a PR still needs. If no review pass was run, say so explicitly — never report a review that didn't happen; a content-free claim ("reviewed, looks good") is worse than disclosing none. Example:
 
 ```
 ### Agent review
