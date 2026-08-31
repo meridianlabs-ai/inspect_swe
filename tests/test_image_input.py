@@ -1,3 +1,5 @@
+import subprocess
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -44,7 +46,7 @@ def test_codex_cli_image_input(sandbox: str) -> None:
     sample = log.samples[0]
 
     # mechanism: the raw model requests actually carried image content
-    assert _image_content_counts(sample), (
+    assert _any_request_has_images(sample), (
         "no model request contained image content: images did not reach codex"
     )
 
@@ -58,15 +60,17 @@ def test_codex_cli_image_input(sandbox: str) -> None:
     )
 
 
-def test_codex_cli_centaur_alias_attaches_images(
-    monkeypatch: pytest.MonkeyPatch,
+def test_codex_cli_centaur_attaches_images_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The centaur `codex` alias carries the staged `--image` args.
+    """The centaur `codex` command attaches staged images, on first use only.
 
-    Regression test: image args were only consumed by the headless exec
-    branch, so in centaur mode images were staged as files but the alias
-    never attached them -- a silent drop (the image-content warning is
-    suppressed because the content is declared handled).
+    Regression tests, in branch-history order: image files were staged but
+    never attached in centaur mode (silent drop, with the image-content
+    warning suppressed because the content is declared handled); then a
+    permanent alias re-attached the images on every invocation, including
+    `codex resume`, duplicating images codex had already embedded in its
+    rollout. Now a self-disarming shell function attaches them exactly once.
     """
     captured: dict[str, str] = {}
 
@@ -83,32 +87,42 @@ def test_codex_cli_centaur_alias_attaches_images(
         lambda: codex_cli_module._run_codex_cli_centaur(
             options=CentaurOptions(),
             codex_cmd=["/usr/bin/codex", "--model", "gpt-5", "-c", "key=value"],
-            image_args=["--image", image_file],
+            image_files=[image_file],
             agent_env={},
             state=AgentState(messages=[]),
         )
     )
 
-    alias = next(
-        line
-        for line in captured["bashrc"].splitlines()
-        if line.startswith("alias codex=")
-    )
-    assert f"--image {image_file}" in alias
+    bashrc = captured["bashrc"]
+
+    # a self-disarming function, not a permanent alias
+    assert "codex()" in bashrc
+    assert "alias codex=" not in bashrc
+    assert "/home/user/.codex/images/.attached" in bashrc
+
+    # exactly one invocation attaches the images (the marker-guarded branch)
+    assert bashrc.count(f"--image {image_file}") == 1
 
     # image args must be spliced after the binary, not appended: `--image` is
-    # multi-value, so an alias ending with it would swallow whatever the human
-    # types next (`codex resume`, or a prompt) as another image path
-    assert alias.index("--image") < alias.index("--model")
+    # multi-value, so a command ending with it would swallow whatever the
+    # human types next (`codex resume`, or a prompt) as another image path
+    attach_line = next(line for line in bashrc.splitlines() if "--image" in line)
+    assert attach_line.index("--image") < attach_line.index("--model")
+
+    # the generated bashrc is valid bash
+    rc_file = tmp_path / "bashrc"
+    rc_file.write_text(bashrc)
+    subprocess.run(["bash", "-n", str(rc_file)], check=True)
 
     # the human is told about the attached images
     assert image_file in captured["instructions"]
+    assert "first invocation" in captured["instructions"]
 
 
 def test_codex_cli_centaur_alias_without_images(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No image args: the alias and instructions are unchanged."""
+    """No images: the plain alias and instructions are unchanged."""
     captured: dict[str, str] = {}
 
     async def fake_run_centaur(
@@ -123,12 +137,13 @@ def test_codex_cli_centaur_alias_without_images(
         lambda: codex_cli_module._run_codex_cli_centaur(
             options=CentaurOptions(),
             codex_cmd=["/usr/bin/codex", "--model", "gpt-5"],
-            image_args=[],
+            image_files=[],
             agent_env={},
             state=AgentState(messages=[]),
         )
     )
 
+    assert "alias codex=" in captured["bashrc"]
     assert "--image" not in captured["bashrc"]
     assert "image" not in captured["instructions"].lower()
 
@@ -153,26 +168,23 @@ def _turn_answers(sample: EvalSample) -> tuple[str, str]:
     return turn_1, turn_2
 
 
-def _image_content_counts(sample: EvalSample) -> list[int]:
-    """Per-model-call count of image content blocks in the raw request."""
+def _any_request_has_images(sample: EvalSample) -> bool:
+    """Whether any raw model request contains an image content block."""
     sample = resolve_sample_attachments(sample, "full")
 
-    def count_images(value: Any) -> int:
+    def has_image(value: Any) -> bool:
         if isinstance(value, dict):
-            n = 1 if value.get("type") == "input_image" else 0
-            return n + sum(count_images(v) for v in value.values())
+            return value.get("type") == "input_image" or any(
+                has_image(v) for v in value.values()
+            )
         if isinstance(value, list):
-            return sum(count_images(v) for v in value)
-        return 0
+            return any(has_image(v) for v in value)
+        return False
 
-    counts: list[int] = []
     for event in sample.events:
         if getattr(event, "event", None) != "model":
             continue
         call = getattr(event, "call", None)
-        if call is None:
-            continue
-        n = count_images(call.request)
-        if n:
-            counts.append(n)
-    return counts
+        if call is not None and has_image(call.request):
+            return True
+    return False

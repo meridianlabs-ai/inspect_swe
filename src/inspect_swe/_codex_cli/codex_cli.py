@@ -1,11 +1,10 @@
 import mimetypes
 import shlex
 from logging import getLogger
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from textwrap import dedent
 from typing import Any, Literal, Sequence, cast
 
-from inspect_ai._util.images import file_as_data
 from inspect_ai.agent import (
     Agent,
     AgentAttempts,
@@ -508,11 +507,12 @@ def codex_cli(
                 state.messages, handled_content=("image",)
             )
 
-            # stage input images as files in the sandbox (`--image` args
-            # attach them to the prompt; empty if the input has no images)
-            image_args = await _stage_prompt_images(
+            # stage input images as files in the sandbox (empty if the input
+            # has no images); attached to the prompt via `--image` below
+            image_files = await _stage_prompt_images(
                 collect_user_images(state.messages), sbox, user, codex_home
             )
+            image_args = [arg for file in image_files for arg in ("--image", file)]
 
             # build agent cmd
             cmd = [codex_binary]
@@ -645,7 +645,7 @@ def codex_cli(
                 await _run_codex_cli_centaur(
                     options=centaur,
                     codex_cmd=cmd,
-                    image_args=image_args,
+                    image_files=image_files,
                     agent_env=agent_env,
                     state=state,
                 )
@@ -653,9 +653,11 @@ def codex_cli(
                 # execute the agent (track debug output)
                 debug_output: list[str] = []
                 agent_prompt = prompt
-                # images accompany the original prompt only (retry attempts
-                # send `incorrect_message`, which is text-only)
-                agent_image_args = image_args
+                # images accompany the original prompt only: retry attempts
+                # send `incorrect_message` (text-only), and a checkpoint
+                # resume replays a prompt codex already received, with the
+                # images already embedded in its rollout
+                agent_image_args = [] if cp.attempt == "resume" else image_args
                 attempt_count = cp.track(
                     "codex_attempt_count", lambda: attempt_count, 0
                 )
@@ -754,17 +756,29 @@ def codex_cli(
     return agent_with(execute, name=name, description=description)
 
 
+# codex derives the request MIME type from the file extension
+# (mime_guess::from_path), and stdlib mimetypes tables vary by Python
+# version and platform (e.g. image/webp is absent before 3.11), so map
+# common image types explicitly rather than trusting guess_extension.
+_IMAGE_EXTENSIONS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
 async def _stage_prompt_images(
     images: list[ContentImage],
     sandbox: SandboxEnvironment,
     user: str | None,
     codex_home: str,
 ) -> list[str]:
-    """Write prompt images to files in the sandbox, returning `--image` args.
+    """Write prompt images to files in the sandbox, returning their paths.
 
     `codex exec` cannot accept image content inline in its prompt argument
     (the prompt is plain argv text), so images ride along as files attached
-    via `--image`, one flag per file.
+    via `--image` args built from the returned paths.
 
     Filenames restart at image-0 on each execution, so a follow-up turn
     overwrites the previous turn's files. This is harmless: codex embeds the
@@ -773,16 +787,26 @@ async def _stage_prompt_images(
     """
     if not images:
         return []
+
+    # private inspect_ai API with no public equivalent; imported lazily so
+    # a future rename breaks image staging with a clear error here rather
+    # than failing `import inspect_swe` for every user
+    from inspect_ai._util.images import file_as_data
+
     images_dir = join_path(codex_home, "images")
     await sandbox_exec(sandbox, f"mkdir -p {images_dir}", user=user)
-    args: list[str] = []
+    files: list[str] = []
     for idx, image in enumerate(images):
         image_bytes, mime_type = await file_as_data(image.image)
-        extension = mimetypes.guess_extension(mime_type, strict=False) or ".png"
+        extension = (
+            _IMAGE_EXTENSIONS.get(mime_type)
+            or mimetypes.guess_extension(mime_type, strict=False)
+            or ".png"
+        )
         image_file = join_path(images_dir, f"image-{idx}{extension}")
         await sandbox.write_file(image_file, image_bytes)
-        args.extend(["--image", image_file])
-    return args
+        files.append(image_file)
+    return files
 
 
 async def resolve_codex_model(
@@ -827,26 +851,48 @@ async def resolve_codex_model(
 async def _run_codex_cli_centaur(
     options: CentaurOptions,
     codex_cmd: list[str],
-    image_args: list[str],
+    image_files: list[str],
     agent_env: dict[str, str],
     state: AgentState,
 ) -> None:
-    # Attach input images inside the alias, spliced right after the binary
-    # rather than trailing: `--image` is multi-value, so tokens the human
-    # types after the alias (a prompt, or `resume`) would be swallowed as
-    # image paths if the alias ended with an `--image` flag.
-    codex_cmd = codex_cmd[:1] + image_args + codex_cmd[1:]
-
     instructions = "Codex CLI:\n\n - You may also use Codex CLI via the 'codex' command.\n - Use 'codex resume' if you need to resume a previous codex session."
-    if image_args:
-        image_files = ", ".join(image_args[1::2])
-        instructions += f"\n - The task input includes image file(s), which the 'codex' alias attaches to your prompt automatically: {image_files}"
+
+    if image_files:
+        # Attach input images to the human's first codex invocation only,
+        # via a self-disarming shell function (the marker file survives new
+        # shells re-sourcing .bashrc). A permanent alias would re-attach the
+        # images on every invocation -- codex applies root `--image` args to
+        # `resume` too, duplicating images already embedded in the session
+        # rollout. The flags are spliced right after the binary rather than
+        # trailing: `--image` is multi-value, so tokens the human types after
+        # the command (a prompt, or `resume`) would be swallowed as image
+        # paths if the command ended with an `--image` flag.
+        image_args = [arg for file in image_files for arg in ("--image", file)]
+        marker = shlex.quote(str(PurePosixPath(image_files[0]).parent / ".attached"))
+        first_cmd = shlex.join(codex_cmd[:1] + image_args + codex_cmd[1:])
+        plain_cmd = shlex.join(codex_cmd)
+        codex_cmd_def = dedent(f"""
+            codex() {{
+              if [ ! -e {marker} ]; then
+                touch {marker}
+                {first_cmd} "$@"
+              else
+                {plain_cmd} "$@"
+              fi
+            }}
+        """).strip()
+        instructions += (
+            "\n - The task input includes image file(s), which the 'codex' "
+            "command attaches to your first invocation automatically: "
+            f"{', '.join(image_files)}"
+        )
+    else:
+        alias_cmd = shlex.join(codex_cmd)
+        codex_cmd_def = "alias codex='" + alias_cmd.replace("'", "'\\''") + "'"
 
     # build .bashrc content
     agent_env_vars = [f'export {k}="{v}"' for k, v in agent_env.items()]
-    alias_cmd = shlex.join(codex_cmd)
-    alias_cmd = "alias codex='" + alias_cmd.replace("'", "'\\''") + "'"
-    bashrc = "\n".join(agent_env_vars + ["", alias_cmd])
+    bashrc = "\n".join(agent_env_vars + ["", codex_cmd_def])
 
     # run the human cli
     await run_centaur(options, instructions, bashrc, state)
