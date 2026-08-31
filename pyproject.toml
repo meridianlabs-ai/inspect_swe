@@ -40,8 +40,12 @@ dev = [
     "ruff",
     "mypy",
     "pytest",
-    "anthropic",
-    "openai",
+    # Floors required by inspect_ai's sandbox agent bridge (see
+    # inspect_ai/model/_providers/providers.py). Without explicit floors a lock
+    # regeneration can resolve below them, and bridge-backed tests then fail
+    # with an opaque "Model proxy process exited unexpectedly".
+    "anthropic>=1.0.0",
+    "openai>=3.1.0",
     "pytest-dotenv",
     "types-PyYAML",
     "IPython",
