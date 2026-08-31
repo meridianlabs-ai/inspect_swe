@@ -59,12 +59,11 @@ from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 from .env import claude_code_agent_env
-from .model import resolve_claude_code_models
+from .model import ClaudeCodeEffort, resolve_claude_code_models
 
 ClaudeCodePermissionMode = Literal[
     "acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"
 ]
-ClaudeCodeEffort = Literal["low", "medium", "high", "xhigh", "max"]
 
 
 class ClaudeCodeDeprecatedArgs(TypedDict, total=False):
@@ -188,7 +187,13 @@ def claude_code(
             bridged to the served Inspect model regardless. (Claude Code renders
             the genuine name/cutoff for recognized Anthropic ids and shows other
             ids verbatim.)
-        effort: Claude Code reasoning effort. ``None`` leaves the CLI default.
+        effort: Reasoning effort for the served model. Sets
+            `GenerateConfig.reasoning_effort` on the model backing this agent
+            (see `resolve_claude_code_models`), not a Claude Code CLI flag: the
+            bridge drops request-level generation config from the inner agent
+            by default, so passing this through the CLI would have no effect
+            on the model actually serving the request. `None` leaves the
+            model's own default effort in place.
         model_aliases: Optional mapping of model names to Model instances or model name strings.
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
@@ -263,6 +268,14 @@ def claude_code(
         cast(dict[str, Any], deprecated_args), permission_mode
     )
 
+    if allowlist_bridged_tools is False and effective_permission_mode != "auto":
+        raise ValueError(
+            "allowlist_bridged_tools=False requires permission_mode='auto'. In "
+            "every other mode, a bridged tool excluded from --allowed-tools is "
+            "denied without prompting instead of being adjudicated by Claude "
+            "Code's classifier, so the eval would complete toolless."
+        )
+
     # allocate session_id once per agent instance so that all calls to execute()
     # for the same sample share the same session. this enables --resume <id> to
     # replay the full conversation history through the bridge on continuation runs,
@@ -291,6 +304,7 @@ def claude_code(
         models = resolve_claude_code_models(
             model,
             model_config,
+            effort=effort,
             opus_model=opus_model,
             sonnet_model=sonnet_model,
             haiku_model=haiku_model,
@@ -336,7 +350,7 @@ def claude_code(
                 if effective_permission_mode is not None
                 else ["--dangerously-skip-permissions"]
             )
-            cmd = claude_code_command(permission_flag, models.presented, effort)
+            cmd = [*permission_flag, "--model", models.presented]
 
             # add interactive options if not running as centaur
             if centaur is False:
@@ -631,18 +645,6 @@ def _system_prompt_args(
         args.extend(["--append-system-prompt", "\n\n".join(system_texts)])
 
     return args
-
-
-def claude_code_effort_args(effort: ClaudeCodeEffort | None) -> list[str]:
-    if effort is None:
-        return []
-    return ["--effort", effort]
-
-
-def claude_code_command(
-    permission_flag: list[str], model: str, effort: ClaudeCodeEffort | None
-) -> list[str]:
-    return [*permission_flag, "--model", model, *claude_code_effort_args(effort)]
 
 
 async def _seed_claude_config(

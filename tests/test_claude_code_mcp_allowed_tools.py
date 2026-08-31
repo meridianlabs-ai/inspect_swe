@@ -101,6 +101,20 @@ def test_claude_code_accepts_allowlist_bridged_tools() -> None:
     claude_code(permission_mode="auto", allowlist_bridged_tools=False)
 
 
+def test_allowlist_bridged_tools_false_requires_permission_mode_auto() -> None:
+    """Defaulting to `--dangerously-skip-permissions` denies bridged tools silently.
+
+    The eval would complete toolless without ever consulting the classifier.
+    """
+    with pytest.raises(ValueError, match="allowlist_bridged_tools"):
+        claude_code(allowlist_bridged_tools=False)
+
+
+def test_allowlist_bridged_tools_false_rejects_non_auto_permission_mode() -> None:
+    with pytest.raises(ValueError, match="allowlist_bridged_tools"):
+        claude_code(permission_mode="acceptEdits", allowlist_bridged_tools=False)
+
+
 def test_all_tools_wildcard_uses_double_underscore_before_glob() -> None:
     server = MCPServerConfig(type="http", name="taiga-mcp", tools="all")
 

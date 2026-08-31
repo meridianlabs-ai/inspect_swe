@@ -1,25 +1,51 @@
-from inspect_swe._claude_code.claude_code import (
-    claude_code_command,
-    claude_code_effort_args,
-)
+"""``effort`` is applied host-side, on the served model's ``GenerateConfig``.
+
+Passing it as a Claude Code CLI flag has no effect on the model actually
+serving the request: the bridge drops the inner agent's request-level
+generation config by default (``sandbox_agent_bridge``'s
+``forward_generation_config`` defaults to ``False``), and only the resolved
+Inspect model's own config governs. See ``resolve_claude_code_models``.
+"""
+
+from inspect_ai.model import Model
+from inspect_swe._claude_code.model import resolve_claude_code_models
 
 
-def test_effort_adds_cli_flag_when_configured() -> None:
-    assert claude_code_effort_args("max") == ["--effort", "max"]
+def test_effort_sets_reasoning_effort_on_served_model() -> None:
+    models = resolve_claude_code_models("mockllm/model", None, effort="max")
+    served_model = models.aliases[models.presented]
+    assert isinstance(served_model, Model)
+    assert served_model.config.reasoning_effort == "max"
 
 
-def test_effort_adds_no_cli_flag_when_unconfigured() -> None:
-    assert claude_code_effort_args(None) == []
+def test_unconfigured_effort_leaves_served_model_config_untouched() -> None:
+    models = resolve_claude_code_models("mockllm/model", None, effort=None)
+    served_model = models.aliases[models.presented]
+    assert isinstance(served_model, Model)
+    assert served_model.config.reasoning_effort is None
 
 
-def test_effort_is_present_in_claude_code_command_after_model() -> None:
-    assert claude_code_command(
-        ["--permission-mode", "auto"], "claude-opus-5", "max"
-    ) == [
-        "--permission-mode",
-        "auto",
-        "--model",
-        "claude-opus-5",
-        "--effort",
-        "max",
-    ]
+def test_effort_applies_to_every_role_this_function_resolves() -> None:
+    models = resolve_claude_code_models(
+        "mockllm/model",
+        None,
+        effort="low",
+        opus_model="mockllm/opus",
+    )
+    presented_model = models.aliases[models.presented]
+    opus_model = models.aliases[models.opus]
+    assert isinstance(presented_model, Model)
+    assert isinstance(opus_model, Model)
+    assert presented_model.config.reasoning_effort == "low"
+    assert opus_model.config.reasoning_effort == "low"
+
+
+def test_effort_does_not_override_caller_supplied_model_aliases() -> None:
+    models = resolve_claude_code_models(
+        "mockllm/model",
+        None,
+        effort="high",
+        model_aliases={"model": "mockllm/override"},
+    )
+    # the caller-supplied alias is a plain model spec string, untouched by effort
+    assert models.aliases["model"] == "mockllm/override"
