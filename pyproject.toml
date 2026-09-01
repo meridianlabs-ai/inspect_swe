@@ -118,3 +118,10 @@ python_executable = ".venv/bin/python"
 [[tool.mypy.overrides]]
 module = ["google.antigravity.*"]
 ignore_missing_imports = true
+
+# inspect_cyber is only used by examples/ (guarded by a try/except with install
+# instructions) and is not a project dependency; tell mypy not to require types
+# for it when checking examples on the host.
+[[tool.mypy.overrides]]
+module = ["inspect_cyber.*"]
+ignore_missing_imports = true

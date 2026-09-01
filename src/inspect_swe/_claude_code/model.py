@@ -7,9 +7,13 @@ The real model is reached through the bridge. This module bundles that
 resolution so ``claude_code()`` stays readable.
 """
 
+from copy import copy
 from dataclasses import dataclass
+from typing import Literal
 
-from inspect_ai.model import Model, get_model
+from inspect_ai.model import GenerateConfig, Model, get_model
+
+ClaudeCodeEffort = Literal["low", "medium", "high", "xhigh", "max"]
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,7 @@ def resolve_claude_code_models(
     model: str | None,
     model_config: str | None,
     *,
+    effort: ClaudeCodeEffort | None = None,
     opus_model: str | None = None,
     sonnet_model: str | None = None,
     haiku_model: str | None = None,
@@ -54,10 +59,29 @@ def resolve_claude_code_models(
     collapse them onto the main model). Caller-supplied ``model_aliases`` take
     precedence over the names we derive.
 
+    ``effort`` is set on every served model this function resolves (the primary
+    served model and any role that gets its own alias) by merging
+    ``GenerateConfig(reasoning_effort=effort)`` onto a copy of each model's
+    bound config, so it governs the model's own default whether or not the
+    bridge forwards the inner agent's request-level generation config (the
+    bridge drops those by default; see ``sandbox_agent_bridge``'s
+    ``forward_generation_config``). It is not applied to caller-supplied
+    ``model_aliases``, whose config is the caller's to control.
+
     Note: must be called at execution time — ``get_model()`` resolves the active
     model from the current eval/sample context.
     """
-    served_model = get_model(model)
+
+    def served(model_name: str | None) -> Model:
+        resolved = get_model(model_name)
+        if effort is not None:
+            resolved = copy(resolved)
+            resolved.config = resolved.config.merge(
+                GenerateConfig(reasoning_effort=effort)
+            )
+        return resolved
+
+    served_model = served(model)
     presented = model_config if model_config is not None else served_model.name
     aliases: dict[str, str | Model] = {presented: served_model}
 
@@ -67,7 +91,7 @@ def resolve_claude_code_models(
         # own model
         if role_model is None:
             return presented
-        role = get_model(role_model)
+        role = served(role_model)
         aliases[role.name] = role
         return role.name
 
