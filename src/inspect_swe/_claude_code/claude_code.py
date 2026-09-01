@@ -59,6 +59,7 @@ from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 from .env import claude_code_agent_env
+from .gitstatus import pin_git_status_filter
 from .model import ClaudeCodeEffort, resolve_claude_code_models
 
 ClaudeCodePermissionMode = Literal[
@@ -331,7 +332,12 @@ def claude_code(
                 model=models.bridge_model,
                 model_aliases=models.aliases,
                 forward_generation_config=transparent_proxy,
-                filter=filter,
+                # each --resume regenerates the "git status at the start of
+                # the conversation" system prompt section from current repo
+                # state, busting the prompt cache for the whole conversation
+                # prefix and leaking that the session was restarted -- pin it
+                # to its first-seen value (see gitstatus.py)
+                filter=pin_git_status_filter(lambda: session_id, filter),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,
