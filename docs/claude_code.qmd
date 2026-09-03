@@ -34,7 +34,7 @@ The following options are supported for customizing the behavior of the agent:
 | `retry_refusals` | Should refusals be retried? Defaults to 3. |
 | `retry_uncaught_errors` | Should uncaught errors (unexpected crashes of Claude Code) be retried? Defaults to 3. |
 | `cwd` | Working directory for {{< meta agent_name >}} session. |
-| `env` | Environment variables to set for {{< meta agent_name >}} (applied last, so they override the defaults inspect_swe sets). |
+| `env` | Environment variables to set for {{< meta agent_name >}}. |
 | `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |
 
 : {tbl-colwidths=\[25,75\]}
