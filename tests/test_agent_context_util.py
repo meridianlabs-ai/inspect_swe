@@ -21,7 +21,11 @@ from inspect_ai.model import (
 )
 from inspect_ai.model._model import GenerateInput
 from inspect_ai.tool import ToolChoice, ToolInfo
-from inspect_swe._util.agentcontext import classify_filter, static_root_classifier
+from inspect_swe._util.agentcontext import (
+    classify_filter,
+    slug_map_classifier,
+    static_root_classifier,
+)
 
 
 def _args() -> tuple[Model, list[ChatMessage], list[ToolInfo], None, GenerateConfig]:
@@ -130,6 +134,37 @@ async def test_classify_exceptions_do_not_break_generation(
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
+
+
+def test_slug_map_classifier_drops_kind_entry_colliding_with_root(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A root-colliding kind_by_slug key is dropped, warned once, and classifies root.
+
+    Non-colliding entries are unaffected and classification itself logs nothing.
+    """
+    with caplog.at_level(logging.WARNING, logger="inspect_swe._util.agentcontext"):
+        classifier = slug_map_classifier(
+            {"shared-slug"}, {"shared-slug": "subagent", "util-slug": "utility"}
+        )
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "shared-slug" in warnings[0].getMessage()
+
+        model, messages, tools, _, _ = _args()
+        with bridged_request_scope("shared-slug"):
+            assert classifier(model, messages, tools) == AgentBridgeContext("root")
+        with bridged_request_scope("util-slug"):
+            assert classifier(model, messages, tools) == AgentBridgeContext("utility")
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+
+
+def test_slug_map_classifier_no_collision_no_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="inspect_swe._util.agentcontext"):
+        slug_map_classifier({"root-slug"}, {"util-slug": "utility"})
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
 
 
 def test_public_reexports() -> None:

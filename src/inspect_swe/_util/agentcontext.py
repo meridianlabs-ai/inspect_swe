@@ -77,11 +77,26 @@ def slug_map_classifier(
     check first, minus the stateful signals (pending sub-agents, prompt
     substring matching) a consumer layers on top.
 
-    `slug in root_slugs` -> `"root"` (checked first, so a slug that happens
-    to appear in both maps resolves as root); `slug in kind_by_slug` -> the
-    mapped kind; no bridged request info, or a slug recognized by neither
-    map -> `"unknown"`.
+    `slug in root_slugs` -> `"root"`; `slug in kind_by_slug` -> the mapped
+    kind; no bridged request info, or a slug recognized by neither map ->
+    `"unknown"`.
+
+    A slug present in both maps is the root slug on the wire, so it
+    classifies `"root"`: its `kind_by_slug` entry is dropped here (with a
+    warning, once, at construction) rather than left to shadow silently.
+    Callers that can present distinct slugs should do so upstream (see
+    `resolve_claude_code_models`); this guard is the backstop for the ones
+    that can't.
     """
+    colliding = sorted(slug for slug in kind_by_slug if slug in root_slugs)
+    if colliding:
+        logger.warning(
+            f"agent context classifier: slug(s) {colliding} mapped to a kind "
+            f"are also root slugs; classifying them as root"
+        )
+    kind_by_slug = {
+        slug: kind for slug, kind in kind_by_slug.items() if slug not in root_slugs
+    }
 
     def _classify(
         model: Model, messages: list[ChatMessage], tools: list[ToolInfo]
