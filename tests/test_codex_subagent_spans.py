@@ -20,8 +20,10 @@ Fixture shapes below are copied from a real gpt-5.6-sol eval log
 (codex 0.147.0, 2026-08-07).
 """
 
+import json
 from typing import Any
 
+import pytest
 from inspect_ai._util.content import ContentText
 from inspect_ai.agent import AgentBridgeContext
 from inspect_ai.agent._bridge.context import bridged_request_scope
@@ -540,3 +542,105 @@ def test_classify_then_on_pending_is_idempotent(monkeypatch: Any) -> None:
         call_id: (agent.thread_id, agent.span_id)
         for call_id, agent in consumer._agents.items()
     } == agents_after_classify
+
+
+# ---------------------------------------------------------------------------
+# 8. classify(): thread-close signals in the request itself
+# ---------------------------------------------------------------------------
+
+
+def _v1_completion_carrier(kind: str, thread_id: str) -> ChatMessage:
+    """The two V1 carriers of a `completed` status for a thread (detection.py)."""
+    if kind == "wait_agent":
+        return ChatMessageTool(
+            content=json.dumps({"status": {thread_id: {"completed": "done"}}}),
+            tool_call_id="call_wait",
+            function="wait_agent",
+        )
+    return ChatMessageUser(
+        content="<subagent_notification>"
+        + json.dumps({"agent_path": thread_id, "status": {"completed": "done"}})
+        + "</subagent_notification>"
+    )
+
+
+@pytest.mark.parametrize("carrier", ["wait_agent", "subagent_notification"])
+def test_classify_root_after_v1_completion_in_request(
+    monkeypatch: Any, carrier: str
+) -> None:
+    """V1: the last open sub-agent completes; root's next request proves it.
+
+    The bridge runs classify() before on_pending(), so classify must apply
+    the request's own completion signal before deciding whether any
+    sub-agent is still open. Without that, a genuine root request whose
+    input closes the last thread is stamped "unknown" (no agent_message
+    recipient under V1, `_agents` still non-empty).
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v1_spawn_call("call_1", prompt)],
+    )
+    consumer.on_complete(parent)
+    span = stub.span_begins()[0].id
+
+    child_call = _model_event([ChatMessageUser(content=prompt)])
+    consumer.on_pending(child_call)
+    assert child_call.span_id == span
+
+    # root's next request: full history (spawn result binds the thread id)
+    # plus the completion of that thread.
+    root_messages: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _spawn_result_tool_message(
+            "call_1", '{"agent_id":"thread_abc","nickname":"Explorer"}'
+        ),
+        _v1_completion_carrier(carrier, "thread_abc"),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), root_messages, [])
+
+    assert result == AgentBridgeContext("root")
+    assert [e.id for e in stub.span_ends()] == [span]
+
+    # on_pending over the same request must not close the span twice
+    consumer.on_pending(_model_event(root_messages))
+    assert [e.id for e in stub.span_ends()] == [span]
+    assert not consumer._agents and not consumer._thread_index
+
+
+def test_classify_closes_span_on_v2_final_answer(monkeypatch: Any) -> None:
+    """V2: a FINAL_ANSWER in root's request closes the child's span at filter time.
+
+    The following on_pending over the same request must not close it again.
+    (Classification itself was already "root" here via the `/root`
+    recipient rescue; this pins the span-close timing and single emission.)
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v2_spawn_call("call_pr", "write_primes")],
+    )
+    consumer.on_complete(parent)
+    pr_span = stub.span_begins()[0].id
+
+    child_call = _model_event([_agent_message_user("/root", "/root/write_primes")])
+    consumer.on_pending(child_call)
+    assert child_call.span_id == pr_span
+
+    root_messages: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _agent_message_user(
+            "/root/write_primes", "/root", "FINAL_ANSWER", "all primes written"
+        ),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), root_messages, [])
+
+    assert result == AgentBridgeContext("root")
+    assert [e.id for e in stub.span_ends()] == [pr_span]
+    assert not consumer._agents
+
+    consumer.on_pending(_model_event(root_messages))
+    assert [e.id for e in stub.span_ends()] == [pr_span]

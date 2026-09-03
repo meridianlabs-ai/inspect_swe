@@ -124,13 +124,8 @@ class CodexConsumer(ModelEventSink):
     # ------------------------------------------------------------------
 
     def on_pending(self, event: ModelEvent) -> None:
-        # bind thread ids from any spawn results, then close completed threads
-        # (V1: wait/close status dicts; V2: FINAL_ANSWER agent_messages)
-        self._harvest_bindings(event.input)
-        for thread_id in completed_thread_ids(event.input):
-            self._close_thread(thread_id)
-        for author in final_answer_authors(event.input):
-            self._close_thread(author)
+        # idempotent if classify() already ran over this request
+        self._sync_threads(event.input)
 
         # attribute this call to a span
         span_id = self._attribute(event.input)
@@ -207,7 +202,12 @@ class CodexConsumer(ModelEventSink):
 
         Runs inside the bridge filter (before generation), so it must not
         assume `on_pending` has already seen this request — it does its own
-        `_harvest_bindings` + `_attribute`, exactly as `on_pending` would.
+        `_sync_threads` + `_attribute`, exactly as `on_pending` would. The
+        sync matters for the root thread: under V1 the request that follows
+        the last sub-agent's completion carries that completion in its own
+        input (wait/close result or notification) and has no agent_message
+        recipient, so it is only recognisably "root" once that thread is
+        closed here rather than later in `on_pending`.
 
         Two positive claims are checked first, since neither is visible to
         `_attribute`: the guardian (`auto_review`) model slug and Codex's own
@@ -228,7 +228,11 @@ class CodexConsumer(ModelEventSink):
         if is_compaction_request(messages):
             return AgentBridgeContext("utility")
 
-        self._harvest_bindings(messages)
+        # nothing open → nothing to bind, close, or attribute against
+        if not self._agents:
+            return AgentBridgeContext("root")
+
+        self._sync_threads(messages)
         if agent_message_recipients(messages) == {"/root"}:
             return AgentBridgeContext("root")
 
@@ -240,6 +244,19 @@ class CodexConsumer(ModelEventSink):
     # ------------------------------------------------------------------
     # internal
     # ------------------------------------------------------------------
+
+    def _sync_threads(self, input_messages: list[ChatMessage]) -> None:
+        """Bind spawn-result thread ids, then close threads this request completes.
+
+        Completion carriers: V1 wait/close status dicts and notifications; V2
+        FINAL_ANSWER agent_messages. Idempotent: closing pops the thread, so a
+        second pass over the same request emits no second SpanEndEvent.
+        """
+        self._harvest_bindings(input_messages)
+        for thread_id in completed_thread_ids(input_messages):
+            self._close_thread(thread_id)
+        for author in final_answer_authors(input_messages):
+            self._close_thread(author)
 
     def _harvest_bindings(self, input_messages: list[ChatMessage]) -> None:
         """Bind thread_id → span from spawn_agent tool results (by tool_call_id)."""
