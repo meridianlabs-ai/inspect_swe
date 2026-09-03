@@ -295,6 +295,15 @@ def claude_code(
     # giving the model proper context (unlike --continue which only sends the new turn).
     session_id = str(uuid.uuid4())
 
+    # each --resume regenerates the "git status at the start of the
+    # conversation" system prompt section from current repo state, busting
+    # the prompt cache for the whole conversation prefix and leaking that the
+    # session was restarted -- pin it to its first-seen value (see
+    # gitstatus.py). Built once per agent instance: the bridge caches filter
+    # dispatch by id(fn), and the lambda reads the session_id cell that
+    # execute() rebinds on checkpoint restore.
+    pinned_filter = pin_git_status_filter(lambda: session_id, filter)
+
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "claude_code_model_port"
@@ -332,12 +341,7 @@ def claude_code(
                 model=models.bridge_model,
                 model_aliases=models.aliases,
                 forward_generation_config=transparent_proxy,
-                # each --resume regenerates the "git status at the start of
-                # the conversation" system prompt section from current repo
-                # state, busting the prompt cache for the whole conversation
-                # prefix and leaking that the session was restarted -- pin it
-                # to its first-seen value (see gitstatus.py)
-                filter=pin_git_status_filter(lambda: session_id, filter),
+                filter=pinned_filter,
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,

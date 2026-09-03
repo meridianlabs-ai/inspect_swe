@@ -1,11 +1,16 @@
 """Pin Claude Code's git status snapshot across ``--resume`` launches.
 
 Claude Code renders a gitStatus section into its system prompt describing
-"the git status at the start of the conversation". Because the agent
-launches a fresh ``claude`` subprocess for every user turn / attempt /
-crash retry (see claude_code.py), each ``--resume`` rebuilds the system
-prompt and regenerates that section from the CURRENT repo state
-(live-verified against Claude Code 2.1.215). Two problems:
+"the git status at the start of the conversation". A single interactive
+process renders it once, at startup, and shares that text with every
+conversation it runs -- the root and any sub-agents -- for the life of the
+process (live-verified against Claude Code 2.1.257: three commits made
+mid-process changed nothing in any request's system prompt).
+
+The agent instead launches a fresh ``claude`` subprocess for every user
+turn / attempt / crash retry (see claude_code.py), and each ``--resume``
+rebuilds the system prompt with the section regenerated from the CURRENT
+repo state. Two problems:
 
 - The system prompt heads every request, so the changed section
   invalidates the prompt cache for the entire conversation prefix
@@ -17,18 +22,30 @@ prompt and regenerates that section from the CURRENT repo state
   running inside an evaluation.
 
 ``pin_git_status_filter`` wraps the bridge filter to restore the
-single-process semantics of an interactive Claude Code session: the
-first bridged request records the root conversation's system prompt
-shape and its git status section; a later request whose system prompt is
-otherwise identical gets the recorded section spliced back in. Requests
-with any other system prompt shape (Task-tool sub-agents carry their own,
-much shorter system prompt with their own gitStatus section) pass through
-untouched — as does everything if the section is absent or Claude Code
-changes its format (fail open to today's behavior).
+single-process semantics: the first bridged request that carries the
+section records it in the sample store, keyed by session id (so it
+survives a checkpoint restore); every later request whose section differs
+gets the recorded text spliced back in, whatever system prompt surrounds
+it (root or sub-agent, with or without ``--append-system-prompt`` text,
+before or after a date rollover). Messages are rewritten in place rather
+than via ``GenerateInput`` so the pinned text is what the bridge records
+into ``bridge.state.messages`` (and so the eval log's ``sample.messages``),
+not just what reaches the model and the ModelEvent.
+
+Layout assumptions (verified for 2.1.257, on both the per-block system
+messages inspect_ai >= 0.3.262 produces and the single flattened message
+older versions produce): the section is the tail of the system block that
+carries it, so the pin covers everything from the sentinel to the end of
+that block's text; and root and sub-agent prompts render the same section,
+so pinning one session-wide value is faithful (if a future Claude Code
+rendered a sub-agent's status differently, e.g. for another cwd, the pin
+would hand it the root's). Requests without the sentinel pass through
+untouched, as does everything if pinning raises (fail open to today's
+behavior, warned once per agent instance).
 """
 
 import inspect
-from hashlib import sha256
+import warnings
 from logging import getLogger
 from typing import Awaitable, Callable, cast
 
@@ -68,9 +85,9 @@ GIT_STATUS_SENTINEL = (
 def split_git_status(text: str) -> tuple[str, str] | None:
     """Split system text into (prefix, git status section).
 
-    The section runs from the sentinel to the end of the text — it is the
-    final section of the system prompt in every observed layout. Returns
-    None when the sentinel is absent.
+    The section runs from the sentinel to the end of the text (see the
+    layout assumption in the module docstring). Returns None when the
+    sentinel is absent.
     """
     index = text.find(GIT_STATUS_SENTINEL)
     if index == -1:
@@ -83,12 +100,21 @@ def pin_git_status_filter(
 ) -> GenerateFilter:
     """Bridge filter that pins the git status section to its first-seen value.
 
-    Rewrites qualifying requests (see module docstring) before delegating
-    to `user_filter`, so the user's filter and the model both see the
-    pinned messages. `session_id` is read per-request so the pin tracks a
-    session id restored from a checkpoint.
+    Rewrites qualifying requests in place (see module docstring) before
+    delegating to `user_filter`, so the user's filter and the model both see
+    the pinned messages. `session_id` is read per-request so the pin tracks
+    a session id restored from a checkpoint.
     """
     user_is_legacy = user_filter is not None and _is_legacy_str_filter(user_filter)
+    if user_is_legacy:
+        # the bridge emits this for str-first filters it dispatches; our
+        # wrapper is all it sees, so replicate the migration signal
+        warnings.warn(
+            "GenerateFilter with 'str' as the first parameter is deprecated. "
+            "Update your filter to accept a 'Model' instance instead.",
+            DeprecationWarning,
+            stacklevel=3,  # attribute to the claude_code(filter=...) caller
+        )
     warned = False
 
     async def _filter(
@@ -99,84 +125,52 @@ def pin_git_status_filter(
         config: GenerateConfig,
     ) -> ModelOutput | GenerateInput | None:
         nonlocal warned
-        pinned: list[ChatMessage] | None = None
         try:
-            pinned = _pin_messages(messages, session_id())
+            _pin_messages(messages, session_id())
         except Exception as ex:
             # never let pinning break generation -- fall back to the
             # unpinned request (cache misses, but correct output)
             if not warned:
                 warned = True
                 logger.warning(f"error pinning claude code git status: {ex}")
-        if pinned is not None:
-            messages = pinned
 
-        result: ModelOutput | GenerateInput | None = None
-        if user_filter is not None:
-            # replicate the bridge's legacy str-first dispatch, which our
-            # wrapper otherwise hides (it sees only the Model-first wrapper)
-            if user_is_legacy:
-                result = await cast(_StrFilter, user_filter)(
-                    model.name, messages, tools, tool_choice, config
-                )
-            else:
-                result = await cast(_ModelFilter, user_filter)(
-                    model, messages, tools, tool_choice, config
-                )
-        if result is None and pinned is not None:
-            return GenerateInput(
-                input=messages, tools=tools, tool_choice=tool_choice, config=config
+        if user_filter is None:
+            return None
+        if user_is_legacy:
+            return await cast(_StrFilter, user_filter)(
+                model.name, messages, tools, tool_choice, config
             )
-        return result
+        return await cast(_ModelFilter, user_filter)(
+            model, messages, tools, tool_choice, config
+        )
 
     return _filter
 
 
-def _pin_messages(
-    messages: list[ChatMessage], session_id: str
-) -> list[ChatMessage] | None:
-    """Return messages with the git status section pinned, or None to pass through."""
-    # locate the (single) system message carrying the git status section,
-    # accumulating the surrounding system prompt shape as we go
-    target_index: int | None = None
-    target_split: tuple[str, str] | None = None
-    shape_parts: list[str] = []
-    for index, message in enumerate(messages):
-        if not isinstance(message, ChatMessageSystem):
+def _pin_messages(messages: list[ChatMessage], session_id: str) -> None:
+    """Record the session's git status section on first sight; rewrite it after.
+
+    Only str-content system messages are considered (the bridge produces no
+    other kind); rewriting a list-content message as a str would collapse it.
+    """
+    for message in messages:
+        if not isinstance(message, ChatMessageSystem) or not isinstance(
+            message.content, str
+        ):
             continue
-        split = split_git_status(message.text) if target_index is None else None
-        if split is not None:
-            target_index = index
-            target_split = split
-            shape_parts.append(split[0])
-        else:
-            shape_parts.append(message.text)
-    if target_index is None or target_split is None:
-        return None
-    prefix, section = target_split
+        split = split_git_status(message.content)
+        if split is None:
+            continue
+        prefix, section = split
 
-    # the shape hash identifies the conversation this request belongs to:
-    # the full system prompt minus the volatile section. Sub-agent and
-    # utility conversations have their own system prompts and never match
-    # the root baseline.
-    shape = sha256("\x1e".join(shape_parts).encode()).hexdigest()
-
-    key = f"claude_code_pinned_git_status:{session_id}"
-    stored = cast("dict[str, str] | None", store().get(key, None))
-    if stored is None:
-        # baseline: first bridged request of the session is the root
-        # conversation's first request -- record and pass through
-        store().set(key, {"shape": shape, "git_status": section})
-        return None
-    if stored.get("shape") != shape or stored.get("git_status") == section:
-        return None
-
-    pinned = list(messages)
-    system_message = cast(ChatMessageSystem, messages[target_index])
-    pinned[target_index] = system_message.model_copy(
-        update={"content": prefix + stored["git_status"]}
-    )
-    return pinned
+        key = f"claude_code_pinned_git_status:{session_id}"
+        pinned = cast("str | None", store().get(key, None))
+        if pinned is None:
+            # first request of the session carrying the section: record it
+            store().set(key, section)
+        elif pinned != section:
+            message.content = prefix + pinned
+        return
 
 
 def _is_legacy_str_filter(fn: GenerateFilter) -> bool:
