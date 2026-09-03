@@ -226,7 +226,10 @@ def claude_code(
         retry_refusals: Should refusals be retried? Defaults to retrying up to 3 times.
         retry_uncaught_errors: Should uncaught errors (unexpected crashes of Claude Code) be retried. Defaults to retrying up to 3 times.
         cwd: Working directory to run claude code within.
-        env: Environment variables to set for claude code.
+        env: Environment variables to set for claude code. Applied last, so
+            they override the sandbox defaults inspect_swe sets (see
+            `_claude_code/env.py`); e.g. `CLAUDE_CODE_DISABLE_AUTO_MEMORY="0"`
+            re-enables auto-memory.
         user: User to execute claude code with.
         sandbox: Optional sandbox environment name.
         version: Version of claude code to use. One of:
