@@ -26,12 +26,15 @@ from inspect_ai.tool import (
 )
 from inspect_swe._kimi_code import agentbinary
 from inspect_swe._kimi_code.kimi_code import (
+    _COMPACTION_INSTRUCTION_MARKER,
+    _COMPACTION_INSTRUCTION_PREAMBLE,
     _config_toml,
     _dedupe_tool_call_ids,
     _mcp_json,
     _resolve_max_context_size,
     _resolve_model,
     _strip_repeat_reminders,
+    kimi_classifier,
 )
 from inspect_swe._util.agentcontext import is_legacy_str_filter as _is_legacy_str_filter
 
@@ -448,18 +451,70 @@ def test_live_distribution_manifest_shape() -> None:
     assert callable(download_text_file)
 
 
+# Opening of kimi-code's rendered compaction instruction (see the provenance
+# comment on _COMPACTION_INSTRUCTION_MARKER); the line wrap after "note to" is
+# upstream's.
+_COMPACTION_INSTRUCTION = (
+    "You are about to run out of context. Write a first-person handoff note to\n"
+    "yourself so you can seamlessly continue this task after the earlier\n"
+    "conversation is cleared.\n\n"
+    "--- This message is a direct task, not part of the above conversation ---\n"
+)
+
+
+def _kimi_classify(messages: list[ChatMessage]) -> str:
+    return kimi_classifier(Mock(spec=Model), messages, []).kind
+
+
+def test_kimi_classifier_compaction_instruction_is_utility() -> None:
+    assert _kimi_classify([ChatMessageUser(content=_COMPACTION_INSTRUCTION)]) == (
+        "utility"
+    )
+
+
+def test_kimi_classifier_marker_in_task_prompt_is_root() -> None:
+    """A task prompt that happens to say the marker phrase is still root traffic.
+
+    Only the preamble sentence at the start of the message identifies kimi's
+    compaction request; the marker phrase alone mid-prompt must not make
+    every turn ending in that prompt "utility".
+    """
+    prompt = (
+        "Refactor the cache layer. Write a first-person handoff note in "
+        "NOTES.md when done so the next engineer can pick it up."
+    )
+    assert _kimi_classify([ChatMessageUser(content=prompt)]) == "root"
+
+
+def test_kimi_classifier_instruction_in_tool_output_is_root() -> None:
+    """Tool output echoing the full instruction (e.g. `cat` of kimi's source) is root."""
+    messages: list[ChatMessage] = [
+        ChatMessageUser(content="show me kimi's compaction prompt"),
+        ChatMessageAssistant(
+            content="",
+            tool_calls=[
+                ToolCall(id="c1", function="bash", arguments={"cmd": "cat x.md"})
+            ],
+        ),
+        ChatMessageTool(
+            content=_COMPACTION_INSTRUCTION, tool_call_id="c1", function="bash"
+        ),
+    ]
+    assert _kimi_classify(messages) == "root"
+
+
 @skip_if_github_action
 def test_live_compaction_instruction_marker() -> None:
-    """Drift check: kimi-code's compaction instruction still carries our marker.
+    """Drift check: kimi-code's compaction instruction still opens as we expect.
 
     ``kimi_classifier`` stamps utility only when the request's final user
-    message contains ``_COMPACTION_INSTRUCTION_MARKER``; kimi-code has no hard
-    version pin here, so upstream rewording would silently revert compaction
-    attribution to root. This fetches the instruction template from upstream
-    main and fails loudly instead. Skips when offline; github-action-gated so
-    an upstream hiccup can't block unrelated CI.
+    message starts with ``_COMPACTION_INSTRUCTION_PREAMBLE`` and contains
+    ``_COMPACTION_INSTRUCTION_MARKER``; kimi-code has no hard version pin
+    here, so upstream rewording would silently revert compaction attribution
+    to root. This fetches the instruction template from upstream main and
+    fails loudly instead. Skips when offline; github-action-gated so an
+    upstream hiccup can't block unrelated CI.
     """
-    from inspect_swe._kimi_code.kimi_code import _COMPACTION_INSTRUCTION_MARKER
     from inspect_swe._util.download import download_text_file
 
     url = (
@@ -471,7 +526,14 @@ def test_live_compaction_instruction_marker() -> None:
     except Exception as ex:
         pytest.skip(f"live kimi-code source unavailable: {ex}")
 
-    assert _COMPACTION_INSTRUCTION_MARKER in instruction, (
+    normalized = " ".join(instruction.split())
+    assert normalized.startswith(_COMPACTION_INSTRUCTION_PREAMBLE), (
+        "kimi-code's compaction instruction no longer opens with the preamble "
+        "kimi_classifier keys on; re-derive _COMPACTION_INSTRUCTION_PREAMBLE "
+        f"from the current template (see its provenance comment). Opens: "
+        f"{normalized[:120]!r}"
+    )
+    assert _COMPACTION_INSTRUCTION_MARKER in normalized, (
         "kimi-code's compaction instruction no longer contains the marker "
         "kimi_classifier keys on; re-derive _COMPACTION_INSTRUCTION_MARKER "
         "from the current template (see its provenance comment)."

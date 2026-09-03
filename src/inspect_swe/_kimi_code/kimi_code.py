@@ -96,16 +96,21 @@ _REPEAT_REMINDER_RE = re.compile(
 # serving the main agent's plumbing -- compaction is its canonical example,
 # per inspect_ai/agent/_bridge/context.py).
 #
-# The marker is the instruction's stable opening line, from
+# The preamble is the instruction's first sentence and the marker the phrase
+# that follows it, from
 # packages/agent-core/src/agent/compaction/compaction-instruction.md (rendered
 # via buildInstruction/createUserMessage in
-# packages/agent-core/src/agent/compaction/full.ts:compactionRound). Verified
-# byte-identical across @moonshot-ai/kimi-code tags 0.23.4 through 0.34.0
-# (latest at check time, 2026-08-08). This module has no hard version pin --
+# packages/agent-core/src/agent/compaction/full.ts:compactionRound, with
+# nothing prepended). Verified byte-identical across @moonshot-ai/kimi-code
+# tags 0.23.4 through 0.34.0 (latest at check time, 2026-08-08; re-checked
+# against upstream main 2026-09-03). This module has no hard version pin --
 # "auto"/"stable"/"latest" all resolve against Kimi's own latest.json at
 # runtime -- so there is no single version to key a per-era marker set to the
 # way _REPEAT_REMINDER_MARKERS does; unlike that nag wording, this instruction
-# has not changed release to release, so one marker suffices.
+# has not changed release to release, so one preamble + marker suffices.
+# tests/test_kimi_setup.py::test_live_compaction_instruction_marker checks
+# upstream main for drift.
+_COMPACTION_INSTRUCTION_PREAMBLE = "You are about to run out of context."
 _COMPACTION_INSTRUCTION_MARKER = "Write a first-person handoff note"
 
 
@@ -114,20 +119,22 @@ def kimi_classifier(
 ) -> AgentBridgeContext:
     """Classify kimi's auto-compaction summarizer requests as utility, root otherwise.
 
-    Positive match requires the last message to be a ChatMessageUser carrying
-    the marker — tool output echoing kimi's own docs/source therefore can't
-    flip a main-thread request to utility (the harmful failure direction; a
-    missed match merely reverts to root, which no gate acts on differently).
-    Substring rather than prefix match: the rendered instruction opens with a
-    preamble sentence ("You are about to run out of context. ...") before the
-    marker phrase.
+    Positive match requires the last message to be a ChatMessageUser that
+    *opens* with the preamble sentence and carries the marker — tool output
+    echoing kimi's own docs/source can't flip a main-thread request to utility
+    (the harmful failure direction; a missed match merely reverts to root,
+    which no gate acts on differently), and neither can a task prompt that
+    merely mentions the marker phrase mid-text (which would otherwise make
+    every turn ending in that prompt "utility"). Whitespace is collapsed
+    before matching so upstream re-wrapping the template doesn't break it.
     """
-    if (
-        messages
-        and isinstance(messages[-1], ChatMessageUser)
-        and _COMPACTION_INSTRUCTION_MARKER in messages[-1].text
-    ):
-        return AgentBridgeContext("utility")
+    if messages and isinstance(messages[-1], ChatMessageUser):
+        text = " ".join(messages[-1].text.split())
+        if (
+            text.startswith(_COMPACTION_INSTRUCTION_PREAMBLE)
+            and _COMPACTION_INSTRUCTION_MARKER in text
+        ):
+            return AgentBridgeContext("utility")
     return AgentBridgeContext("root")
 
 

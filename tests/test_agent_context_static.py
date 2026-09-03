@@ -18,6 +18,7 @@ from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_swe._antigravity.antigravity import build_antigravity_filter
 from inspect_swe._kimi_code.kimi_code import (
     _COMPACTION_INSTRUCTION_MARKER,
+    _COMPACTION_INSTRUCTION_PREAMBLE,
     build_kimi_filter,
 )
 from inspect_swe._mini_swe_agent.mini_swe_agent import build_mini_swe_filter
@@ -69,13 +70,13 @@ async def test_kimi_user_filter_sees_root() -> None:
 
 async def test_kimi_filter_classifies_compaction_request_as_utility() -> None:
     # Synthetic stand-in for kimi's own auto-compaction summarizer request: a
-    # plain ChatMessageUser appended as the last message, carrying the
-    # compaction instruction's stable opening line (see
-    # _COMPACTION_INSTRUCTION_MARKER's provenance comment in kimi_code.py).
+    # plain ChatMessageUser appended as the last message, opening with the
+    # compaction instruction's preamble and marker (see their provenance
+    # comment in kimi_code.py).
     compaction_request: list[ChatMessage] = [
         ChatMessageUser(content="earlier turn"),
         ChatMessageUser(
-            content=f"{_COMPACTION_INSTRUCTION_MARKER} to yourself so you can continue."
+            content=f"{_COMPACTION_INSTRUCTION_PREAMBLE} {_COMPACTION_INSTRUCTION_MARKER} to yourself so you can continue."
         ),
     ]
     result = await _invoke(build_kimi_filter(None), compaction_request)
