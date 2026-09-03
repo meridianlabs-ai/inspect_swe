@@ -12,16 +12,20 @@ including this task's own live-verification run: a first attempt using a
 non-catalog synthetic sentinel (`anthropic/inspect-subagent`) was REJECTED
 by OpenCode's runtime ("Model not found") even though the config *schema*
 places no catalog constraint on the field, so the shipped sentinels
-(`_SENTINEL_MODELS`) are real, distinct, same-provider catalog ids — and a
-follow-up spec review (caveat 4): since sentinels are fixed real model ids,
-a caller's `opencode_model` can legitimately collide with one, so
-`_SENTINEL_MODELS` holds an ORDERED per-role candidate list and
+(`_SENTINEL_MODELS`) are real, distinct, same-provider catalog ids, and only
+LIVE-VERIFIED providers are injected at all (openai/google candidates live in
+`_UNVERIFIED_SENTINEL_CANDIDATES`, never consulted) — and a follow-up spec
+review (caveat 4): since sentinels are fixed real model ids, a caller's
+`opencode_model` can legitimately collide with one, so
 `build_opencode_config_overrides` selects around collisions with the
-primary (and, for the small-model role, the chosen subagent sentinel too).
+primary (and, for the small-model role, the chosen subagent sentinel too),
+omitting a role's override rather than falling back to an unverified id.
 """
 
+import importlib
 from typing import Any
 
+import pytest
 from inspect_ai.agent import AgentBridgeContext, current_agent_bridge_context
 from inspect_ai.agent._bridge.context import bridged_request_scope
 from inspect_ai.model import (
@@ -35,6 +39,7 @@ from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_swe._opencode.opencode import (
     _SENTINEL_MODELS,
+    _UNVERIFIED_SENTINEL_CANDIDATES,
     OPENCODE_BUILTIN_SUBAGENTS,
     OPENCODE_UTILITY_AGENTS,
     _bare_model_id,
@@ -42,9 +47,12 @@ from inspect_swe._opencode.opencode import (
     build_opencode_config,
     build_opencode_config_overrides,
     build_opencode_filter,
-    build_opencode_model_aliases,
 )
 from inspect_swe._util.agentcontext import ModelFilter
+
+# the package re-exports the `opencode` agent *function* under the same name
+# as the module, so reach the module itself for monkeypatching/logger access
+opencode_module = importlib.import_module("inspect_swe._opencode.opencode")
 
 _ANTHROPIC_PRIMARY = "anthropic/claude-sonnet-4-5"
 
@@ -102,32 +110,40 @@ def test_config_overrides_route_builtin_subagents_to_subagent_sentinel() -> None
         assert config["agent"][name] == {"model": subagent_sentinel}
 
 
-def test_config_overrides_route_utility_agents_to_small_model_sentinel() -> None:
+def test_config_overrides_do_not_inject_utility_agent_overrides() -> None:
+    """Caveat 1: title/summary/compaction get NO per-agent override.
+
+    Unverified, and on an install where those names aren't reserved each
+    entry would create a spawnable agent whose traffic stamps "utility" —
+    so `is_sub_agent()` would miss real delegation. `small_model` is the
+    only utility-routing mechanism set.
+    """
     config, _subagent_sentinel, small_model_sentinel = build_opencode_config_overrides(
         "anthropic", _ANTHROPIC_PRIMARY
     )
     assert small_model_sentinel is not None
+    assert config["small_model"] == small_model_sentinel
     for name in OPENCODE_UTILITY_AGENTS:
-        assert config["agent"][name] == {"model": small_model_sentinel}
+        assert name not in config["agent"]
 
 
-def test_config_overrides_agent_map_covers_exactly_builtins_and_utility_agents() -> (
-    None
-):
+def test_config_overrides_agent_map_covers_exactly_builtin_subagents() -> None:
     config, _subagent_sentinel, _small_model_sentinel = build_opencode_config_overrides(
         "anthropic", _ANTHROPIC_PRIMARY
     )
-    assert set(config["agent"]) == set(OPENCODE_BUILTIN_SUBAGENTS) | set(
-        OPENCODE_UTILITY_AGENTS
-    )
+    assert set(config["agent"]) == set(OPENCODE_BUILTIN_SUBAGENTS)
 
 
-def test_config_overrides_use_configured_provider_id() -> None:
+def test_config_overrides_use_configured_provider_id(monkeypatch: Any) -> None:
     """Sentinels are prefixed with whichever provider `opencode_model` names.
 
     So the sentinel requests still resolve through the provider entry whose
-    baseURL was overridden to the bridge.
+    baseURL was overridden to the bridge. Only anthropic is live-verified,
+    so a second provider is monkeypatched in to exercise the prefixing.
     """
+    monkeypatch.setitem(
+        _SENTINEL_MODELS, "openai", _UNVERIFIED_SENTINEL_CANDIDATES["openai"]
+    )
     config, subagent_sentinel, small_model_sentinel = build_opencode_config_overrides(
         "openai", "openai/gpt-5"
     )
@@ -144,14 +160,16 @@ def test_config_overrides_subagent_and_small_sentinels_are_distinct() -> None:
     assert subagent_sentinel != small_model_sentinel
 
 
-def test_config_overrides_default_picks_are_real_catalog_ids_not_synthetic() -> None:
+def test_config_overrides_default_picks_are_the_live_verified_pair() -> None:
     """Regression guard for the live-verified rejection.
 
     A first attempt used a non-catalog synthetic id
     (`anthropic/inspect-subagent`) and OpenCode's runtime rejected it
     ("Model not found") even though nothing in the config schema forbids
-    it. `_SENTINEL_MODELS`' default (first) candidates must never regress
-    to a fabricated id — this is the pair actually live-verified.
+    it. The shipped anthropic defaults must never regress to a fabricated
+    id — the subagent pick is the id live-verified as accepted; the
+    small-model pick is the id the live run set (observed as a silent
+    no-op for title-gen, caveat 1).
     """
     _config, subagent_sentinel, small_model_sentinel = build_opencode_config_overrides(
         "anthropic", _ANTHROPIC_PRIMARY
@@ -173,26 +191,79 @@ def test_config_overrides_unrecognized_provider_skips_injection() -> None:
     assert small_model_sentinel is None
 
 
+@pytest.mark.parametrize(
+    "provider_id,opencode_model",
+    [("openai", "openai/gpt-5"), ("google", "google/gemini-2.5-pro")],
+)
+def test_config_overrides_unverified_providers_skip_injection(
+    provider_id: str, opencode_model: str
+) -> None:
+    """Caveat 3: openai/google candidates exist but are NOT live-verified.
+
+    A catalog-rejected `agent.*.model` hard-fails the sub-agent's Task call
+    ("Model not found") and the rejected request never reaches the bridge,
+    so an unverified guess could silently break built-in delegation that
+    works fine unaided. These providers take the no-injection path.
+    """
+    config, subagent_sentinel, small_model_sentinel = build_opencode_config_overrides(
+        provider_id, opencode_model
+    )
+    assert config == {}
+    assert subagent_sentinel is None
+    assert small_model_sentinel is None
+
+
+def test_unverified_candidates_are_not_in_the_consulted_table() -> None:
+    """Promotion to `_SENTINEL_MODELS` must be a deliberate, live-verified edit."""
+    assert set(_SENTINEL_MODELS) == {"anthropic"}
+    assert set(_UNVERIFIED_SENTINEL_CANDIDATES) == {"openai", "google"}
+    assert not set(_SENTINEL_MODELS) & set(_UNVERIFIED_SENTINEL_CANDIDATES)
+
+
+def test_config_overrides_warn_once_per_unverified_provider(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    monkeypatch.setattr(opencode_module, "_warned_unverified_providers", set())
+    with caplog.at_level("WARNING", logger=opencode_module.logger.name):
+        build_opencode_config_overrides("openai", "openai/gpt-5")
+        build_opencode_config_overrides("openai", "openai/gpt-5")
+        build_opencode_config_overrides("google", "google/gemini-2.5-pro")
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum("'openai'" in m for m in messages) == 1
+    assert sum("'google'" in m for m in messages) == 1
+
+
 # ---------------------------------------------------------------------------
 # build_opencode_config_overrides — primary-collision guard (caveat 4)
 # ---------------------------------------------------------------------------
 
 
-def test_config_overrides_primary_equals_default_subagent_sentinel_falls_back() -> None:
-    """`opencode_model` == the default subagent sentinel -> pick the alternate.
+def test_config_overrides_primary_equals_subagent_sentinel_omits_override() -> None:
+    """`opencode_model` == the (single, verified) subagent sentinel -> omit.
 
     The exact scenario spec review flagged: a caller configures
-    `opencode_model="anthropic/claude-haiku-4-5-20251001"` (our default
-    subagent sentinel). The picked sentinel must differ from the primary,
-    and the config must reflect the alternate, not the (colliding) default.
+    `opencode_model="anthropic/claude-haiku-4-5-20251001"`, our subagent
+    sentinel. Falling back to an unverified alternate would risk the hard
+    "Model not found" failure (caveat 3; models.dev lists no Claude 3.x
+    ids), so the built-in subagent overrides are omitted entirely and that
+    traffic classifies "root". The small-model role is unaffected.
     """
-    config, subagent_sentinel, _small_model_sentinel = build_opencode_config_overrides(
+    config, subagent_sentinel, small_model_sentinel = build_opencode_config_overrides(
         "anthropic", "anthropic/claude-haiku-4-5-20251001"
     )
-    assert subagent_sentinel is not None
-    assert subagent_sentinel != "anthropic/claude-haiku-4-5-20251001"
-    assert subagent_sentinel == "anthropic/claude-3-5-haiku-20241022"
-    assert config["agent"]["general"] == {"model": subagent_sentinel}
+    assert subagent_sentinel is None
+    for name in OPENCODE_BUILTIN_SUBAGENTS:
+        assert name not in config.get("agent", {})
+    assert "agent" not in config
+    assert small_model_sentinel is not None
+    assert config["small_model"] == small_model_sentinel
+    assert small_model_sentinel != "anthropic/claude-haiku-4-5-20251001"
+
+
+def test_subagent_role_has_a_single_verified_candidate() -> None:
+    """Caveat 4: no unverified alternates for the hard-failing role."""
+    subagent_candidates, _small_model_candidates = _SENTINEL_MODELS["anthropic"]
+    assert subagent_candidates == ("claude-haiku-4-5-20251001",)
 
 
 def test_config_overrides_primary_equals_default_small_model_sentinel_falls_back() -> (
@@ -205,111 +276,31 @@ def test_config_overrides_primary_equals_default_small_model_sentinel_falls_back
     assert small_model_sentinel is not None
     assert small_model_sentinel != "anthropic/claude-3-5-haiku-20241022"
     assert config["small_model"] == small_model_sentinel
-    assert config["agent"]["title"] == {"model": small_model_sentinel}
 
 
-def test_config_overrides_primary_collides_with_all_subagent_candidates_omits_override(
+def test_config_overrides_small_model_avoids_chosen_subagent_sentinel(
     monkeypatch: Any,
 ) -> None:
-    """Degenerate case: primary IS every subagent candidate -> omit entirely.
+    """Small-model selection also excludes whatever subagent sentinel was chosen.
 
-    Not reachable with the real (distinct) candidate lists via a single
-    `opencode_model` value, so this drives the full
-    `build_opencode_config_overrides` pipeline with a monkeypatched
-    candidate table where every subagent candidate collides with the
-    primary -- confirming the override is omitted (not just that
-    `_select_sentinel` returns `None` in isolation) and that `agent`/
-    `small_model` never reference a colliding id.
+    The real anthropic lists don't share an id, so a small-model list whose
+    first candidate IS the subagent sentinel is monkeypatched in; the pick
+    must skip to the next candidate.
     """
-    primary = "anthropic/claude-sonnet-4-5"
-    primary_bare = "claude-sonnet-4-5"
     monkeypatch.setitem(
         _SENTINEL_MODELS,
         "anthropic",
         (
-            (primary_bare, primary_bare, primary_bare),  # every candidate collides
-            (
-                "claude-3-5-haiku-20241022",
-                "claude-3-haiku-20240307",
-                "claude-3-opus-20240229",
-            ),
+            ("claude-haiku-4-5-20251001",),
+            ("claude-haiku-4-5-20251001", "claude-3-5-haiku-20241022"),
         ),
     )
-
     config, subagent_sentinel, small_model_sentinel = build_opencode_config_overrides(
-        "anthropic", primary
+        "anthropic", _ANTHROPIC_PRIMARY
     )
-    assert subagent_sentinel is None
-    assert "general" not in config.get("agent", {})
-    assert "explore" not in config.get("agent", {})
-    assert "scout" not in config.get("agent", {})
-    # small-model role is unaffected by the subagent role's degeneracy
-    assert small_model_sentinel is not None
-    assert small_model_sentinel != primary
-
-
-def test_config_overrides_small_model_avoids_chosen_subagent_sentinel() -> None:
-    """Small-model selection also excludes whatever subagent sentinel was chosen.
-
-    Force the subagent pick onto the small-model role's *default* candidate
-    by colliding the primary with the subagent role's default, then confirm
-    the small-model pick still avoids the (now-shared-candidate-list)
-    collision with whichever subagent sentinel ended up chosen.
-    """
-    config, subagent_sentinel, small_model_sentinel = build_opencode_config_overrides(
-        "anthropic", "anthropic/claude-haiku-4-5-20251001"
-    )
-    assert subagent_sentinel is not None and small_model_sentinel is not None
-    assert small_model_sentinel != subagent_sentinel
-    assert config["agent"]["general"]["model"] != config["agent"]["title"]["model"]
-
-
-# ---------------------------------------------------------------------------
-# build_opencode_model_aliases
-# ---------------------------------------------------------------------------
-
-
-def test_model_aliases_route_both_sentinels_to_served_model() -> None:
-    served = get_model("mockllm/model")
-    aliases = build_opencode_model_aliases(
-        served, None, "anthropic/inspect-subagent", "anthropic/inspect-small"
-    )
-    assert aliases["inspect-subagent"] is served
-    assert aliases["inspect-small"] is served
-
-
-def test_model_aliases_caller_supplied_take_precedence() -> None:
-    served = get_model("mockllm/model")
-    override = get_model("mockllm/other")
-    aliases = build_opencode_model_aliases(
-        served,
-        {"inspect-subagent": override},
-        "anthropic/inspect-subagent",
-        "anthropic/inspect-small",
-    )
-    assert aliases["inspect-subagent"] is override
-    # untouched sentinel still routes to the served model
-    assert aliases["inspect-small"] is served
-
-
-def test_model_aliases_preserve_unrelated_caller_entries() -> None:
-    served = get_model("mockllm/model")
-    other = get_model("mockllm/other")
-    aliases = build_opencode_model_aliases(
-        served,
-        {"some-other-slug": other},
-        "anthropic/inspect-subagent",
-        "anthropic/inspect-small",
-    )
-    assert aliases["some-other-slug"] is other
-    assert aliases["inspect-subagent"] is served
-
-
-def test_model_aliases_skip_none_sentinels() -> None:
-    """Unrecognized-provider case: no sentinel entries are added at all."""
-    served = get_model("mockllm/model")
-    aliases = build_opencode_model_aliases(served, None, None, None)
-    assert aliases == {}
+    assert subagent_sentinel == "anthropic/claude-haiku-4-5-20251001"
+    assert small_model_sentinel == "anthropic/claude-3-5-haiku-20241022"
+    assert config["agent"]["general"]["model"] != config["small_model"]
 
 
 # ---------------------------------------------------------------------------
@@ -352,9 +343,6 @@ def test_build_opencode_config_full_snapshot() -> None:
             "general": {"model": "anthropic/claude-haiku-4-5-20251001"},
             "explore": {"model": "anthropic/claude-haiku-4-5-20251001"},
             "scout": {"model": "anthropic/claude-haiku-4-5-20251001"},
-            "title": {"model": "anthropic/claude-3-5-haiku-20241022"},
-            "summary": {"model": "anthropic/claude-3-5-haiku-20241022"},
-            "compaction": {"model": "anthropic/claude-3-5-haiku-20241022"},
         },
         "permission": {"skill": {"*": "allow"}},
         "mcp": {

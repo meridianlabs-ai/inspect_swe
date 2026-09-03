@@ -14,7 +14,7 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, get_model
+from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
@@ -60,141 +60,117 @@ logger = getLogger(__name__)
 # Caveats surfaced empirically (P2, plus this task's own live-verification
 # run against the code below), baked into the constants/helpers that follow:
 #
-#   1. Slug collision: OpenCode's internal title-generator used its default
-#      Anthropic small model, which happened to collide with the sentinel
-#      probe-worker slug the run picked ad hoc. `small_model` is therefore
-#      set *explicitly* to its own sentinel here so title/summary/
-#      compaction traffic is intended to land under a slug distinct from
-#      both the primary and the subagent sentinel, classified "utility" --
-#      BUT this task's live-verification run found `small_model` alone does
-#      NOT actually redirect title-generation: with a real catalog
-#      `small_model` sentinel set, the title-gen request still arrived under
-#      the *primary* slug (not even OpenCode's own hardcoded small-model
-#      default, which is what it used with no override at all -- see probe
-#      P2). No error surfaced either time; it's a silent no-op, not a
-#      rejection. The config schema separately exposes `title`/`summary`/
-#      `compaction` as their own named `AgentConfig` entries under `agent`
-#      (`https://opencode.ai/config.json`) alongside `general`/`explore` --
-#      the same per-agent `model` override mechanism this run DID prove
-#      works for `general` (see caveat 2). So `OPENCODE_UTILITY_AGENTS`
-#      routes `title`/`summary`/`compaction` through the small-model
-#      sentinel via that mechanism too, belt-and-braces alongside
-#      `small_model` -- plausible given the proven `general` precedent, but
-#      UNVERIFIED (this task's 2-live-run budget was spent confirming the
-#      subagent-sentinel fallback; a follow-up run should confirm this
-#      before relying on "utility" classification for title/summary/
-#      compaction traffic).
-#   2. Built-in-subagent overridability was untested by P2 (it only proved
-#      per-agent config works for a *custom* agent). `general`, `explore`,
-#      and `scout` are the three built-in subagents OpenCode ships
-#      (https://opencode.ai/docs/agents/, opencode-ai 1.18.x). We route all
-#      three through the subagent sentinel, setting *only* `model` on each
-#      so their built-in description/prompt/mode (if any) are left alone;
-#      if a given install doesn't actually ship one of these names, this is
-#      NOT inert: per OpenCode's docs, a config-defined agent with no
-#      `mode` set defaults to mode `"all"` (spawnable from any context), so
-#      on an older install lacking one of these built-ins the entry creates
-#      a real, spawnable, prompt-less/description-less custom agent under
-#      that name (the config schema still parses fine either way --
-#      `additionalProperties`/optional fields -- so this is a behavioral
-#      risk, not a parsing one). Low risk in practice: `version="auto"`
-#      resolves to the latest release (`agentbinary.py`), so an install old
-#      enough to lack `general`/`explore`/`scout` is an edge case, not the
-#      default path. Live-verified (see #3): OpenCode DOES read `general`'s
-#      config override and attempt to resolve its `model` -- proving the
-#      per-built-in override mechanism itself works -- it was the *sentinel
-#      value's* catalog rejection (#3), not the override mechanism, that
-#      failed the first live run.
+#   1. `small_model` alone does NOT redirect title generation (live, docker,
+#      opencode-ai 1.18.15): with a `small_model` sentinel set, the title-gen
+#      request still arrived under the *primary* slug. No error surfaced; it
+#      is a silent no-op. The config schema also exposes `title`/`summary`/
+#      `compaction` as named `AgentConfig` entries under `agent`
+#      (https://opencode.ai/config.json), so routing them through the same
+#      per-agent `model` override proven for `general` (caveat 2) is
+#      plausible -- but UNVERIFIED, and not inert if wrong: on an install
+#      where those names are NOT reserved, each entry would create a real,
+#      prompt-less, mode-"all" agent the main agent could spawn, whose
+#      requests would carry the small-model sentinel and classify "utility",
+#      so `is_sub_agent()` would miss real delegation. The
+#      `OPENCODE_UTILITY_AGENTS` overrides are therefore NOT injected; only
+#      `small_model` (OpenCode's documented mechanism) is set, and utility
+#      traffic classifies "root" today -- honest under-attribution.
+#      Re-enabling needs a live run showing both that `agent.title.model`
+#      etc. are honored and that those names are reserved (not spawnable).
+#   2. Built-in-subagent overridability: `general`, `explore`, and `scout`
+#      are the three built-in subagents OpenCode ships
+#      (https://opencode.ai/docs/agents/, opencode-ai 1.18.x). We set *only*
+#      `model` on each so their built-in description/prompt/mode are left
+#      alone. Per OpenCode's docs a config-defined agent with no `mode`
+#      defaults to `"all"`, so on an install old enough to lack one of these
+#      names the entry would create a spawnable prompt-less agent -- an edge
+#      case, since `version="auto"` resolves to the latest release. Live-
+#      verified (see #3): OpenCode reads `general`'s override and resolves
+#      its `model`; it was the sentinel *value*'s catalog rejection, not the
+#      override mechanism, that failed the first live run.
 #   3. Sentinel catalog constraint (LIVE-VERIFIED, 2026-08-08, docker,
-#      opencode-ai 1.18.15): although the config *schema* places no catalog
-#      constraint on `AgentConfig.model`/`small_model` (both typed plain
-#      `string`, per https://opencode.ai/config.json), OpenCode's *runtime*
-#      model resolution does validate against a known catalog. A first
-#      attempt using a non-catalog synthetic id
-#      (`anthropic/inspect-subagent`) was REJECTED: the `general` subagent's
-#      Task-tool call failed outright with the tool result
-#      `"Model not found: anthropic/inspect-subagent."` (the main agent then
-#      improvised by running the shell command itself rather than via the
-#      subagent) -- so unlike `claude_code` (whose CLI performs no such
-#      validation, see `_claude_code/model.py`), OpenCode's synthetic-slug
-#      approach does not transfer. `small_model` failed the same lookup but
-#      degraded silently instead of surfacing an error -- title-generation
-#      requests were observed carrying the *primary* slug, not the sentinel,
-#      confirming the rejection without a visible failure. `_SENTINEL_MODELS`
-#      below is the fallback this task's instructions anticipated for
-#      exactly this outcome: real, distinct, same-provider catalog ids
-#      aliased to the served model (same mechanism as the rejected
-#      approach, just real identities) -- re-verified live after switching
-#      to it (see PR description / task report for the resulting jsonl).
-#      The anthropic pair is live-verified both ways (rejected as synthetic,
-#      accepted as catalog names); openai/google pairs are UNVERIFIED
-#      best-effort by the same reasoning (no probe/live run has exercised a
-#      non-anthropic `opencode_model`) -- flagged as a concern pending
-#      verification. An `opencode_model` under any other provider skips
-#      sentinel injection entirely (logged once) rather than risk the same
-#      "Model not found" failure mode with a guessed id.
-#   4. Primary-collision guard (spec review, 2026-08-08): since sentinels
-#      must be real catalog ids (caveat 3), a caller's `opencode_model` can
-#      legitimately BE one of our fixed sentinel picks (e.g.
-#      `opencode_model="anthropic/claude-haiku-4-5-20251001"`, our exact
-#      subagent-sentinel default) -- that would put the same bare slug in
-#      both `slug_map_classifier`'s `root_slugs` and `kind_by_slug`, and
-#      root wins (checked first), silently swallowing all subagent/utility
-#      classification. `_SENTINEL_MODELS` therefore holds an ORDERED
-#      3-candidate preference list per role per provider, not a single id;
-#      `build_opencode_config_overrides` picks the first candidate that
-#      collides with neither the primary's bare id nor (for the small-model
-#      role) the already-chosen subagent sentinel. If every candidate for a
-#      role collides (degenerate: caller's `opencode_model` IS the whole
-#      preference list), that role's override is omitted entirely -- its
-#      traffic then carries the primary slug (OpenCode's documented
-#      behavior for an unconfigured agent: it inherits the invoking
-#      primary's model) and classifies "root", same as if no override had
-#      ever been attempted. That's an honest, harmless degradation (matches
-#      the pre-existing "unrecognized provider" fallback and the
-#      claude_code precedent for a same-as-presented small-fast slug) --
-#      NOT "unknown" and not a misclassification, just under-attribution.
-#      Only the first (default) candidate per role is live-verified
-#      (caveat 3); the alternates are real,
-#      catalog-plausible model ids chosen by the same reasoning but not
-#      independently live-verified as *sentinels* (they're genuine model
-#      names, just unexercised in this specific role). `build_opencode_filter`
-#      additionally asserts (by construction, not by trusting callers) that
-#      `root_slugs` and `kind_by_slug` never share a key: any collision is
-#      logged and the colliding `kind_by_slug` entry is dropped rather than
-#      raised, so a direct/unusual call into these builders classifies that
-#      slug's traffic "root" (it IS the root slug on the wire) instead of
-#      misclassifying it "subagent"/"utility" -- the same honest
-#      degradation as the omitted-override case above, not "unknown".
+#      opencode-ai 1.18.15): the config *schema* types `AgentConfig.model`/
+#      `small_model` as plain strings, but OpenCode's *runtime* resolves them
+#      against a known catalog (models.dev). A synthetic id
+#      (`anthropic/inspect-subagent`) on `agent.general.model` was REJECTED
+#      and the failure is HARD: the `general` subagent's Task call returned
+#      `"Model not found: anthropic/inspect-subagent."` and the main agent
+#      improvised without delegating. The rejected request never reaches the
+#      bridge, so nothing on our side can observe it. A rejected
+#      `small_model`, by contrast, degrades silently to the primary slug.
+#      So unlike `claude_code` (whose CLI performs no such validation, see
+#      `_claude_code/model.py`), sentinels here must be real catalog ids, and
+#      `_SENTINEL_MODELS` holds ONLY providers whose subagent candidate has
+#      been live-verified as accepted (anthropic). The openai/google
+#      candidate lists drafted by the same reasoning are kept in
+#      `_UNVERIFIED_SENTINEL_CANDIDATES` for reference but never consulted:
+#      an `opencode_model` under any provider not in `_SENTINEL_MODELS`
+#      skips sentinel injection entirely (logged once) and classifies all
+#      traffic "root", rather than risk hard-failing built-in delegation
+#      that works fine without us. To re-enable a provider, either
+#      live-verify its subagent candidate or validate candidates at runtime
+#      against the installed OpenCode's catalog -- neither is done here.
+#   4. Primary-collision guard: since sentinels are real catalog ids, a
+#      caller's `opencode_model` can legitimately BE one (e.g.
+#      `opencode_model="anthropic/claude-haiku-4-5-20251001"`) -- that would
+#      put the same bare slug in both `slug_map_classifier`'s `root_slugs`
+#      and `kind_by_slug`, and root wins (checked first), silently swallowing
+#      subagent classification. `_select_sentinel` therefore skips any
+#      candidate that collides with the primary (and, for the small-model
+#      role, with the chosen subagent sentinel). The subagent role has a
+#      SINGLE candidate -- the verified id -- because falling back to an
+#      unverified alternate would trade under-attribution for the hard
+#      failure in caveat 3 (as of 2026-09 models.dev lists no Claude 3.x ids
+#      at all). On collision that role's override is omitted (logged): its
+#      traffic carries the primary slug (OpenCode's behavior for an
+#      unconfigured agent) and classifies "root" -- the same honest
+#      degradation as an unverified provider, NOT "unknown" and not a
+#      misclassification. The small-model role keeps alternates since its
+#      rejection is silent. `build_opencode_filter` additionally enforces
+#      `root_slugs`/`kind_by_slug` disjointness by construction for direct
+#      callers: a collision is logged and the `kind_by_slug` entry dropped,
+#      never raised, so that slug classifies "root" (it IS the root slug on
+#      the wire).
 #
 # Regardless of provider, the OpenCode provider clients put only the bare
 # model id (no `provider/` prefix) in the wire request's `model` field --
 # confirmed against probe P2 traffic, where a project config's
 # `anthropic/claude-haiku-4-5-20251001` subagent model arrived at
 # `current_bridge_request().model` as `claude-haiku-4-5-20251001` -- so
-# classification and the bridge's `model_aliases` keys both use the bare
-# forms, never the `provider/`-prefixed config values.
+# classification uses the bare forms, never the `provider/`-prefixed config
+# values. No bridge `model_aliases` entries are needed for the sentinels:
+# the bridge's fallback `model` already serves any unaliased slug
+# (`resolve_inspect_model`).
 
-_SENTINEL_MODELS: dict[str, tuple[tuple[str, str, str], tuple[str, str, str]]] = {
-    # provider_id -> (subagent_candidates, small_model_candidates), each an
-    # ORDERED 3-candidate preference list of bare (no `provider/` prefix)
-    # REAL catalog model ids (see caveat 4 above for why a list rather than
-    # a single fixed id). `_select_sentinel` picks the first candidate that
-    # doesn't collide with the primary/already-chosen sentinel. Only each
-    # list's first (default) entry is live-verified for the anthropic
-    # provider (see caveat 3); all other entries/providers are unverified.
+_SENTINEL_MODELS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    # provider_id -> (subagent_candidates, small_model_candidates): ORDERED
+    # preference lists of bare (no `provider/` prefix) REAL catalog ids;
+    # `_select_sentinel` picks the first that doesn't collide with the
+    # primary / already-chosen sentinel (caveat 4). ONLY providers whose
+    # subagent candidate is live-verified belong here (caveat 3).
     "anthropic": (
-        (
-            "claude-haiku-4-5-20251001",
-            "claude-3-5-haiku-20241022",
-            "claude-3-haiku-20240307",
-        ),
+        # single candidate: the id live-verified as an accepted
+        # `agent.*.model` override -- a rejected alternate would hard-fail
+        # delegation, so on collision the override is omitted instead
+        ("claude-haiku-4-5-20251001",),
+        # `small_model` rejection is silent, so alternates are safe here.
+        # None of these appear in the 2026-09 models.dev catalog, and
+        # `small_model` was already observed as a no-op for title-gen
+        # (caveat 1) -- retained as OpenCode's documented mechanism.
         (
             "claude-3-5-haiku-20241022",
             "claude-3-haiku-20240307",
             "claude-3-opus-20240229",
         ),
     ),
+}
+
+_UNVERIFIED_SENTINEL_CANDIDATES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    # Same shape as `_SENTINEL_MODELS`, drafted by the same reasoning, but
+    # never exercised live through OpenCode's catalog resolution -- and NOT
+    # consulted (caveat 3): a bad guess hard-fails built-in delegation.
+    # Promote an entry only after a live run shows its subagent candidate
+    # accepted as an `agent.*.model` override.
     "openai": (
         ("gpt-5-mini", "gpt-5-nano", "gpt-4o-mini"),
         ("gpt-5-nano", "gpt-4o-mini", "gpt-3.5-turbo"),
@@ -213,13 +189,14 @@ Live-verified (2026-08-08, `general`): the per-agent override IS honored."""
 
 OPENCODE_UTILITY_AGENTS: tuple[str, ...] = ("title", "summary", "compaction")
 """Built-in OpenCode utility agents (`AgentConfig` entries per
-`https://opencode.ai/config.json`), routed to the small-model sentinel via
-the same per-agent `model` override mechanism `OPENCODE_BUILTIN_SUBAGENTS`
-uses -- belt-and-braces alongside `small_model` (see caveat 1 above; NOT
-independently live-verified)."""
+`https://opencode.ai/config.json`). NOT injected as per-agent `model`
+overrides -- see caveat 1: unverified, and on an install where these names
+aren't reserved each entry would create a spawnable agent whose traffic
+would misclassify "utility". Utility routing relies on `small_model` alone.
+Kept so a future live-verified re-enable has the names in one place."""
 
-_warned_unrecognized_providers: set[str] = set()
-"""Dedupe key for the "no known catalog sentinel models" warning below --
+_warned_unverified_providers: set[str] = set()
+"""Dedupe key for the "no live-verified sentinel models" warning below --
 logged once per distinct provider id (mirrors `classify_filter`'s `warned`
 set), not once per `opencode()` call/request."""
 
@@ -236,7 +213,7 @@ def _bare_model_id(model_ref: str) -> str:
 
 
 def _select_sentinel(
-    candidates: tuple[str, str, str], excluded: Sequence[str]
+    candidates: tuple[str, ...], excluded: Sequence[str]
 ) -> str | None:
     """First candidate bare id not in `excluded`, or `None` if all collide."""
     for candidate in candidates:
@@ -256,9 +233,10 @@ def build_opencode_config_overrides(
     `opencode_model`'s provider, so they still resolve through the
     overridden `baseURL`).
 
-    When `provider_id` isn't in `_SENTINEL_MODELS`, returns an empty
-    fragment and `(None, None)` — no sentinel injection is attempted (see
-    caveat 3), and a warning is logged once per provider id.
+    When `provider_id` isn't in `_SENTINEL_MODELS` (i.e. its sentinel
+    candidates are not live-verified — currently everything but anthropic),
+    returns an empty fragment and `(None, None)`: no sentinel injection is
+    attempted (see caveat 3) and a warning is logged once per provider id.
 
     Otherwise, picks each sentinel from its provider's ordered candidate
     list, skipping any candidate whose bare id collides with `opencode_model`
@@ -267,15 +245,19 @@ def build_opencode_config_overrides(
     `None` (with a logged warning) if every candidate for that role
     collides; that role's override is simply omitted from the config rather
     than risking a slug that silently reclassifies as "root".
+
+    Only `OPENCODE_BUILTIN_SUBAGENTS` receive per-agent overrides; the
+    `OPENCODE_UTILITY_AGENTS` are deliberately not injected (caveat 1).
     """
     sentinel_candidates = _SENTINEL_MODELS.get(provider_id)
     if sentinel_candidates is None:
-        if provider_id not in _warned_unrecognized_providers:
-            _warned_unrecognized_providers.add(provider_id)
+        if provider_id not in _warned_unverified_providers:
+            _warned_unverified_providers.add(provider_id)
             logger.warning(
-                f"opencode(): no known catalog sentinel models for provider "
-                f"{provider_id!r}; subagent/utility traffic will not be "
-                f"slug-distinguishable from root for this opencode_model."
+                f"opencode(): no live-verified catalog sentinel models for "
+                f"provider {provider_id!r}; skipping sentinel injection, so "
+                f"subagent/utility traffic will not be slug-distinguishable "
+                f"from root for this opencode_model."
             )
         return {}, None, None
 
@@ -310,14 +292,13 @@ def build_opencode_config_overrides(
         f"{provider_id}/{small_model_id}" if small_model_id is not None else None
     )
 
+    # built-in subagents only -- `OPENCODE_UTILITY_AGENTS` are intentionally
+    # not routed through per-agent overrides (caveat 1); `small_model` below
+    # is the sole utility-routing mechanism
     agent_overrides: dict[str, Any] = {}
     if subagent_sentinel is not None:
         agent_overrides.update(
             {name: {"model": subagent_sentinel} for name in OPENCODE_BUILTIN_SUBAGENTS}
-        )
-    if small_model_sentinel is not None:
-        agent_overrides.update(
-            {name: {"model": small_model_sentinel} for name in OPENCODE_UTILITY_AGENTS}
         )
 
     config_fragment: dict[str, Any] = {}
@@ -327,31 +308,6 @@ def build_opencode_config_overrides(
         config_fragment["agent"] = agent_overrides
 
     return config_fragment, subagent_sentinel, small_model_sentinel
-
-
-def build_opencode_model_aliases(
-    served_model: Model,
-    model_aliases: dict[str, str | Model] | None,
-    subagent_sentinel: str | None,
-    small_model_sentinel: str | None,
-) -> dict[str, str | Model]:
-    """Bridge `model_aliases` routing the sentinel slugs to `served_model`.
-
-    Not strictly required for correct routing (the bridge's fallback model
-    already serves any unaliased slug -- see `resolve_inspect_model`), but
-    made explicit here so the aliasing is visible/introspectable and
-    mirrors how `claude_code`'s `resolve_claude_code_models` handles its own
-    synthetic subagent slug. Caller-supplied `model_aliases` take precedence
-    over the sentinel entries. Either sentinel may be `None` (unrecognized
-    provider — see `build_opencode_config_overrides`), in which case no
-    alias entry is added for it.
-    """
-    sentinel_aliases: dict[str, str | Model] = {}
-    if subagent_sentinel is not None:
-        sentinel_aliases[_bare_model_id(subagent_sentinel)] = served_model
-    if small_model_sentinel is not None:
-        sentinel_aliases[_bare_model_id(small_model_sentinel)] = served_model
-    return {**sentinel_aliases, **(model_aliases or {})}
 
 
 def build_opencode_filter(
@@ -530,17 +486,15 @@ def opencode(
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
-        # resolve model — must happen at execution time: get_model() resolves
-        # the active model from the current eval/sample context
-        served_model = get_model(model)
         bridge_model = f"inspect/{model}" if model is not None else "inspect"
 
         async with sandbox_agent_bridge(
             state,
             model=bridge_model,
-            model_aliases=build_opencode_model_aliases(
-                served_model, model_aliases, subagent_sentinel, small_model_sentinel
-            ),
+            # the sentinel slugs need no alias entries: the bridge's fallback
+            # `model` serves any unaliased slug (`resolve_inspect_model`), and
+            # resolves `inspect/<role>` names that `get_model(model)` would not
+            model_aliases=model_aliases,
             filter=opencode_filter,
             sandbox=sandbox,
             retry_refusals=retry_refusals,
