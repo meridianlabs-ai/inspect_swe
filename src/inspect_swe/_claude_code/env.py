@@ -36,6 +36,10 @@ from .model import ClaudeCodeModels
 #: it block.
 FALSY_ENV_VALUES: Final = frozenset({"0", "false", "no", "off"})
 
+#: Values Claude Code treats as an explicit "true" for boolean env vars
+#: (transcribed from the bundled source alongside ``FALSY_ENV_VALUES``).
+TRUTHY_ENV_VALUES: Final = frozenset({"1", "true", "yes", "on"})
+
 #: Make MCP connection blocking, with a budget that covers a slow sandbox.
 #:
 #: The blocking wait is bounded, so blocking alone is not sufficient on every
@@ -47,6 +51,27 @@ BLOCKING_MCP_ENV: Final = {
     "MCP_CONNECTION_NONBLOCKING": "false",
     "MCP_TIMEOUT": "300000",
     "MCP_CONNECT_TIMEOUT_MS": "300000",
+}
+
+#: Turn off Claude Code's auto-memory.
+#:
+#: Auto-memory exists to carry knowledge across *future conversations*: the
+#: agent writes markdown memory files under its config directory and the index
+#: is loaded into context at the start of the next session. A sample's sandbox
+#: normally has no next session -- it starts empty and is destroyed with the
+#: sample -- so the feature cannot pay off here. It still costs: the system
+#: prompt gains an ``# auto memory`` section (~3k input tokens, cached after
+#: the first call) telling the model to persist memory as files with the file
+#: tools, and the model can spend turns doing so. Left on, it also collides
+#: with task-provided memory tooling: in ``examples/mcp`` the model wrote
+#: memory files with ``Write`` instead of calling the ``memory`` MCP server.
+#:
+#: Claude Code reads the variable with a truthy check, so only a
+#: ``TRUTHY_ENV_VALUES`` token disables. An explicit falsy token *enables*,
+#: overriding even ``settings.json``, which gives callers who deliberately
+#: study memory persistence a clean opt-in via ``env``.
+DISABLE_AUTO_MEMORY_ENV: Final = {
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
 }
 
 
@@ -63,7 +88,7 @@ def claude_code_agent_env(
         models: Resolved presented identities (cosmetic; the bridge routes to
             the real model).
         env: Caller overrides, applied last so any default here can be
-            replaced -- including the MCP startup defaults.
+            replaced -- including the MCP startup and auto-memory defaults.
 
     Returns:
         The merged environment, caller values winning on conflict.
@@ -81,4 +106,5 @@ def claude_code_agent_env(
         "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
         "IS_SANDBOX": "1",
         **BLOCKING_MCP_ENV,
+        **DISABLE_AUTO_MEMORY_ENV,
     } | (env or {})

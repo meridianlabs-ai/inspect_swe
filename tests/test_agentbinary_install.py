@@ -1,6 +1,7 @@
 """Unit tests for package-archive installs in the agent binary machinery."""
 
 import hashlib
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -16,6 +17,7 @@ from inspect_swe._util.agentbinary import (
     download_agent_binary_async,
     ensure_agent_binary_installed,
 )
+from inspect_swe._util.checksum import ChecksumMismatchError
 from inspect_swe._util.sandbox import SANDBOX_INSTALL_DIR
 
 
@@ -219,11 +221,15 @@ def test_stale_single_binary_cache_still_installs_package(tmp_path: Path) -> Non
     assert not stale.exists()
 
 
-def test_offline_pinned_version_falls_back_to_cached_binary(tmp_path: Path) -> None:
-    # when resolution fails (offline) a pinned version with a cached single
-    # binary still installs, without the package
+def test_offline_pinned_version_falls_back_to_cached_binary(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # when resolution fails for a network/availability reason (offline) a
+    # pinned version with a cached single binary still installs, without the
+    # package -- and a loud warning names the unverified fallback
     source = _package_source(tmp_path)  # resolve_version raises (resolved=None)
-    source.cached_binary_path("9.9.6", "linux-arm64").write_bytes(b"single-binary")
+    cache_path = source.cached_binary_path("9.9.6", "linux-arm64")
+    cache_path.write_bytes(b"single-binary")
 
     sandbox = _FakeSandbox(installed=False)
     with (
@@ -234,6 +240,7 @@ def test_offline_pinned_version_falls_back_to_cached_binary(tmp_path: Path) -> N
         ),
         patch.object(agentbinary, "trace", lambda msg: None),
         patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value="")),
+        caplog.at_level(logging.WARNING, logger="inspect_swe._util.agentbinary"),
     ):
         binary_path = anyio.run(
             ensure_agent_binary_installed,
@@ -245,3 +252,197 @@ def test_offline_pinned_version_falls_back_to_cached_binary(tmp_path: Path) -> N
 
     assert binary_path == f"{SANDBOX_INSTALL_DIR}/codex-9.9.6-linux-arm64"
     assert sandbox.written == [binary_path]
+    assert len(caplog.records) == 1
+    warning = caplog.records[0].getMessage()
+    assert "9.9.6" in warning
+    assert str(cache_path) in warning
+    assert "WITHOUT checksum" in warning
+
+
+def test_checksum_mismatch_raises_without_cached_fallback(tmp_path: Path) -> None:
+    # a checksum failure is an integrity failure, not a network/resolution
+    # failure -- it must propagate rather than being treated like offline
+    # unavailability and swallowed into the unverified-cache fallback
+    resolved = AgentBinaryVersion(
+        "9.9.3",
+        hashlib.sha256(b"correct-bytes").hexdigest(),
+        "https://example.com/codex.tar.gz",
+        False,
+    )
+    source = _package_source(tmp_path, resolved)
+
+    sandbox = _FakeSandbox(installed=False)
+    with (
+        patch.object(
+            agentbinary,
+            "detect_sandbox_platform",
+            AsyncMock(return_value="linux-arm64"),
+        ),
+        patch.object(agentbinary, "trace", lambda msg: None),
+        patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value="")),
+        patch.object(
+            agentbinary, "download_file", AsyncMock(return_value=b"tampered-bytes")
+        ),
+        pytest.raises(ChecksumMismatchError),
+    ):
+        anyio.run(
+            ensure_agent_binary_installed,
+            source,
+            "9.9.3",
+            None,
+            cast(SandboxEnvironment, sandbox),
+        )
+
+    assert sandbox.written == []
+
+
+def test_corrupted_package_download_does_not_fall_back_to_legacy_cache(
+    tmp_path: Path,
+) -> None:
+    # regression: a package-capable source whose download fails checksum
+    # verification (tampered/corrupted release asset) must not silently
+    # install an untouched legacy single-binary cache left by an older
+    # inspect_swe -- that cache lives at a different path than the package
+    # cache, so it survives the failed download and must still not be used
+    resolved = AgentBinaryVersion(
+        "9.9.5",
+        hashlib.sha256(b"correct-bytes").hexdigest(),
+        "https://example.com/pkg.tar.gz",
+        True,
+    )
+    source = _package_source(tmp_path, resolved)
+    legacy = source.cached_binary_path("9.9.5", "linux-arm64")
+    legacy.write_bytes(b"legacy-single-binary")
+
+    sandbox = _FakeSandbox(installed=False)
+    with (
+        patch.object(
+            agentbinary,
+            "detect_sandbox_platform",
+            AsyncMock(return_value="linux-arm64"),
+        ),
+        patch.object(agentbinary, "trace", lambda msg: None),
+        patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value="")),
+        patch.object(
+            agentbinary, "download_file", AsyncMock(return_value=b"tampered-bytes")
+        ),
+        pytest.raises(ChecksumMismatchError),
+    ):
+        anyio.run(
+            ensure_agent_binary_installed,
+            source,
+            "9.9.5",
+            None,
+            cast(SandboxEnvironment, sandbox),
+        )
+
+    assert sandbox.written == []
+    assert legacy.read_bytes() == b"legacy-single-binary"
+
+
+def test_concurrent_version_resolution_shares_one_request(tmp_path: Path) -> None:
+    # a cold-start burst of concurrent installs for the same (binary,
+    # version, platform) key shares one resolve_version call, not one each
+    calls = 0
+
+    async def resolve_version(version: str, platform: str) -> AgentBinaryVersion:
+        nonlocal calls
+        calls += 1
+        # suspend so the other tasks reach the cache miss while this one is
+        # still in flight
+        await anyio.sleep(0.05)
+        return AgentBinaryVersion("9.5.1", "checksum", "https://example.com/pkg.tar.gz")
+
+    source = AgentBinarySource(
+        agent="test agent",
+        binary="test-agent-concurrent-ok",
+        resolve_version=resolve_version,
+        cached_binary_path=lambda v, p: tmp_path / f"{v}-{p}",
+        list_cached_binaries=lambda: [],
+        post_download=None,
+        post_install=None,
+    )
+    results: list[AgentBinaryVersion] = []
+
+    async def run() -> None:
+        async def one() -> None:
+            results.append(
+                await agentbinary._resolve_agent_binary_version(
+                    source, "9.5.1", "linux-x64"
+                )
+            )
+
+        async with anyio.create_task_group() as tg:
+            for _ in range(10):
+                tg.start_soon(one)
+
+    anyio.run(run)
+    assert calls == 1
+    assert results == [results[0]] * 10
+    assert results[0].version == "9.5.1"
+
+
+def test_concurrent_version_resolution_failure_is_shared(tmp_path: Path) -> None:
+    # callers queued behind a failing resolve_version share its exception —
+    # a rate-limit cascade across queued samples produces one failed API
+    # call, not one retry per queued sample
+    calls = 0
+    errors: list[Exception] = []
+
+    async def failing_resolve_version(
+        version: str, platform: str
+    ) -> AgentBinaryVersion:
+        nonlocal calls
+        calls += 1
+        await anyio.sleep(0.05)
+        raise RuntimeError("403 rate limited")
+
+    source = AgentBinarySource(
+        agent="test agent",
+        binary="test-agent-concurrent-fail",
+        resolve_version=failing_resolve_version,
+        cached_binary_path=lambda v, p: tmp_path / f"{v}-{p}",
+        list_cached_binaries=lambda: [],
+        post_download=None,
+        post_install=None,
+    )
+
+    async def run() -> None:
+        async def one() -> None:
+            try:
+                await agentbinary._resolve_agent_binary_version(
+                    source, "9.5.2", "linux-x64"
+                )
+            except RuntimeError as ex:
+                errors.append(ex)
+
+        async with anyio.create_task_group() as tg:
+            for _ in range(10):
+                tg.start_soon(one)
+
+    anyio.run(run)
+    assert calls == 1
+    assert len(errors) == 10
+    assert all(error is errors[0] for error in errors)
+
+    # a genuinely later call (after the failure completed) retries rather
+    # than replaying the stale failure forever — same (binary, version,
+    # platform) key, a fresh source whose resolve_version now succeeds
+    async def recovered_resolve_version(
+        version: str, platform: str
+    ) -> AgentBinaryVersion:
+        return AgentBinaryVersion("9.5.2", "checksum", "https://example.com/pkg.tar.gz")
+
+    retry_source = AgentBinarySource(
+        agent="test agent",
+        binary="test-agent-concurrent-fail",
+        resolve_version=recovered_resolve_version,
+        cached_binary_path=lambda v, p: tmp_path / f"{v}-{p}",
+        list_cached_binaries=lambda: [],
+        post_download=None,
+        post_install=None,
+    )
+    resolved = anyio.run(
+        agentbinary._resolve_agent_binary_version, retry_source, "9.5.2", "linux-x64"
+    )
+    assert resolved.version == "9.5.2"

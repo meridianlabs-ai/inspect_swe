@@ -13,6 +13,7 @@ from inspect_ai.util import ExecRemoteProcess, ExecRemoteStreamingOptions, store
 from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
+from inspect_swe._claude_code.env import DISABLE_AUTO_MEMORY_ENV
 from inspect_swe._util.agentcontext import (
     ModelFilter,
     classify_filter,
@@ -26,6 +27,46 @@ from inspect_swe.acp.agent import ACPAgentParams
 from .agentbinary import ensure_claude_code_acp_setup
 
 logger = logging.getLogger(__name__)
+
+
+# Claude Code has several client-side watchdogs that abort an in-flight
+# request and re-send it when the bridged model call stalls. A bridge
+# GenerateFilter that deliberately blocks the model proxy trips them, and
+# the retry replays a stale request. Disable them by default; user ``env``
+# still overrides.
+_BRIDGE_SAFE_ENV: dict[str, str] = {
+    # Bun fetch requestTimeout
+    "API_FORCE_IDLE_TIMEOUT": "0",
+    # SDK client timeout — no disable sentinel, so use a large value
+    "API_TIMEOUT_MS": "100000000",
+    # SSE event-idle watchdog (dead code as of CC 2.1.220 — the chunk-idle
+    # byte watchdog below replaced it; kept for older CC versions)
+    "CLAUDE_ENABLE_STREAM_WATCHDOG": "0",
+    # SSE chunk-idle byte watchdog (~180 s default, remotely tunable via a
+    # feature gate). Currently only arms on first-party base URLs, so it does
+    # not fire behind the bridge's localhost ANTHROPIC_BASE_URL — disabled
+    # explicitly rather than relying on that implementation detail
+    "CLAUDE_ENABLE_BYTE_WATCHDOG": "0",
+    # Idle watchdog on bridged MCP tool calls
+    "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT": "0",
+    # Block the first model call until MCP servers are connected; otherwise a
+    # slow bridge handshake yields a first call with no bridged tools (only a
+    # WaitForMcpServers placeholder) and the sample silently proceeds toolless.
+    # Inverted polarity: unset and "1" both mean non-blocking; only an explicit
+    # falsy token ("0"/"false"/"no"/"off") blocks
+    "MCP_CONNECTION_NONBLOCKING": "0",
+    # MCP server connect/init handshake (defaults 5 s / 30 s); on timeout the
+    # server is silently dropped and its tools never appear. 300 s to cover
+    # slow sandbox backends under many-concurrent-samples startup contention
+    "MCP_CONNECT_TIMEOUT_MS": "300000",
+    "MCP_TIMEOUT": "300000",
+    # No telemetry or update checks from inside the sandbox
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "DISABLE_AUTOUPDATER": "1",
+    # Auto-memory targets future conversations a sandbox never has, and its
+    # system-prompt section diverts the model from task-provided memory tools
+    **DISABLE_AUTO_MEMORY_ENV,
+}
 
 
 def build_claude_code_acp_filter(
@@ -150,41 +191,43 @@ class ClaudeCode(ACPAgent):
 
             # Use canonical model names — the bridge resolves them via
             # model_aliases to Model instances directly.
-            agent_env = {
-                "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
-                "ANTHROPIC_AUTH_TOKEN": "sk-ant-api03-DOq5tyLPrk9M4hPE",
-                "ANTHROPIC_MODEL": default_model,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": get_model(
-                    self._opus_model
-                ).canonical_name()
-                if self._opus_model
-                else default_model,
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": get_model(
-                    self._sonnet_model
-                ).canonical_name()
-                if self._sonnet_model
-                else default_model,
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": get_model(
-                    self._haiku_model
-                ).canonical_name()
-                if self._haiku_model
-                else default_model,
-                "CLAUDE_CODE_SUBAGENT_MODEL": get_model(
-                    self._subagent_model
-                ).canonical_name()
-                if self._subagent_model
-                else default_model,
-                "ANTHROPIC_SMALL_FAST_MODEL": get_model(
-                    self._haiku_model
-                ).canonical_name()
-                if self._haiku_model
-                else default_model,
-                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
-                "API_TIMEOUT_MS": "100000000",
-                "IS_SANDBOX": "1",
-                "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
-            } | self.env
+            agent_env = (
+                _BRIDGE_SAFE_ENV
+                | {
+                    "ANTHROPIC_BASE_URL": f"http://localhost:{bridge.port}",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-ant-api03-DOq5tyLPrk9M4hPE",
+                    "ANTHROPIC_MODEL": default_model,
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": get_model(
+                        self._opus_model
+                    ).canonical_name()
+                    if self._opus_model
+                    else default_model,
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": get_model(
+                        self._sonnet_model
+                    ).canonical_name()
+                    if self._sonnet_model
+                    else default_model,
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": get_model(
+                        self._haiku_model
+                    ).canonical_name()
+                    if self._haiku_model
+                    else default_model,
+                    "CLAUDE_CODE_SUBAGENT_MODEL": get_model(
+                        self._subagent_model
+                    ).canonical_name()
+                    if self._subagent_model
+                    else default_model,
+                    "ANTHROPIC_SMALL_FAST_MODEL": get_model(
+                        self._haiku_model
+                    ).canonical_name()
+                    if self._haiku_model
+                    else default_model,
+                    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+                    "IS_SANDBOX": "1",
+                    "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
+                }
+                | self.env
+            )
 
             # System prompt via env (the ACP adapter will forward to CC)
             resolved_prompt = self._resolve_system_prompt(state)

@@ -5,6 +5,7 @@ Uses the keyless ``mockllm`` provider so these run without Docker or API keys
 and ``model_config`` override logic in ``resolve_claude_code_models``.
 """
 
+from inspect_ai.agent._bridge.util import resolve_inspect_model
 from inspect_ai.model import Model, get_model
 from inspect_swe._claude_code.model import resolve_claude_code_models
 
@@ -142,3 +143,16 @@ def test_caller_model_aliases_take_precedence() -> None:
         model_aliases={"model": "mockllm/override"},
     )
     assert models.aliases["model"] == "mockllm/override"
+
+
+def test_transparent_proxy_presented_identity_resolves_via_alias() -> None:
+    # reproduces the review finding on #100: claude_code's presented identity
+    # is a bare, unprefixed name (e.g. "claude-sonnet-4-5", or a real model's
+    # own bare name), which can't resolve as a raw model name -- get_model()
+    # requires "<api_name>/<model_name>". claude_code()'s execute() keeps the
+    # presented-identity alias table under transparent_proxy=True precisely
+    # so this, the main-line request, still resolves to the real served
+    # model instead of raising.
+    models = resolve_claude_code_models("mockllm/model", "claude-sonnet-4-5")
+    resolved = resolve_inspect_model(models.presented, models.aliases, None)
+    assert resolved.name == "model"
