@@ -1,6 +1,7 @@
+import mimetypes
 import shlex
 from logging import getLogger
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from textwrap import dedent
 from typing import Any, Literal, Sequence, cast
 
@@ -15,6 +16,7 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import (
     ChatMessageSystem,
+    ContentImage,
     GenerateFilter,
     Model,
     ModelName,
@@ -39,7 +41,7 @@ from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
 )
-from inspect_swe._util.messages import build_user_prompt
+from inspect_swe._util.messages import build_user_prompt, collect_user_images
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import resolve_agent_cwd, sandbox_exec
 from inspect_swe._util.toml import to_toml
@@ -105,6 +107,7 @@ def codex_cli(
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
+    transparent_proxy: bool = False,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     home_dir: str | None = None,
@@ -124,6 +127,10 @@ def codex_cli(
     """Codex CLI.
 
     Agent that uses OpenAI [Codex CLI](https://github.com/openai/codex) running in a sandbox.
+
+    Image content in the input is written to files in the sandbox and attached
+    to the prompt via `codex exec --image` (requires a codex version that
+    supports the `--image` option).
 
     Use the `attempts` option to enable additional submissions if the initial
     submission(s) are incorrect (by default, no additional attempts are permitted).
@@ -161,6 +168,20 @@ def codex_cli(
         model_aliases: Optional mapping of model names to Model instances or model name strings.
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
+        transparent_proxy: Bind the `auto_review` guardian slug
+            (`codex-auto-review`) to the real target model even when
+            `auto_review` doesn't configure its own `model`, and forward the
+            client's generation parameters as authoritative instead of merging
+            in the eval's active `GenerateConfig` (defaults to `False`). Codex
+            hardcodes that guardian slug into every reviewer request
+            regardless of configuration, so without this the request has no
+            alias, falls through to the session model instead of the intended
+            guardian, and the guardian's own generation parameters (e.g.
+            `max_tokens`) are dropped. Required for `auto_review=True` with
+            `approval_policy="on-request"` when no explicit
+            `CodexAutoReview(model=...)` is set. The ordinary bridged request
+            (Codex's own `--model` slug) is unaffected -- it keeps resolving
+            to the real target model exactly as it does with `transparent_proxy=False`.
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         home_dir: Home directory to use for codex cli. If set, AGENTS.md, skills, and the MCP configuration will be written here.
@@ -351,8 +372,11 @@ def codex_cli(
                 state,
                 model=bridge_model,
                 model_aliases=resolve_codex_auto_review_model_aliases(
-                    resolved_auto_review, model_aliases
+                    resolved_auto_review,
+                    model_aliases,
+                    default=get_model(model) if transparent_proxy else None,
                 ),
+                forward_generation_config=transparent_proxy,
                 filter=filter,
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
@@ -497,7 +521,15 @@ def codex_cli(
                     resolved_skills, sbox, user, join_path(codex_home, "skills")
                 )
 
-            prompt, has_assistant_response = build_user_prompt(state.messages)
+            prompt, has_assistant_response = build_user_prompt(
+                state.messages, handled_content=("image",)
+            )
+
+            # stage input images as files in the sandbox (empty if the input
+            # has no images); attached to the prompt via `--image` below
+            image_files = await _stage_prompt_images(
+                collect_user_images(state.messages), sbox, user, codex_home
+            )
 
             # build agent cmd
             cmd = [codex_binary]
@@ -630,6 +662,7 @@ def codex_cli(
                 await _run_codex_cli_centaur(
                     options=centaur,
                     codex_cmd=cmd,
+                    image_files=image_files,
                     agent_env=agent_env,
                     state=state,
                 )
@@ -637,6 +670,15 @@ def codex_cli(
                 # execute the agent (track debug output)
                 debug_output: list[str] = []
                 agent_prompt = prompt
+                # images accompany the original prompt only: retry attempts
+                # send `incorrect_message` (text-only), and a checkpoint
+                # resume replays a prompt codex already received, with the
+                # images already embedded in its rollout
+                agent_image_args = (
+                    []
+                    if cp.attempt == "resume"
+                    else [arg for file in image_files for arg in ("--image", file)]
+                )
                 attempt_count = cp.track(
                     "codex_attempt_count", lambda: attempt_count, 0
                 )
@@ -652,6 +694,12 @@ def codex_cli(
                         or cp.attempt == "resume"
                     ):
                         agent_cmd.extend(["resume", "--last"])
+
+                    # Image args go LAST: `--image` is multi-value, so a
+                    # following positional (the prompt, or the `resume`
+                    # subcommand) would be swallowed as another image path.
+                    # Trailing, it binds to `exec` or `exec resume` alike.
+                    agent_cmd.extend(agent_image_args)
 
                     # Retry-loop gate: fires ONLY when this loop is actually
                     # retrying (attempt_count > 0 or the checkpoint says
@@ -716,6 +764,7 @@ def codex_cli(
                             )
                         else:
                             agent_prompt = attempts.incorrect_message
+                        agent_image_args = []
 
                 # trace debug info
                 if debug:
@@ -726,6 +775,59 @@ def codex_cli(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+# codex derives the request MIME type from the file extension
+# (mime_guess::from_path), and stdlib mimetypes tables vary by Python
+# version and platform (e.g. image/webp is absent before 3.11), so map
+# common image types explicitly rather than trusting guess_extension.
+_IMAGE_EXTENSIONS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
+async def _stage_prompt_images(
+    images: list[ContentImage],
+    sandbox: SandboxEnvironment,
+    user: str | None,
+    codex_home: str,
+) -> list[str]:
+    """Write prompt images to files in the sandbox, returning their paths.
+
+    `codex exec` cannot accept image content inline in its prompt argument
+    (the prompt is plain argv text), so images ride along as files attached
+    via `--image` args built from the returned paths.
+
+    Filenames restart at image-0 on each execution, so a follow-up turn
+    overwrites the previous turn's files. This is harmless: codex embeds the
+    image bytes into its rollout history at launch (verified on 0.151.0 --
+    a resumed turn's request still carries the original bytes).
+    """
+    if not images:
+        return []
+
+    # private inspect_ai API with no public equivalent; imported lazily so
+    # a future rename breaks image staging with a clear error here rather
+    # than failing `import inspect_swe` for every user
+    from inspect_ai._util.images import file_as_data
+
+    images_dir = join_path(codex_home, "images")
+    await sandbox_exec(sandbox, f"mkdir -p {images_dir}", user=user)
+    files: list[str] = []
+    for idx, image in enumerate(images):
+        image_bytes, mime_type = await file_as_data(image.image)
+        extension = (
+            _IMAGE_EXTENSIONS.get(mime_type)
+            or mimetypes.guess_extension(mime_type, strict=False)
+            or ".png"
+        )
+        image_file = join_path(images_dir, f"image-{idx}{extension}")
+        await sandbox.write_file(image_file, image_bytes)
+        files.append(image_file)
+    return files
 
 
 async def resolve_codex_model(
@@ -770,16 +872,50 @@ async def resolve_codex_model(
 async def _run_codex_cli_centaur(
     options: CentaurOptions,
     codex_cmd: list[str],
+    image_files: list[str],
     agent_env: dict[str, str],
     state: AgentState,
 ) -> None:
     instructions = "Codex CLI:\n\n - You may also use Codex CLI via the 'codex' command.\n - Use 'codex resume' if you need to resume a previous codex session."
 
+    if image_files:
+        # Attach input images to the human's first codex invocation only,
+        # via a self-disarming shell function (the marker file survives new
+        # shells re-sourcing .bashrc). A permanent alias would re-attach the
+        # images on every invocation -- codex applies root `--image` args to
+        # `resume` too, duplicating images already embedded in the session
+        # rollout. The flags are spliced right after the binary rather than
+        # trailing: `--image` is multi-value, so tokens the human types after
+        # the command (a prompt, or `resume`) would be swallowed as image
+        # paths if the command ended with an `--image` flag.
+        image_args = [arg for file in image_files for arg in ("--image", file)]
+        marker = shlex.quote(str(PurePosixPath(image_files[0]).parent / ".attached"))
+        first_cmd = shlex.join(codex_cmd[:1] + image_args + codex_cmd[1:])
+        plain_cmd = shlex.join(codex_cmd)
+        codex_cmd_def = dedent(f"""
+            codex() {{
+              if [ ! -e {marker} ]; then
+                touch {marker}
+                {first_cmd} "$@"
+              else
+                {plain_cmd} "$@"
+              fi
+            }}
+        """).strip()
+        instructions += (
+            "\n - The task input includes image file(s), which the 'codex' "
+            "command attaches to your first invocation automatically: "
+            f"{', '.join(image_files)}\n"
+            " - If that first invocation fails before the images are sent, "
+            f"delete {marker} to re-attach them on your next invocation."
+        )
+    else:
+        alias_cmd = shlex.join(codex_cmd)
+        codex_cmd_def = "alias codex='" + alias_cmd.replace("'", "'\\''") + "'"
+
     # build .bashrc content
     agent_env_vars = [f'export {k}="{v}"' for k, v in agent_env.items()]
-    alias_cmd = shlex.join(codex_cmd)
-    alias_cmd = "alias codex='" + alias_cmd.replace("'", "'\\''") + "'"
-    bashrc = "\n".join(agent_env_vars + ["", alias_cmd])
+    bashrc = "\n".join(agent_env_vars + ["", codex_cmd_def])
 
     # run the human cli
     await run_centaur(options, instructions, bashrc, state)

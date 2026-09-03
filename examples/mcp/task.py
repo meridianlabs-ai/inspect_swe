@@ -15,7 +15,10 @@ def mcp_memory(
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
     # setup agent
-    system_prompt = "You MUST use the memory tools to keep track of your work. Please note all findings using the memory tools."
+    # Name the MCP server explicitly: Claude Code's own system prompt describes
+    # a file-based "auto memory" written with the Write tool, so a bare "memory
+    # tools" instruction is ambiguous and the model may write files instead.
+    system_prompt = "You MUST use the `memory` MCP server's tools (e.g. create_entities, add_observations, read_graph) to keep track of your work. Record all findings with those tools, not in files."
     mcp_servers = [
         MCPServerConfigStdio(
             name="memory",
@@ -37,7 +40,7 @@ def mcp_memory(
     return Task(
         dataset=[
             Sample(
-                input=f"List the contents of the current directory, then use the memory tools to record what you found. Then, on the next turn, read from memory your findings and report them. {system_prompt}"
+                input=f"List the contents of the current directory, then record what you found using the `memory` MCP server's tools. Then, on the next turn, read your findings back from the `memory` MCP server and report them. {system_prompt}"
             )
         ],
         solver=solver,
