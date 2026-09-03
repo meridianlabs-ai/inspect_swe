@@ -139,6 +139,31 @@ def test_classify_presented_slug_with_pending_is_still_root(monkeypatch: Any) ->
     assert result == AgentBridgeContext("root")
 
 
+def test_classify_opus_tier_slug_with_pending_is_root(monkeypatch: Any) -> None:
+    """A distinct opus/sonnet tier slug is main-thread traffic, not "unknown".
+
+    env.py exports `models.opus`/`models.sonnet` as
+    ANTHROPIC_DEFAULT_OPUS_MODEL/ANTHROPIC_DEFAULT_SONNET_MODEL, so Claude
+    Code's own tier swap legitimately sends main-thread requests under those
+    slugs. With a sub-agent pending they must still classify as "root".
+    """
+    consumer = _consumer(monkeypatch, opus_model="mockllm/opus")
+    assert consumer._models.opus != consumer._models.presented
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+    with bridged_request_scope(consumer._models.opus):
+        result = _classify(consumer, text="a completely unrelated main-thread turn")
+    assert result == AgentBridgeContext("root")
+
+
+def test_classify_sonnet_tier_slug_with_pending_is_root(monkeypatch: Any) -> None:
+    consumer = _consumer(monkeypatch, sonnet_model="mockllm/sonnet")
+    assert consumer._models.sonnet != consumer._models.presented
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+    with bridged_request_scope(consumer._models.sonnet):
+        result = _classify(consumer, text="a completely unrelated main-thread turn")
+    assert result == AgentBridgeContext("root")
+
+
 def test_classify_unrecognized_slug_with_pending_is_unknown(monkeypatch: Any) -> None:
     consumer = _consumer(monkeypatch)
     _spawn_pending(consumer, "call_1", _TASK_PROMPT)
@@ -254,6 +279,42 @@ def test_subagent_slug_seen_suppresses_drift_warning(
     ):
         with bridged_request_scope(consumer._models.subagent):
             _classify(consumer)
+        with bridged_request_scope(consumer._models.presented):
+            for _ in range(10):
+                _classify(consumer)
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 0
+
+
+def _tool_result_line(tool_use_id: str) -> dict[str, Any]:
+    """The JSONL `user` line Claude Code prints when a Task's tool_result lands."""
+    return {
+        "type": "user",
+        "message": {
+            "content": [{"type": "tool_result", "tool_use_id": tool_use_id}],
+        },
+    }
+
+
+def test_subagent_slug_drift_not_counted_once_pending_cleared(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """A Task that dies before any sub-agent request reaches the bridge is not drift.
+
+    on_complete registers the pending entry when the Task tool_call appears
+    in output; if the tool_result then arrives with no sub-agent request in
+    between, the window in which sub-agent traffic was expected has closed.
+    Main-thread requests after that must not count toward the canary.
+    """
+    consumer = _consumer(monkeypatch)
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+    consumer.process_jsonl_line(_tool_result_line("call_1"))
+    assert not consumer._pending_subagents
+
+    with caplog.at_level(
+        "WARNING", logger="inspect_swe._claude_code._events.live_consumer"
+    ):
         with bridged_request_scope(consumer._models.presented):
             for _ in range(10):
                 _classify(consumer)

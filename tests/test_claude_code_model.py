@@ -5,6 +5,9 @@ Uses the keyless ``mockllm`` provider so these run without Docker or API keys
 and ``model_config`` override logic in ``resolve_claude_code_models``.
 """
 
+from typing import Any
+
+import pytest
 from inspect_ai.agent._bridge.util import resolve_inspect_model
 from inspect_ai.model import Model, get_model
 from inspect_swe._claude_code.model import resolve_claude_code_models
@@ -108,6 +111,43 @@ def test_subagent_explicit_same_as_haiku_gets_synthetic_name() -> None:
     assert models.aliases[models.subagent] is not models.aliases[models.presented]
     # and the haiku alias itself is undisturbed by the subagent collision
     assert models.aliases[models.haiku] is not None
+
+
+@pytest.mark.parametrize("role", ["opus_model", "sonnet_model", "haiku_model"])
+def test_synthetic_subagent_name_avoids_role_collision(role: str) -> None:
+    """The synthetic '<presented>-subagent' name is itself checked for collisions.
+
+    A caller whose opus/sonnet/haiku model happens to resolve to
+    '<presented>-subagent' must keep that role's name and alias intact; the
+    subagent role takes the next free suffix instead of clobbering it.
+    """
+    kwargs: dict[str, Any] = {role: "mockllm/model-subagent"}
+    models = resolve_claude_code_models("mockllm/model", None, **kwargs)
+    role_name = getattr(models, role.removesuffix("_model"))
+    assert role_name == "model-subagent"
+    assert models.subagent == "model-subagent-2"
+    assert models.subagent not in {
+        models.presented,
+        models.opus,
+        models.sonnet,
+        models.haiku,
+    }
+    # the colliding role's alias still routes to the caller's model, not the
+    # served primary that the default subagent route would have installed
+    assert models.aliases[role_name] is not models.aliases[models.presented]
+    assert models.aliases[models.subagent] is models.aliases[models.presented]
+
+
+def test_synthetic_subagent_name_skips_every_taken_suffix() -> None:
+    models = resolve_claude_code_models(
+        "mockllm/model",
+        None,
+        opus_model="mockllm/model-subagent",
+        sonnet_model="mockllm/model-subagent-2",
+    )
+    assert models.subagent == "model-subagent-3"
+    assert models.aliases[models.opus] is not models.aliases[models.presented]
+    assert models.aliases[models.sonnet] is not models.aliases[models.presented]
 
 
 def test_model_config_overrides_presented_identity() -> None:

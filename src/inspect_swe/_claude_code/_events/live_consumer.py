@@ -93,10 +93,10 @@ logger = getLogger(__name__)
 # typically full sentences).
 _MIN_PROMPT_LENGTH = 16
 
-# Number of classify() calls to tolerate, after the first Task/Agent span has
-# opened, without ever observing the expected subagent slug, before warning
-# that subagent traffic may not be carrying it at all (see
-# `_check_subagent_slug_drift`).
+# Number of classify() calls to tolerate while sub-agents are pending (i.e.
+# while sub-agent traffic is actually expected) without ever observing the
+# expected subagent slug, before warning that subagent traffic may not be
+# carrying it at all (see `_check_subagent_slug_drift`).
 _SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD = 5
 
 
@@ -150,9 +150,10 @@ class LiveConsumer(ModelEventSink):
         # slugs in probe P1 were. These track whether reality matches the
         # assumption, so a rejected/ignored slug surfaces as a warning
         # instead of silently degrading to prompt-match-only attribution.
-        self._first_subagent_span_seen = False
+        # Requests are only counted while `_pending_subagents` is non-empty,
+        # the window in which sub-agent traffic is actually expected.
         self._subagent_slug_seen = False
-        self._requests_since_first_subagent_span = 0
+        self._requests_while_subagents_pending = 0
         self._subagent_slug_drift_warned = False
 
     @property
@@ -180,11 +181,12 @@ class LiveConsumer(ModelEventSink):
         were written.
 
         Deliberately does NOT clear the subagent-slug drift canary fields
-        (`_subagent_slug_seen`, `_first_subagent_span_seen`,
-        `_subagent_slug_drift_warned`, `_requests_since_first_subagent_span`)
-        -- they track this consumer instance's lifetime, not any single
-        attempt, so a slug sighting (or a warning already issued) from
-        before a retry must still suppress/count against later attempts.
+        (`_subagent_slug_seen`, `_subagent_slug_drift_warned`,
+        `_requests_while_subagents_pending`) -- they track this consumer
+        instance's lifetime, not any single attempt, so a slug sighting (or a
+        warning already issued) from before a retry must still suppress/count
+        against later attempts. Clearing `_pending_subagents` does close the
+        canary's counting window until the next attempt spawns a sub-agent.
         """
         for tool_use_id in reversed(list(self._open_agents.keys())):
             agent = self._open_agents.pop(tool_use_id)
@@ -241,7 +243,6 @@ class LiveConsumer(ModelEventSink):
                 agent_span_id = f"agent-{tc.id}"
                 self._open_agents[tc.id] = _OpenAgent(span_id=agent_span_id)
                 self._pending_subagents[tc.id] = prompt
-                self._first_subagent_span_seen = True
                 span_name = args.get("subagent_type") or args.get("name") or "agent"
                 description = args.get("description") or ""
                 transcript()._event(
@@ -336,7 +337,10 @@ class LiveConsumer(ModelEventSink):
         every Task-tool subagent request — including custom agents with
         their own `model:` front-matter — carries `CLAUDE_CODE_SUBAGENT_MODEL`'s
         value as its raw requested slug; main-thread requests carry
-        `ANTHROPIC_MODEL`'s value (`presented`). Small-fast/utility traffic
+        `ANTHROPIC_MODEL`'s value (`presented`), or `ANTHROPIC_DEFAULT_OPUS_MODEL`
+        / `ANTHROPIC_DEFAULT_SONNET_MODEL`'s value (`opus`/`sonnet`) when
+        Claude Code's own tier swap is in effect -- those are configured tiers
+        of the main thread, not delegation. Small-fast/utility traffic
         was never observed headless, but the wiring says it would carry
         `ANTHROPIC_SMALL_FAST_MODEL`'s value (`haiku`) — that signal only
         fires when the caller configured a distinct `haiku_model` (otherwise
@@ -354,8 +358,8 @@ class LiveConsumer(ModelEventSink):
         3. pending-subagent prompt match → "subagent" (inferred; covers
            slug-bypass drift, and is checked ahead of the presented-slug
            check below since it's a stronger, content-derived signal)
-        4. slug == presented slug → "root" (structural: per P1, subagent
-           traffic never carries the presented slug, so a presented-slug
+        4. slug in {presented, opus, sonnet} → "root" (structural: per P1,
+           subagent traffic never carries any main-thread slug, so such a
            call with sub-agents open is still main-thread, not ambiguous)
         5. otherwise (unrecognized slug, or no request info available) →
            "root" if no sub-agents are currently pending, else "unknown"
@@ -372,7 +376,7 @@ class LiveConsumer(ModelEventSink):
             return AgentBridgeContext("utility")
         if self._match_pending_prompt(messages) is not None:
             return AgentBridgeContext("subagent")
-        if slug == self._models.presented:
+        if slug in (self._models.presented, self._models.opus, self._models.sonnet):
             return AgentBridgeContext("root")
         return AgentBridgeContext("root" if not self._pending_subagents else "unknown")
 
@@ -392,20 +396,27 @@ class LiveConsumer(ModelEventSink):
         request — `on_pending` isn't separately instrumented to avoid double
         counting the same request) rather than in a dedicated method, since
         `classify` already resolves `slug` for its own checks.
+
+        Only requests arriving while `_pending_subagents` is non-empty count:
+        that is the window in which sub-agent traffic is expected. A Task
+        whose tool_result lands without any sub-agent request ever reaching
+        the bridge (it died inside Claude Code) closes the window in
+        `_handle_user`, so the main-thread requests that follow are not
+        evidence of anything.
         """
         if slug == self._models.subagent:
             self._subagent_slug_seen = True
             return
         if (
-            not self._first_subagent_span_seen
+            not self._pending_subagents
             or self._subagent_slug_seen
             or self._subagent_slug_drift_warned
         ):
             return
 
-        self._requests_since_first_subagent_span += 1
+        self._requests_while_subagents_pending += 1
         if (
-            self._requests_since_first_subagent_span
+            self._requests_while_subagents_pending
             >= _SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD
         ):
             self._subagent_slug_drift_warned = True

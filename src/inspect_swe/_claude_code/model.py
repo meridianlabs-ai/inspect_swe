@@ -146,9 +146,12 @@ def resolve_claude_code_models(
     #   (respecting the caller's explicit choice even though the two
     #   currently coincide).
     #
-    # Either way `aliases[presented]` (set above to `served_model`) is left
-    # untouched — only a new alias key is added. opus/sonnet/haiku must
-    # already be resolved above so all four names are known here.
+    # Either way the existing role aliases are left untouched — only a new
+    # alias key is added. The synthetic name is itself re-checked against
+    # the role names (a caller's opus/sonnet/haiku model can legitimately
+    # resolve to "<presented>-subagent"), taking the next free suffix so it
+    # never overwrites an alias a role already claimed. opus/sonnet/haiku
+    # must already be resolved above so all four names are known here.
     if subagent_model is None:
         subagent_name = presented
         subagent_route: Model = served_model
@@ -156,12 +159,16 @@ def resolve_claude_code_models(
         subagent_route = get_model(subagent_model)
         subagent_name = subagent_route.name
 
-    if subagent_name in {presented, opus, sonnet, haiku}:
+    role_names = {presented, opus, sonnet, haiku}
+    if subagent_name in role_names:
         subagent = f"{presented}-subagent"
-        aliases[subagent] = subagent_route
+        n = 2
+        while subagent in role_names:
+            subagent = f"{presented}-subagent-{n}"
+            n += 1
     else:
         subagent = subagent_name
-        aliases[subagent] = subagent_route
+    aliases[subagent] = subagent_route
 
     # caller-supplied aliases take precedence over the names we derived
     if model_aliases:
