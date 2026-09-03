@@ -60,8 +60,12 @@ class _CaptureDisplay:
         *_: object,  # bridge also passes tools, tool_choice, config
     ) -> ModelOutput:
         if self.system_prompt is None:
-            self.system_prompt = next(
-                (m.text for m in messages if isinstance(m, ChatMessageSystem)), ""
+            # Claude Code sends its system prompt as several blocks (one of which
+            # is just an `x-anthropic-billing-header:` line) and the bridge keeps one
+            # ChatMessageSystem per block, so join them rather than taking the
+            # first.
+            self.system_prompt = "\n\n".join(
+                m.text for m in messages if isinstance(m, ChatMessageSystem)
             )
             self.resolved_model = model.canonical_name()
         return ModelOutput.from_content(
