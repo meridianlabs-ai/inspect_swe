@@ -59,8 +59,8 @@ from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 from .env import claude_code_agent_env
-from .gitstatus import pin_git_status_filter
 from .model import ClaudeCodeEffort, resolve_claude_code_models
+from .systemprompt import pin_system_prompt_filter
 
 ClaudeCodePermissionMode = Literal[
     "acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"
@@ -298,14 +298,14 @@ def claude_code(
     # giving the model proper context (unlike --continue which only sends the new turn).
     session_id = str(uuid.uuid4())
 
-    # each --resume regenerates the "git status at the start of the
-    # conversation" system prompt section from current repo state, busting
+    # each --resume rebuilds the system prompt from the current environment
+    # (regenerated git status, dropped --append-system-prompt text), busting
     # the prompt cache for the whole conversation prefix and leaking that the
-    # session was restarted -- pin it to its first-seen value (see
-    # gitstatus.py). Built once per agent instance: the bridge caches filter
-    # dispatch by id(fn), and the lambda reads the session_id cell that
-    # execute() rebinds on checkpoint restore.
-    pinned_filter = pin_git_status_filter(lambda: session_id, filter)
+    # session was restarted -- pin the root conversation's system prompt to
+    # its first-seen value (see systemprompt.py). Built once per agent
+    # instance: the bridge caches filter dispatch by id(fn), and the lambda
+    # reads the session_id cell that execute() rebinds on checkpoint restore.
+    pinned_filter = pin_system_prompt_filter(lambda: session_id, filter)
 
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
