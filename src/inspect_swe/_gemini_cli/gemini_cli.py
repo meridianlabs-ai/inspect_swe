@@ -38,7 +38,7 @@ from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
 
 from .agentbinary import ensure_gemini_cli_setup
-from .models import GEMINI_UTILITY_MODEL_KINDS
+from .models import GEMINI_PRIMARY_ALIAS_TARGETS, GEMINI_UTILITY_MODEL_KINDS
 
 
 def build_gemini_filter(
@@ -46,22 +46,32 @@ def build_gemini_filter(
 ) -> ModelFilter:
     """Gemini CLI bridge filter: agent-context classification by requested slug.
 
-    ``gemini_model`` is the exact ``--model`` value passed to the CLI (the
-    presented/primary slug); anything gemini-cli's internal utility calls
-    resolve to (see ``models.py``) is classified "utility" instead. When the
-    presented model is itself one of those utility slugs (e.g.
-    ``gemini-3-pro-preview``), utility calls under it are indistinguishable
-    from main-thread traffic and classify "root" -- the under-attribution
-    ``models.py`` documents, not a misconfiguration, so it is dropped from
-    the kind map here rather than left for `slug_map_classifier` to warn
-    about on every sample.
+    ``gemini_model`` is the exact ``--model`` value passed to the CLI. The
+    root slugs are that value plus, when it is one of gemini-cli's primary
+    aliases (``auto``, ``pro``, ``flash``, ...), every concrete slug the alias
+    can resolve to before the request reaches the wire
+    (``GEMINI_PRIMARY_ALIAS_TARGETS``) -- the bridge never sees ``"flash"``,
+    only ``gemini-3-flash-preview``/``gemini-3.5-flash``/``gemini-2.5-flash``.
+    Anything gemini-cli's internal utility calls resolve to (see
+    ``models.py``) is classified "utility" instead.
+
+    When a root slug is itself one of those utility slugs -- the presented
+    model is ``gemini-3-pro-preview``, or ``flash`` resolves to
+    ``gemini-3-flash-preview`` -- utility calls under that slug are
+    indistinguishable from main-thread traffic and classify "root". That is
+    the under-attribution ``models.py`` documents, the best a slug-only
+    classifier can do, and the harmless direction: the alternative (keying
+    on the raw alias) would classify the real root thread "utility" for the
+    whole episode. Each such slug is dropped from the kind map here rather
+    than left for `slug_map_classifier` to warn about on every sample.
     """
+    root_slugs = {gemini_model, *GEMINI_PRIMARY_ALIAS_TARGETS.get(gemini_model, ())}
     kind_by_slug = {
         slug: kind
         for slug, kind in GEMINI_UTILITY_MODEL_KINDS.items()
-        if slug != gemini_model
+        if slug not in root_slugs
     }
-    return classify_filter(filter, slug_map_classifier({gemini_model}, kind_by_slug))
+    return classify_filter(filter, slug_map_classifier(root_slugs, kind_by_slug))
 
 
 @agent

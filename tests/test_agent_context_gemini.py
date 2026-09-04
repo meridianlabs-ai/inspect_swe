@@ -26,6 +26,7 @@ from inspect_ai.model import (
 from inspect_swe._codex_cli.config import GUARDIAN_MODEL_SLUG
 from inspect_swe._gemini_cli.gemini_cli import build_gemini_filter
 from inspect_swe._gemini_cli.models import (
+    GEMINI_PRIMARY_ALIAS_TARGETS,
     GEMINI_UTILITY_MODEL_KINDS,
     GEMINI_UTILITY_MODEL_SLUGS,
 )
@@ -135,6 +136,59 @@ async def test_gemini_filter_uses_configured_gemini_model_as_root() -> None:
     """The root slug tracks whatever `gemini_model` was configured, not a fixed default."""
     wrapped = build_gemini_filter(None, "gemini-2.5-flash")
     assert await _invoke(wrapped, "gemini-2.5-flash") == AgentBridgeContext("root")
+
+
+async def test_gemini_filter_alias_primary_roots_every_resolution_target(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`gemini_model="flash"` never reaches the wire as "flash".
+
+    gemini-cli resolves primary aliases through `modelIdResolutions` before
+    the request is sent, so the root thread arrives under whichever concrete
+    slug the alias resolved to -- one of which (`gemini-3-flash-preview`) is
+    also a utility slug. Every resolution target must classify "root" (the
+    under-attribution `models.py` documents), the remaining utility slugs
+    still classify "utility", and construction must not log a collision
+    warning.
+    """
+    with caplog.at_level(logging.WARNING, logger="inspect_swe._util.agentcontext"):
+        wrapped = build_gemini_filter(None, "flash")
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+    for slug in GEMINI_PRIMARY_ALIAS_TARGETS["flash"]:
+        assert await _invoke(wrapped, slug) == AgentBridgeContext("root"), slug
+    for slug in ("gemini-3-flash-preview", "gemini-3.5-flash", "gemini-2.5-flash"):
+        assert await _invoke(wrapped, slug) == AgentBridgeContext("root"), slug
+    assert await _invoke(wrapped, "gemini-3.1-flash-lite") == AgentBridgeContext(
+        "utility"
+    )
+    assert await _invoke(wrapped, "gemini-3-pro-preview") == AgentBridgeContext(
+        "utility"
+    )
+
+
+async def test_gemini_filter_concrete_primary_has_no_alias_targets() -> None:
+    """A concrete `gemini_model` adds no extra root slugs (defaults unaffected)."""
+    wrapped = build_gemini_filter(None, "gemini-2.5-pro")
+    assert await _invoke(wrapped, "gemini-3-flash-preview") == AgentBridgeContext(
+        "utility"
+    )
+    assert await _invoke(wrapped, "gemini-3.5-flash") == AgentBridgeContext("unknown")
+
+
+def test_gemini_primary_alias_targets_are_concrete_slugs() -> None:
+    """Alias keys are not concrete ids; every target is a concrete id and non-empty."""
+    for alias, targets in GEMINI_PRIMARY_ALIAS_TARGETS.items():
+        assert not alias.startswith(("gemini-", "gemma-")), alias
+        assert targets, alias
+        assert all(t.startswith(("gemini-", "gemma-")) for t in targets), alias
+    assert GEMINI_PRIMARY_ALIAS_TARGETS.keys() >= {
+        "auto",
+        "pro",
+        "flash",
+        "flash-lite",
+        "auto-gemini-3",
+        "auto-gemini-2.5",
+    }
 
 
 # ---------------------------------------------------------------------------

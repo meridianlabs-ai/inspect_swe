@@ -7,6 +7,7 @@ delegates to the user's filter unchanged.
 """
 
 import inspect
+import warnings
 from logging import getLogger
 from typing import Awaitable, Callable, Literal, Mapping, Set, cast
 
@@ -141,6 +142,15 @@ def classify_filter(
     breaking generation.
     """
     user_is_legacy = user_filter is not None and is_legacy_str_filter(user_filter)
+    if user_is_legacy:
+        # The bridge only ever sees our Model-first wrapper, so re-emit the
+        # deprecation it would otherwise have raised for the user's filter.
+        warnings.warn(
+            "GenerateFilter with 'str' as the first parameter is deprecated. "
+            "Update your filter to accept a 'Model' instance instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     warned: set[str] = set()
 
     async def _filter(

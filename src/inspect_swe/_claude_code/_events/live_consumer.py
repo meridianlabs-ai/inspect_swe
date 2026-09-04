@@ -93,11 +93,13 @@ logger = getLogger(__name__)
 # typically full sentences).
 _MIN_PROMPT_LENGTH = 16
 
-# Number of classify() calls to tolerate while sub-agents are pending (i.e.
-# while sub-agent traffic is actually expected) without ever observing the
-# expected subagent slug, before warning that subagent traffic may not be
-# carrying it at all (see `_check_subagent_slug_drift`).
-_SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD = 5
+# Number of requests `classify` attributes to a sub-agent via the pending-
+# prompt match while carrying something other than the subagent slug, before
+# warning that subagent traffic may not be carrying that slug at all (see
+# `_check_subagent_slug_drift`). One such request can be the documented race
+# where Claude Code hasn't yet propagated `CLAUDE_CODE_SUBAGENT_MODEL` to a
+# sub-agent's very first call; a second one is drift.
+_SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD = 2
 
 
 @dataclass
@@ -150,10 +152,11 @@ class LiveConsumer(ModelEventSink):
         # slugs in probe P1 were. These track whether reality matches the
         # assumption, so a rejected/ignored slug surfaces as a warning
         # instead of silently degrading to prompt-match-only attribution.
-        # Requests are only counted while `_pending_subagents` is non-empty,
-        # the window in which sub-agent traffic is actually expected.
+        # Only requests the prompt match attributes to a sub-agent while they
+        # carry some other slug are counted: those are the requests that
+        # should have carried the subagent slug and didn't.
         self._subagent_slug_seen = False
-        self._requests_while_subagents_pending = 0
+        self._subagent_requests_missing_slug = 0
         self._subagent_slug_drift_warned = False
 
     @property
@@ -182,11 +185,12 @@ class LiveConsumer(ModelEventSink):
 
         Deliberately does NOT clear the subagent-slug drift canary fields
         (`_subagent_slug_seen`, `_subagent_slug_drift_warned`,
-        `_requests_while_subagents_pending`) -- they track this consumer
+        `_subagent_requests_missing_slug`) -- they track this consumer
         instance's lifetime, not any single attempt, so a slug sighting (or a
-        warning already issued) from before a retry must still suppress/count
-        against later attempts. Clearing `_pending_subagents` does close the
-        canary's counting window until the next attempt spawns a sub-agent.
+        warning already issued, or a slug-less sub-agent request already
+        counted) from before a retry still carries over to later attempts.
+        Clearing `_pending_subagents` does mean nothing can prompt-match (and
+        so nothing can count) until the next attempt spawns a sub-agent.
         """
         for tool_use_id in reversed(list(self._open_agents.keys())):
             agent = self._open_agents.pop(tool_use_id)
@@ -380,17 +384,22 @@ class LiveConsumer(ModelEventSink):
         """
         request = current_bridge_request()
         slug = request.model if request is not None else None
-        self._check_subagent_slug_drift(slug)
 
         if slug == self._models.subagent:
-            return AgentBridgeContext("subagent")
-        if slug == self._models.haiku and not self._is_root_slug(slug):
-            return AgentBridgeContext("utility")
-        if self._is_root_slug(slug):
-            return AgentBridgeContext("root")
-        if self._match_pending_prompt(messages) is not None:
-            return AgentBridgeContext("subagent")
-        return AgentBridgeContext("root" if not self._pending_subagents else "unknown")
+            context = AgentBridgeContext("subagent")
+        elif slug == self._models.haiku and not self._is_root_slug(slug):
+            context = AgentBridgeContext("utility")
+        elif self._is_root_slug(slug):
+            context = AgentBridgeContext("root")
+        elif self._match_pending_prompt(messages) is not None:
+            context = AgentBridgeContext("subagent")
+        else:
+            context = AgentBridgeContext(
+                "root" if not self._pending_subagents else "unknown"
+            )
+
+        self._check_subagent_slug_drift(slug, context)
+        return context
 
     def _is_root_slug(self, slug: str | None) -> bool:
         """Whether `slug` is one Claude Code uses for main-thread traffic.
@@ -405,7 +414,9 @@ class LiveConsumer(ModelEventSink):
             self._models.sonnet,
         )
 
-    def _check_subagent_slug_drift(self, slug: str | None) -> None:
+    def _check_subagent_slug_drift(
+        self, slug: str | None, context: AgentBridgeContext
+    ) -> None:
         """Warn (once, per consumer instance) if reality contradicts probe P1.
 
         The synthetic subagent slug (`models.subagent`, a non-catalog shape
@@ -417,38 +428,43 @@ class LiveConsumer(ModelEventSink):
         attribution. That's a real degradation worth surfacing, not a bug to
         crash on.
 
-        Counted here (once per `classify` call, i.e. once per bridged
-        request — `on_pending` isn't separately instrumented to avoid double
-        counting the same request) rather than in a dedicated method, since
-        `classify` already resolves `slug` for its own checks.
+        Fed from `classify` with the slug it resolved and the verdict it
+        reached. Any sighting of the subagent slug records that reality
+        matches P1 and suppresses the canary for good. Otherwise the only
+        event counted is the direct evidence of drift: a request `classify`
+        attributed to a sub-agent via the pending-prompt match (its step 4,
+        reached only when the slug is neither the subagent slug nor a
+        main-thread slug) — i.e. a request that should have carried the
+        subagent slug and didn't. Main-thread, small-fast and unmatched
+        unknown-slug requests are not evidence either way, so a Task run in
+        the background while the main thread keeps working, or a refused
+        request re-run through the filter once per retry attempt, cannot
+        trip it. A Task that dies inside Claude Code before any sub-agent
+        request reaches the bridge is cleared from `_pending_subagents` in
+        `_handle_user`, so nothing can match its prompt afterwards.
 
-        Only requests arriving while `_pending_subagents` is non-empty count:
-        that is the window in which sub-agent traffic is expected. A Task
-        whose tool_result lands without any sub-agent request ever reaching
-        the bridge (it died inside Claude Code) closes the window in
-        `_handle_user`, so the main-thread requests that follow are not
-        evidence of anything.
+        `_SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD` tolerates the documented race
+        where the subagent env var hasn't propagated to a sub-agent's very
+        first call; the next such request warns.
         """
         if slug == self._models.subagent:
             self._subagent_slug_seen = True
             return
         if (
-            not self._pending_subagents
+            context.kind != "subagent"
             or self._subagent_slug_seen
             or self._subagent_slug_drift_warned
         ):
             return
 
-        self._requests_while_subagents_pending += 1
-        if (
-            self._requests_while_subagents_pending
-            >= _SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD
-        ):
+        self._subagent_requests_missing_slug += 1
+        if self._subagent_requests_missing_slug >= _SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD:
             self._subagent_slug_drift_warned = True
             logger.warning(
-                "claude code subagent traffic never carried the expected "
-                f"subagent model slug {self._models.subagent!r} — subagent "
-                "attribution is running on prompt-match fallback; CC "
+                f"{self._subagent_requests_missing_slug} claude code subagent "
+                "requests were attributed by prompt match without carrying the "
+                f"expected subagent model slug {self._models.subagent!r} — "
+                "subagent attribution is running on prompt-match fallback; CC "
                 "version drift or slug rejection likely"
             )
 

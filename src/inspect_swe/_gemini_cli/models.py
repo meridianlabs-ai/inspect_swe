@@ -39,6 +39,29 @@ of the presented model's family -- making it a genuine (if imperfect, see
 above) utility signal whenever the presented model isn't itself
 `gemini-3-pro-preview`.
 
+The *primary* model is subject to the same pre-wire resolution. gemini-cli
+accepts alias ids as `--model` (`auto`, `pro`, `flash`, `flash-lite`,
+`auto-gemini-3`, `auto-gemini-2.5`) and routes each through the
+`modelIdResolutions` table in `defaultModelConfigs.js` -- an entry's
+`default` plus a per-`contexts[]` `target` selected by runtime conditions
+(preview access, `useGemini3_1`, `useGemini3_5Flash`, `useCustomTools`) --
+so the bridge never sees `"flash"`; it sees `gemini-3-flash-preview`,
+`gemini-3.5-flash` or `gemini-2.5-flash` for every main-thread request.
+Several of those targets are also in `GEMINI_UTILITY_MODEL_SLUGS`, so a
+classifier keyed only on the raw `--model` string would label the *root*
+thread "utility" for the whole episode. `GEMINI_PRIMARY_ALIAS_TARGETS`
+collects every concrete slug each alias can resolve to (its `default` plus
+every `contexts[].target`, gathered from the same 0.58.0 dist and
+re-verified against upstream main on 2026-09-03) so `build_gemini_filter`
+can treat all of them as root slugs; `tests/test_gemini_models_drift.py`
+also parses that routing table and fails naming the alias/target if
+upstream declares a target this map lacks. Concrete ids passed as
+`--model` (the default `gemini-2.5-pro`) have no alias entry here even
+though some concrete ids also carry `contexts[]` re-routes upstream (e.g.
+`gemini-3-pro-preview` -> `gemini-2.5-pro` without preview access); the
+alias case is the one that flips the root thread's classification, so it
+is the one modelled.
+
 Gemini CLI's subagent feature has no reserved model slug of its own: a
 subagent definition's `modelConfig.model` (see `agents/local-executor.js`)
 defaults to the *same* `DEFAULT_GEMINI_MODEL` used as gemini-cli's own
@@ -71,3 +94,40 @@ GEMINI_UTILITY_MODEL_KINDS: dict[str, Literal["subagent", "utility"]] = {
     slug: "utility" for slug in GEMINI_UTILITY_MODEL_SLUGS
 }
 """`GEMINI_UTILITY_MODEL_SLUGS`, shaped for `slug_map_classifier`'s `kind_by_slug`."""
+
+_GEMINI_PRO_TARGETS: frozenset[str] = frozenset(
+    {
+        # default
+        "gemini-3-pro-preview",
+        # hasAccessToPreview: false
+        "gemini-2.5-pro",
+        # useGemini3_1: true (+ useCustomTools: true)
+        "gemini-3.1-pro-preview",
+        "gemini-3.1-pro-preview-customtools",
+    }
+)
+
+GEMINI_PRIMARY_ALIAS_TARGETS: dict[str, frozenset[str]] = {
+    # `auto`, `pro` and `auto-gemini-3` share one routing entry shape.
+    "auto": _GEMINI_PRO_TARGETS,
+    "pro": _GEMINI_PRO_TARGETS,
+    "auto-gemini-3": _GEMINI_PRO_TARGETS,
+    "flash": frozenset(
+        {
+            # default
+            "gemini-3-flash-preview",
+            # useGemini3_5Flash: true
+            "gemini-3.5-flash",
+            # hasAccessToPreview: false
+            "gemini-2.5-flash",
+        }
+    ),
+    "flash-lite": frozenset({"gemini-3.1-flash-lite"}),
+    "auto-gemini-2.5": frozenset({"gemini-2.5-pro"}),
+}
+"""Concrete slugs each gemini-cli primary-model alias can reach the wire as.
+
+Keyed by the alias id accepted as `--model`; the value is the entry's
+`modelIdResolutions` `default` plus every `contexts[].target`. Concrete
+`gemini-*`/`gemma-*` ids have no entry (see the module docstring).
+"""

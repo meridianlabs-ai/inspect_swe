@@ -185,3 +185,19 @@ def test_public_reexports() -> None:
     # implementer-level API stays in inspect_ai -- not re-exported
     assert not hasattr(inspect_swe, "set_agent_bridge_context")
     assert not hasattr(inspect_swe, "current_bridge_request")
+
+
+def test_wrapping_a_legacy_str_filter_emits_the_deprecation_warning() -> None:
+    """The bridge never sees the user's filter, so the wrapper must warn instead."""
+
+    async def legacy_filter(
+        model: str,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        return None
+
+    with pytest.warns(DeprecationWarning, match="'str' as the first parameter"):
+        classify_filter(legacy_filter, static_root_classifier)

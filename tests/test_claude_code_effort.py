@@ -62,3 +62,21 @@ def test_effort_applies_to_an_explicit_subagent_model() -> None:
     subagent_model = models.aliases[models.subagent]
     assert isinstance(subagent_model, Model)
     assert subagent_model.config.reasoning_effort == "high"
+
+
+def test_unset_subagent_follows_caller_alias_untouched_by_effort() -> None:
+    """The default subagent follows the presented name's caller alias, effort and all.
+
+    The presented alias carries the effort-merged served model, but a caller
+    override replaces it and effort is not applied to caller-supplied
+    aliases -- the synthetic subagent slug follows that same (un-efforted)
+    override rather than keeping the effort-merged served model.
+    """
+    models = resolve_claude_code_models(
+        "mockllm/model",
+        None,
+        effort="high",
+        model_aliases={"model": "mockllm/override"},
+    )
+    assert models.aliases[models.subagent] == "mockllm/override"
+    assert models.aliases[models.subagent] is models.aliases[models.presented]

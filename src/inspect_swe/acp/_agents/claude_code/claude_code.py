@@ -1,7 +1,7 @@
 """Claude Code agent via the ``claude-agent-acp`` ACP adapter."""
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +15,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
 from inspect_swe._claude_code.env import DISABLE_AUTO_MEMORY_ENV
+from inspect_swe._claude_code.model import distinct_subagent_name
 from inspect_swe._util.agentcontext import (
     ModelFilter,
     classify_filter,
@@ -77,7 +78,9 @@ class ClaudeCodeAcpModels:
     ACP counterpart of `_claude_code.model.ClaudeCodeModels`: ``presented``
     and the role names are the values handed to Claude Code via
     ``ANTHROPIC_MODEL`` and the per-role env vars in `_start_agent`;
-    ``aliases`` maps each of them to the `Model` the bridge should serve.
+    ``aliases`` maps each of them to the `Model` the bridge should serve
+    (the *derived* table -- `ACPAgent` layers the caller's ``model_map``
+    override on top when building the agent's ``model_map``).
     Same invariant as the native path: ``subagent`` never equals
     ``presented``, ``opus``, ``sonnet``, or ``haiku``, so sub-agent traffic
     is distinguishable by requested slug alone.
@@ -98,19 +101,31 @@ def resolve_claude_code_acp_models(
     sonnet_model: str | Model | None = None,
     haiku_model: str | Model | None = None,
     subagent_model: str | Model | None = None,
+    model_map: Mapping[str, str | Model] | None = None,
 ) -> ClaudeCodeAcpModels:
     """Resolve the model names Claude Code (ACP) presents and their bridge aliases.
 
-    Not shared with `_claude_code.model.resolve_claude_code_models` because
-    this variant keys the bridge on ``canonical_name()`` (the native path
-    uses bare ``.name``) and accepts `Model` instances whose bound config
-    must survive (the native signature takes ``str`` and re-resolves). The
-    subagent-distinctness invariant is the same, mirrored here: an unset or
-    colliding ``subagent_model`` is presented as ``"<presented>-subagent"``
-    (first free ``-N`` suffix if a role already claims that name) and
-    aliased to the intended served model, so only the label differs.
-    Claude Code shows unrecognized model ids verbatim, so the synthetic
-    name is cosmetic.
+    Kept separate from `_claude_code.model.resolve_claude_code_models`
+    because this variant keys the bridge on ``canonical_name()`` (the native
+    path uses bare ``.name``) and accepts `Model` instances whose bound
+    config must survive (the native signature takes ``str`` and
+    re-resolves). The subagent-distinctness invariant is shared, via
+    `distinct_subagent_name`: an unset or colliding ``subagent_model`` is
+    presented as ``"<presented>-subagent"`` (first free ``-N`` suffix if a
+    role already claims that name) and aliased to the intended served
+    model, so only the label differs.
+
+    ``model_map`` is the caller's `ACPAgent` override (``ACPAgentParams``'
+    ``model_map``), which `ACPAgent` applies on top of ``aliases`` *after*
+    this function returns. It is consulted here for one thing: with
+    ``subagent_model`` unset the synthetic slug is only a label for the
+    primary's route, so when the caller re-maps the presented name the
+    synthetic slug follows that override (resolved via ``get_model()``,
+    exactly as the bridge resolves alias targets) rather than silently
+    staying on the un-overridden served model while main-thread traffic
+    moves. A caller mapping for the synthetic slug itself is left to
+    `ACPAgent` to apply and wins; an explicit ``subagent_model`` is never
+    redirected by a presented-name override.
 
     Calls ``get_model()``, so it needs an active eval/sample; `ACPAgent`
     already requires one at construction, which is where `_build_model_map`
@@ -131,15 +146,18 @@ def resolve_claude_code_acp_models(
     sonnet = role_name(sonnet_model)
     haiku = role_name(haiku_model)
 
-    subagent_route = served if subagent_model is None else get_model(subagent_model)
-    subagent = subagent_route.canonical_name()
     taken = {presented, opus, sonnet, haiku}
-    if subagent in taken:
-        subagent = f"{presented}-subagent"
-        n = 2
-        while subagent in taken:
-            subagent = f"{presented}-subagent-{n}"
-            n += 1
+    if subagent_model is None:
+        subagent = distinct_subagent_name(presented, taken)
+        subagent_route = served
+        # follow a caller override of the presented name (see docstring)
+        if model_map and presented in model_map and subagent not in model_map:
+            subagent_route = get_model(model_map[presented])
+    else:
+        subagent_route = get_model(subagent_model)
+        subagent = subagent_route.canonical_name()
+        if subagent in taken:
+            subagent = distinct_subagent_name(presented, taken)
     aliases[subagent] = subagent_route
 
     return ClaudeCodeAcpModels(
@@ -204,6 +222,10 @@ class ClaudeCode(ACPAgent):
         self._sonnet_model: str | Model | None = sonnet_model
         self._haiku_model: str | Model | None = haiku_model
         self._subagent_model: str | Model | None = subagent_model
+        # ACPAgent applies this override to model_map after _build_model_map;
+        # the resolver needs it so the default subagent follows the presented
+        # name's override (see resolve_claude_code_acp_models)
+        self._model_map_override = kwargs.get("model_map")
         super().__init__(**kwargs)
 
     def _resolve_models(self) -> ClaudeCodeAcpModels:
@@ -213,6 +235,7 @@ class ClaudeCode(ACPAgent):
             sonnet_model=self._sonnet_model,
             haiku_model=self._haiku_model,
             subagent_model=self._subagent_model,
+            model_map=self._model_map_override,
         )
 
     def _build_model_map(self) -> dict[str, str | Model]:

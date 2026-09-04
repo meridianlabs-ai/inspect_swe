@@ -10,7 +10,10 @@ from typing import Any
 import pytest
 from inspect_ai.agent._bridge.util import resolve_inspect_model
 from inspect_ai.model import Model, get_model
-from inspect_swe._claude_code.model import resolve_claude_code_models
+from inspect_swe._claude_code.model import (
+    distinct_subagent_name,
+    resolve_claude_code_models,
+)
 
 
 def test_defaults_present_served_model_and_share_one_alias() -> None:
@@ -196,3 +199,91 @@ def test_transparent_proxy_presented_identity_resolves_via_alias() -> None:
     models = resolve_claude_code_models("mockllm/model", "claude-sonnet-4-5")
     resolved = resolve_inspect_model(models.presented, models.aliases, None)
     assert resolved.name == "model"
+
+
+def test_unset_subagent_follows_caller_alias_for_presented_name() -> None:
+    """A caller alias on the presented name reroutes the default subagent too.
+
+    With ``subagent_model`` unset the synthetic ``"<presented>-subagent"``
+    slug is only a *label* for the same served model as the primary, so it
+    must route wherever the presented name routes -- including after a
+    caller's ``model_aliases`` override of that name. Otherwise main-thread
+    traffic would go to the override while Task sub-agent traffic silently
+    stayed on the un-overridden served model.
+    """
+    models = resolve_claude_code_models(
+        "mockllm/model",
+        None,
+        model_aliases={"model": "mockllm/override"},
+    )
+    assert models.subagent == "model-subagent"
+    assert models.aliases["model"] == "mockllm/override"
+    assert models.aliases[models.subagent] is models.aliases[models.presented]
+
+
+def test_explicit_subagent_model_unaffected_by_presented_alias() -> None:
+    """An explicit subagent_model is the caller's choice; a presented override leaves it alone."""
+    models = resolve_claude_code_models(
+        "mockllm/model",
+        None,
+        subagent_model="mockllm/sub",
+        model_aliases={"model": "mockllm/override"},
+    )
+    assert models.aliases["model"] == "mockllm/override"
+    sub = models.aliases[models.subagent]
+    assert isinstance(sub, Model)
+    assert sub.name == "sub"
+
+
+def test_explicit_colliding_subagent_model_unaffected_by_presented_alias() -> None:
+    """Explicit subagent_model that collides with the primary keeps its own route.
+
+    The synthetic slug is applied for distinctness, but its target is the
+    caller's resolved subagent model -- not the primary's (overridden) route.
+    """
+    models = resolve_claude_code_models(
+        "mockllm/model",
+        None,
+        subagent_model="mockllm/model",
+        model_aliases={"model": "mockllm/override"},
+    )
+    assert models.subagent == "model-subagent"
+    assert models.aliases["model"] == "mockllm/override"
+    sub = models.aliases[models.subagent]
+    assert isinstance(sub, Model)
+    assert sub.name == "model"
+
+
+def test_caller_alias_for_synthetic_subagent_slug_wins() -> None:
+    """A caller who aliases the synthetic slug themselves gets exactly that."""
+    models = resolve_claude_code_models(
+        "mockllm/model",
+        None,
+        model_aliases={
+            "model": "mockllm/override",
+            "model-subagent": "mockllm/sub-override",
+        },
+    )
+    assert models.aliases["model"] == "mockllm/override"
+    assert models.aliases["model-subagent"] == "mockllm/sub-override"
+
+
+def test_distinct_subagent_name_collision_free() -> None:
+    assert distinct_subagent_name("model", {"model"}) == "model-subagent"
+    assert distinct_subagent_name("model", set()) == "model-subagent"
+
+
+def test_distinct_subagent_name_advances_past_taken_suffixes() -> None:
+    assert (
+        distinct_subagent_name("model", {"model", "model-subagent"})
+        == "model-subagent-2"
+    )
+    assert (
+        distinct_subagent_name("model", {"model", "model-subagent", "model-subagent-2"})
+        == "model-subagent-3"
+    )
+    # a gap in the taken suffixes is filled, not skipped past
+    assert (
+        distinct_subagent_name("model", {"model-subagent", "model-subagent-3"})
+        == "model-subagent-2"
+    )

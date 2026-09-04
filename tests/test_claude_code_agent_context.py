@@ -11,6 +11,7 @@ that invariant's own coverage).
 
 from typing import Any
 
+import pytest
 from inspect_ai.agent import AgentBridgeContext
 from inspect_ai.agent._bridge.context import bridged_request_scope
 from inspect_ai.event._model import ModelEvent
@@ -242,25 +243,106 @@ def test_classify_agrees_with_span_attribution(monkeypatch: Any) -> None:
 # live-verified against a real CC build the way P1's real catalog-name slugs
 # were. If some CC version rejects/ignores it, subagent requests would
 # silently stop carrying it and attribution would quietly degrade to
-# prompt-match-only. These tests drive `_check_subagent_slug_drift` (called
-# from `classify`) directly through its public entry point.
+# prompt-match-only. The canary counts exactly that evidence: a request
+# `classify` attributes to a sub-agent via the pending-prompt match (its step
+# 4) while carrying anything other than the subagent slug. These tests drive
+# `_check_subagent_slug_drift` (called from `classify`) through its public
+# entry point.
+
+_DRIFT_LOGGER = "inspect_swe._claude_code._events.live_consumer"
 
 
-def test_subagent_slug_drift_warns_once(monkeypatch: Any, caplog: Any) -> None:
+def _warnings(caplog: Any) -> list[Any]:
+    return [r for r in caplog.records if r.levelname == "WARNING"]
+
+
+def _classify_as_subagent_by_prompt(
+    consumer: LiveConsumer, slug: str | None
+) -> AgentBridgeContext:
+    """A request only the pending-prompt match can attribute to a sub-agent."""
+    text = f"<task>\n{_TASK_PROMPT}\n</task>"
+    if slug is None:
+        return _classify(consumer, text=text)
+    with bridged_request_scope(slug):
+        return _classify(consumer, text=text)
+
+
+def test_subagent_slug_drift_ignores_main_thread_requests(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """Main-thread traffic while a Task is pending is not evidence of drift.
+
+    A Task launched in the background (or several in parallel) lets the main
+    thread keep issuing requests before the sub-agent's first call arrives,
+    and a refused main-thread request is re-run through the filter once per
+    retry attempt. None of those say anything about the subagent slug.
+    """
     consumer = _consumer(monkeypatch)
     _spawn_pending(consumer, "call_1", _TASK_PROMPT)
 
-    with caplog.at_level(
-        "WARNING", logger="inspect_swe._claude_code._events.live_consumer"
-    ):
+    with caplog.at_level("WARNING", logger=_DRIFT_LOGGER):
         with bridged_request_scope(consumer._models.presented):
-            # well past the threshold -- must still warn exactly once
             for _ in range(10):
-                _classify(consumer)
+                assert _classify(consumer) == AgentBridgeContext("root")
 
-    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert _warnings(caplog) == []
+
+
+def test_subagent_slug_drift_ignores_unmatched_unknown_slug(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """An unrecognized slug that matches no pending prompt is "unknown", not drift."""
+    consumer = _consumer(monkeypatch)
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+
+    with caplog.at_level("WARNING", logger=_DRIFT_LOGGER):
+        with bridged_request_scope("some-unrecognized-slug"):
+            for _ in range(10):
+                assert _classify(consumer) == AgentBridgeContext("unknown")
+
+    assert _warnings(caplog) == []
+
+
+@pytest.mark.parametrize("slug", ["some-unrecognized-slug", None])
+def test_subagent_slug_drift_warns_once(
+    monkeypatch: Any, caplog: Any, slug: str | None
+) -> None:
+    """Prompt-matched sub-agent requests without the subagent slug warn exactly once.
+
+    Well past the threshold -- the warning must not repeat.
+    """
+    consumer = _consumer(monkeypatch)
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+
+    with caplog.at_level("WARNING", logger=_DRIFT_LOGGER):
+        for _ in range(10):
+            result = _classify_as_subagent_by_prompt(consumer, slug)
+            assert result == AgentBridgeContext("subagent")
+
+    warnings = _warnings(caplog)
     assert len(warnings) == 1
     assert consumer._models.subagent in warnings[0].message
+
+
+def test_subagent_slug_drift_tolerates_one_missing_slug(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """A single slug-less sub-agent request is the documented env-propagation race.
+
+    Exactly `_SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD - 1` such requests stay
+    silent; the threshold-th one warns.
+    """
+    consumer = _consumer(monkeypatch)
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+    threshold = live_consumer_module._SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD
+
+    with caplog.at_level("WARNING", logger=_DRIFT_LOGGER):
+        for _ in range(threshold - 1):
+            _classify_as_subagent_by_prompt(consumer, "some-unrecognized-slug")
+        assert _warnings(caplog) == []
+        _classify_as_subagent_by_prompt(consumer, "some-unrecognized-slug")
+
+    assert len(_warnings(caplog)) == 1
 
 
 def test_subagent_slug_seen_suppresses_drift_warning(
@@ -268,23 +350,19 @@ def test_subagent_slug_seen_suppresses_drift_warning(
 ) -> None:
     """Ever observing the subagent slug permanently suppresses the warning.
 
-    Even a single sighting suppresses it, however many non-subagent-slug
-    requests follow.
+    Even a single sighting suppresses it, however many slug-less
+    prompt-matched sub-agent requests follow.
     """
     consumer = _consumer(monkeypatch)
     _spawn_pending(consumer, "call_1", _TASK_PROMPT)
 
-    with caplog.at_level(
-        "WARNING", logger="inspect_swe._claude_code._events.live_consumer"
-    ):
+    with caplog.at_level("WARNING", logger=_DRIFT_LOGGER):
         with bridged_request_scope(consumer._models.subagent):
             _classify(consumer)
-        with bridged_request_scope(consumer._models.presented):
-            for _ in range(10):
-                _classify(consumer)
+        for _ in range(10):
+            _classify_as_subagent_by_prompt(consumer, "some-unrecognized-slug")
 
-    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-    assert len(warnings) == 0
+    assert _warnings(caplog) == []
 
 
 def _tool_result_line(tool_use_id: str) -> dict[str, Any]:
@@ -305,22 +383,20 @@ def test_subagent_slug_drift_not_counted_once_pending_cleared(
     on_complete registers the pending entry when the Task tool_call appears
     in output; if the tool_result then arrives with no sub-agent request in
     between, the window in which sub-agent traffic was expected has closed.
-    Main-thread requests after that must not count toward the canary.
+    Requests that happen to carry the dead Task's prompt after that cannot
+    be prompt-matched to it, so they must not count toward the canary.
     """
     consumer = _consumer(monkeypatch)
     _spawn_pending(consumer, "call_1", _TASK_PROMPT)
     consumer.process_jsonl_line(_tool_result_line("call_1"))
     assert not consumer._pending_subagents
 
-    with caplog.at_level(
-        "WARNING", logger="inspect_swe._claude_code._events.live_consumer"
-    ):
-        with bridged_request_scope(consumer._models.presented):
-            for _ in range(10):
-                _classify(consumer)
+    with caplog.at_level("WARNING", logger=_DRIFT_LOGGER):
+        for _ in range(10):
+            result = _classify_as_subagent_by_prompt(consumer, "some-unrecognized-slug")
+            assert result == AgentBridgeContext("root")
 
-    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-    assert len(warnings) == 0
+    assert _warnings(caplog) == []
 
 
 def test_subagent_slug_drift_requires_a_first_span(
@@ -328,19 +404,18 @@ def test_subagent_slug_drift_requires_a_first_span(
 ) -> None:
     """No Task/Agent span ever opened -> nothing to warn about.
 
-    An agent that never delegates isn't drift.
+    An agent that never delegates isn't drift, whatever its requests carry.
     """
     consumer = _consumer(monkeypatch)
 
-    with caplog.at_level(
-        "WARNING", logger="inspect_swe._claude_code._events.live_consumer"
-    ):
+    with caplog.at_level("WARNING", logger=_DRIFT_LOGGER):
+        for _ in range(10):
+            _classify_as_subagent_by_prompt(consumer, "some-unrecognized-slug")
         with bridged_request_scope(consumer._models.presented):
             for _ in range(10):
                 _classify(consumer)
 
-    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-    assert len(warnings) == 0
+    assert _warnings(caplog) == []
 
 
 # ---------------------------------------------------------------------------

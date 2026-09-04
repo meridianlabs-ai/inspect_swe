@@ -71,12 +71,13 @@ logger = getLogger(__name__)
 #      where those names are NOT reserved, each entry would create a real,
 #      prompt-less, mode-"all" agent the main agent could spawn, whose
 #      requests would carry the small-model sentinel and classify "utility",
-#      so `is_sub_agent()` would miss real delegation. The
-#      `OPENCODE_UTILITY_AGENTS` overrides are therefore NOT injected; only
-#      `small_model` (OpenCode's documented mechanism) is set, and utility
-#      traffic classifies "root" today -- honest under-attribution.
-#      Re-enabling needs a live run showing both that `agent.title.model`
-#      etc. are honored and that those names are reserved (not spawnable).
+#      so `is_sub_agent()` would miss real delegation. Per-agent overrides
+#      for the three utility agents (`title`, `summary`, `compaction`) are
+#      therefore NOT injected; only `small_model` (OpenCode's documented
+#      mechanism) is set, and utility traffic classifies "root" today --
+#      honest under-attribution. Re-enabling needs a live run showing both
+#      that `agent.title.model` etc. are honored and that those names are
+#      reserved (not spawnable).
 #   2. Built-in-subagent overridability: `general`, `explore`, and `scout`
 #      are the three built-in subagents OpenCode ships
 #      (https://opencode.ai/docs/agents/, opencode-ai 1.18.x). We set *only*
@@ -101,15 +102,20 @@ logger = getLogger(__name__)
 #      So unlike `claude_code` (whose CLI performs no such validation, see
 #      `_claude_code/model.py`), sentinels here must be real catalog ids, and
 #      `_SENTINEL_MODELS` holds ONLY providers whose subagent candidate has
-#      been live-verified as accepted (anthropic). The openai/google
-#      candidate lists drafted by the same reasoning are kept in
-#      `_UNVERIFIED_SENTINEL_CANDIDATES` for reference but never consulted:
-#      an `opencode_model` under any provider not in `_SENTINEL_MODELS`
-#      skips sentinel injection entirely (logged once) and classifies all
-#      traffic "root", rather than risk hard-failing built-in delegation
-#      that works fine without us. To re-enable a provider, either
-#      live-verify its subagent candidate or validate candidates at runtime
-#      against the installed OpenCode's catalog -- neither is done here.
+#      been live-verified as accepted (anthropic). Candidates drafted by the
+#      same reasoning for other providers -- openai: `gpt-5-mini` /
+#      `gpt-5-nano` / `gpt-4o-mini` (subagent) and `gpt-5-nano` /
+#      `gpt-4o-mini` / `gpt-3.5-turbo` (small model); google:
+#      `gemini-2.5-flash` / `gemini-2.5-flash-lite` / `gemini-2.0-flash`
+#      (subagent) and `gemini-2.5-flash-lite` / `gemini-2.0-flash` /
+#      `gemini-1.5-flash` (small model) -- were never exercised live and are
+#      deliberately not in the table: an `opencode_model` under any provider
+#      not in `_SENTINEL_MODELS` skips sentinel injection entirely (logged
+#      once) and classifies all traffic "root", rather than risk hard-failing
+#      built-in delegation that works fine without us. To re-enable a
+#      provider, either live-verify its subagent candidate or validate
+#      candidates at runtime against the installed OpenCode's catalog --
+#      neither is done here.
 #   4. Primary-collision guard: since sentinels are real catalog ids, a
 #      caller's `opencode_model` can legitimately BE one (e.g.
 #      `opencode_model="anthropic/claude-haiku-4-5-20251001"`) -- that would
@@ -126,11 +132,10 @@ logger = getLogger(__name__)
 #      unconfigured agent) and classifies "root" -- the same honest
 #      degradation as an unverified provider, NOT "unknown" and not a
 #      misclassification. The small-model role keeps alternates since its
-#      rejection is silent. `build_opencode_filter` additionally enforces
-#      `root_slugs`/`kind_by_slug` disjointness by construction for direct
-#      callers: a collision is logged and the `kind_by_slug` entry dropped,
-#      never raised, so that slug classifies "root" (it IS the root slug on
-#      the wire).
+#      rejection is silent. Should a caller of `build_opencode_filter` pass
+#      a colliding sentinel anyway, the shared `slug_map_classifier` drops
+#      the `kind_by_slug` entry (logged, never raised) so that slug
+#      classifies "root" -- it IS the root slug on the wire.
 #
 # Regardless of provider, the OpenCode provider clients put only the bare
 # model id (no `provider/` prefix) in the wire request's `model` field --
@@ -165,35 +170,11 @@ _SENTINEL_MODELS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
 }
 
-_UNVERIFIED_SENTINEL_CANDIDATES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
-    # Same shape as `_SENTINEL_MODELS`, drafted by the same reasoning, but
-    # never exercised live through OpenCode's catalog resolution -- and NOT
-    # consulted (caveat 3): a bad guess hard-fails built-in delegation.
-    # Promote an entry only after a live run shows its subagent candidate
-    # accepted as an `agent.*.model` override.
-    "openai": (
-        ("gpt-5-mini", "gpt-5-nano", "gpt-4o-mini"),
-        ("gpt-5-nano", "gpt-4o-mini", "gpt-3.5-turbo"),
-    ),
-    "google": (
-        ("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"),
-        ("gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"),
-    ),
-}
-
 OPENCODE_BUILTIN_SUBAGENTS: tuple[str, ...] = ("general", "explore", "scout")
 """Built-in OpenCode subagents (opencode.ai/docs/agents/), routed to the
 subagent sentinel so their traffic is slug-distinguishable from the main
 thread even when invoked without a `model:` override of their own.
 Live-verified (2026-08-08, `general`): the per-agent override IS honored."""
-
-OPENCODE_UTILITY_AGENTS: tuple[str, ...] = ("title", "summary", "compaction")
-"""Built-in OpenCode utility agents (`AgentConfig` entries per
-`https://opencode.ai/config.json`). NOT injected as per-agent `model`
-overrides -- see caveat 1: unverified, and on an install where these names
-aren't reserved each entry would create a spawnable agent whose traffic
-would misclassify "utility". Utility routing relies on `small_model` alone.
-Kept so a future live-verified re-enable has the names in one place."""
 
 _warned_unverified_providers: set[str] = set()
 """Dedupe key for the "no live-verified sentinel models" warning below --
@@ -247,7 +228,8 @@ def build_opencode_config_overrides(
     than risking a slug that silently reclassifies as "root".
 
     Only `OPENCODE_BUILTIN_SUBAGENTS` receive per-agent overrides; the
-    `OPENCODE_UTILITY_AGENTS` are deliberately not injected (caveat 1).
+    utility agents (`title`, `summary`, `compaction`) are deliberately not
+    injected (caveat 1).
     """
     sentinel_candidates = _SENTINEL_MODELS.get(provider_id)
     if sentinel_candidates is None:
@@ -292,9 +274,9 @@ def build_opencode_config_overrides(
         f"{provider_id}/{small_model_id}" if small_model_id is not None else None
     )
 
-    # built-in subagents only -- `OPENCODE_UTILITY_AGENTS` are intentionally
-    # not routed through per-agent overrides (caveat 1); `small_model` below
-    # is the sole utility-routing mechanism
+    # built-in subagents only -- the utility agents (`title`, `summary`,
+    # `compaction`) are intentionally not routed through per-agent overrides
+    # (caveat 1); `small_model` below is the sole utility-routing mechanism
     agent_overrides: dict[str, Any] = {}
     if subagent_sentinel is not None:
         agent_overrides.update(
@@ -322,20 +304,8 @@ def build_opencode_filter(
     (the form the bridge actually sees); the subagent/small-model sentinels
     (when not `None` — see `build_opencode_config_overrides`) are matched by
     their bare ids regardless of which provider prefix they were given.
-
-    Invariant (caveat 4 above): `root_slugs` and `kind_by_slug` must never
-    share a key — `slug_map_classifier` checks `root_slugs` first, so a
-    shared key would silently classify that sentinel's traffic "root"
-    instead of "subagent"/"utility". `build_opencode_config_overrides`
-    already picks collision-free sentinels, so this shouldn't trigger via
-    the normal `opencode()` call path; it's enforced here too (rather than
-    trusted from the caller) since this function is itself importable and
-    callable directly. A collision is logged and the colliding
-    `kind_by_slug` entry is dropped — never raised — so a request under
-    that slug classifies "root" (it genuinely is the root slug on the
-    wire), same as if the sentinel had never been passed; any OTHER,
-    non-colliding slug this filter doesn't recognize still classifies
-    "unknown" as usual.
+    A sentinel that collides with the root slug (caveat 4) is resolved as
+    root by `slug_map_classifier`, which drops the shadowed entry itself.
     """
     root_slug = _bare_model_id(opencode_model)
     kind_by_slug: dict[str, Literal["subagent", "utility"]] = {}
@@ -343,15 +313,6 @@ def build_opencode_filter(
         kind_by_slug[_bare_model_id(subagent_sentinel)] = "subagent"
     if small_model_sentinel is not None:
         kind_by_slug[_bare_model_id(small_model_sentinel)] = "utility"
-
-    if root_slug in kind_by_slug:
-        logger.warning(
-            f"opencode(): sentinel slug {root_slug!r} collides with the "
-            f"root slug (opencode_model {opencode_model!r}); dropping its "
-            f"subagent/utility classification, which would otherwise be "
-            f"unreachable (slug_map_classifier checks root_slugs first)."
-        )
-        del kind_by_slug[root_slug]
 
     return classify_filter(filter, slug_map_classifier({root_slug}, kind_by_slug))
 

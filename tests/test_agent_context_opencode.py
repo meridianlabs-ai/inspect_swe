@@ -13,9 +13,9 @@ non-catalog synthetic sentinel (`anthropic/inspect-subagent`) was REJECTED
 by OpenCode's runtime ("Model not found") even though the config *schema*
 places no catalog constraint on the field, so the shipped sentinels
 (`_SENTINEL_MODELS`) are real, distinct, same-provider catalog ids, and only
-LIVE-VERIFIED providers are injected at all (openai/google candidates live in
-`_UNVERIFIED_SENTINEL_CANDIDATES`, never consulted) — and a follow-up spec
-review (caveat 4): since sentinels are fixed real model ids, a caller's
+LIVE-VERIFIED providers are injected at all (currently anthropic; openai and
+google take the no-injection path) — and a follow-up spec review (caveat 4):
+since sentinels are fixed real model ids, a caller's
 `opencode_model` can legitimately collide with one, so
 `build_opencode_config_overrides` selects around collisions with the
 primary (and, for the small-model role, the chosen subagent sentinel too),
@@ -39,9 +39,7 @@ from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_swe._opencode.opencode import (
     _SENTINEL_MODELS,
-    _UNVERIFIED_SENTINEL_CANDIDATES,
     OPENCODE_BUILTIN_SUBAGENTS,
-    OPENCODE_UTILITY_AGENTS,
     _bare_model_id,
     _select_sentinel,
     build_opencode_config,
@@ -110,28 +108,22 @@ def test_config_overrides_route_builtin_subagents_to_subagent_sentinel() -> None
         assert config["agent"][name] == {"model": subagent_sentinel}
 
 
-def test_config_overrides_do_not_inject_utility_agent_overrides() -> None:
-    """Caveat 1: title/summary/compaction get NO per-agent override.
+def test_config_overrides_agent_map_is_exactly_the_builtin_subagents() -> None:
+    """Caveat 1: only the three built-in subagents get a per-agent override.
 
-    Unverified, and on an install where those names aren't reserved each
+    In particular the utility agents (title/summary/compaction) get NONE:
+    unverified, and on an install where those names aren't reserved each
     entry would create a spawnable agent whose traffic stamps "utility" —
     so `is_sub_agent()` would miss real delegation. `small_model` is the
-    only utility-routing mechanism set.
+    only utility-routing mechanism set. Literal names, so a drift in
+    `OPENCODE_BUILTIN_SUBAGENTS` itself is caught too.
     """
     config, _subagent_sentinel, small_model_sentinel = build_opencode_config_overrides(
         "anthropic", _ANTHROPIC_PRIMARY
     )
     assert small_model_sentinel is not None
     assert config["small_model"] == small_model_sentinel
-    for name in OPENCODE_UTILITY_AGENTS:
-        assert name not in config["agent"]
-
-
-def test_config_overrides_agent_map_covers_exactly_builtin_subagents() -> None:
-    config, _subagent_sentinel, _small_model_sentinel = build_opencode_config_overrides(
-        "anthropic", _ANTHROPIC_PRIMARY
-    )
-    assert set(config["agent"]) == set(OPENCODE_BUILTIN_SUBAGENTS)
+    assert set(config["agent"]) == {"general", "explore", "scout"}
 
 
 def test_config_overrides_use_configured_provider_id(monkeypatch: Any) -> None:
@@ -142,7 +134,9 @@ def test_config_overrides_use_configured_provider_id(monkeypatch: Any) -> None:
     so a second provider is monkeypatched in to exercise the prefixing.
     """
     monkeypatch.setitem(
-        _SENTINEL_MODELS, "openai", _UNVERIFIED_SENTINEL_CANDIDATES["openai"]
+        _SENTINEL_MODELS,
+        "openai",
+        (("gpt-5-mini", "gpt-5-nano"), ("gpt-5-nano", "gpt-4o-mini")),
     )
     config, subagent_sentinel, small_model_sentinel = build_opencode_config_overrides(
         "openai", "openai/gpt-5"
@@ -211,13 +205,6 @@ def test_config_overrides_unverified_providers_skip_injection(
     assert config == {}
     assert subagent_sentinel is None
     assert small_model_sentinel is None
-
-
-def test_unverified_candidates_are_not_in_the_consulted_table() -> None:
-    """Promotion to `_SENTINEL_MODELS` must be a deliberate, live-verified edit."""
-    assert set(_SENTINEL_MODELS) == {"anthropic"}
-    assert set(_UNVERIFIED_SENTINEL_CANDIDATES) == {"openai", "google"}
-    assert not set(_SENTINEL_MODELS) & set(_UNVERIFIED_SENTINEL_CANDIDATES)
 
 
 def test_config_overrides_warn_once_per_unverified_provider(
@@ -484,30 +471,36 @@ async def test_opencode_filter_without_sentinels_falls_back_to_root_or_unknown()
 
 
 # ---------------------------------------------------------------------------
-# build_opencode_filter — root_slugs/kind_by_slug disjointness guard (caveat 4)
+# build_opencode_filter — sentinel colliding with the root slug (caveat 4)
 # ---------------------------------------------------------------------------
+#
+# `build_opencode_config_overrides` never hands `build_opencode_filter` a
+# sentinel equal to the primary (it selects around exactly this), but
+# `build_opencode_filter` is independently importable/callable. It passes
+# the maps straight through, so a collision is resolved by the shared
+# `slug_map_classifier`: it warns once at construction and drops the
+# shadowed `kind_by_slug` entry, so the request classifies "root" (matching
+# the actual wire slug) rather than "subagent"/"utility".
+
+_AGENTCONTEXT_LOGGER = "inspect_swe._util.agentcontext"
 
 
-async def test_opencode_filter_drops_sentinel_colliding_with_root_instead_of_misclassifying() -> (
-    None
-):
-    """Defense-in-depth: a directly-constructed collision degrades safely.
+async def test_opencode_filter_sentinel_colliding_with_root_classifies_root(
+    caplog: Any,
+) -> None:
+    with caplog.at_level("WARNING", logger=_AGENTCONTEXT_LOGGER):
+        wrapped = build_opencode_filter(
+            None,
+            _ANTHROPIC_PRIMARY,
+            subagent_sentinel=_ANTHROPIC_PRIMARY,  # collides with opencode_model
+            small_model_sentinel=_SMALL_MODEL_SENTINEL,
+        )
+    warnings = [
+        r for r in caplog.records if r.name == _AGENTCONTEXT_LOGGER and r.levelno >= 30
+    ]
+    assert len(warnings) == 1
+    assert "claude-sonnet-4-5" in warnings[0].getMessage()
 
-    `build_opencode_config_overrides` never hands `build_opencode_filter` a
-    sentinel equal to the primary (it selects around exactly this), but
-    `build_opencode_filter` is independently importable/callable, so it
-    enforces the invariant itself: if a caller passes a subagent sentinel
-    equal to `opencode_model`'s bare id anyway, the request must still
-    classify "root" (matching the actual wire slug) rather than "subagent" --
-    root_slugs is checked first by design, so this is what "the colliding
-    kind_by_slug entry is dropped" cashes out to.
-    """
-    wrapped = build_opencode_filter(
-        None,
-        _ANTHROPIC_PRIMARY,
-        subagent_sentinel=_ANTHROPIC_PRIMARY,  # collides with opencode_model
-        small_model_sentinel=_SMALL_MODEL_SENTINEL,
-    )
     assert await _invoke(wrapped, "claude-sonnet-4-5") == AgentBridgeContext("root")
     # the small-model sentinel, uninvolved in the collision, still works
     assert await _invoke(wrapped, "claude-3-5-haiku-20241022") == AgentBridgeContext(
@@ -515,14 +508,22 @@ async def test_opencode_filter_drops_sentinel_colliding_with_root_instead_of_mis
     )
 
 
-async def test_opencode_filter_drops_small_model_sentinel_colliding_with_root() -> None:
+async def test_opencode_filter_small_model_sentinel_colliding_with_root_classifies_root(
+    caplog: Any,
+) -> None:
     """Mirror case for the small-model sentinel."""
-    wrapped = build_opencode_filter(
-        None,
-        _ANTHROPIC_PRIMARY,
-        subagent_sentinel=_SUBAGENT_SENTINEL,
-        small_model_sentinel=_ANTHROPIC_PRIMARY,  # collides with opencode_model
-    )
+    with caplog.at_level("WARNING", logger=_AGENTCONTEXT_LOGGER):
+        wrapped = build_opencode_filter(
+            None,
+            _ANTHROPIC_PRIMARY,
+            subagent_sentinel=_SUBAGENT_SENTINEL,
+            small_model_sentinel=_ANTHROPIC_PRIMARY,  # collides with opencode_model
+        )
+    warnings = [
+        r for r in caplog.records if r.name == _AGENTCONTEXT_LOGGER and r.levelno >= 30
+    ]
+    assert len(warnings) == 1
+
     assert await _invoke(wrapped, "claude-sonnet-4-5") == AgentBridgeContext("root")
     assert await _invoke(wrapped, "claude-haiku-4-5-20251001") == AgentBridgeContext(
         "subagent"
