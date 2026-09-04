@@ -14,7 +14,10 @@ from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
 from inspect_swe._gemini_cli.agentbinary import ensure_gemini_cli_setup
-from inspect_swe._gemini_cli.gemini_cli import build_gemini_settings
+from inspect_swe._gemini_cli.gemini_cli import (
+    build_gemini_filter,
+    build_gemini_settings,
+)
 from inspect_swe._util.path import join_path
 from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
@@ -74,7 +77,10 @@ class GeminiCli(ACPAgent):
             # env-var override; route all of them to this agent's target.
             model=str(model),
             model_aliases=self.model_map,
-            filter=self.filter,
+            # Same classifier as the non-ACP variant; `model.name` is the
+            # presented slug passed as `--model` below (the non-ACP variant
+            # takes that CLI-facing slug directly as `gemini_model`).
+            filter=build_gemini_filter(self.filter, model.name),
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
             web_search=self._web_search,

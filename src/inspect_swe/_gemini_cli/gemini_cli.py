@@ -22,6 +22,11 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
+from inspect_swe._util.agentcontext import (
+    ModelFilter,
+    classify_filter,
+    slug_map_classifier,
+)
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
@@ -33,6 +38,40 @@ from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
 
 from .agentbinary import ensure_gemini_cli_setup
+from .models import GEMINI_PRIMARY_ALIAS_TARGETS, GEMINI_UTILITY_MODEL_KINDS
+
+
+def build_gemini_filter(
+    filter: GenerateFilter | None, gemini_model: str
+) -> ModelFilter:
+    """Gemini CLI bridge filter: agent-context classification by requested slug.
+
+    ``gemini_model`` is the exact ``--model`` value passed to the CLI. The
+    root slugs are that value plus, when it is one of gemini-cli's primary
+    aliases (``auto``, ``pro``, ``flash``, ...), every concrete slug the alias
+    can resolve to before the request reaches the wire
+    (``GEMINI_PRIMARY_ALIAS_TARGETS``) -- the bridge never sees ``"flash"``,
+    only ``gemini-3-flash-preview``/``gemini-3.5-flash``/``gemini-2.5-flash``.
+    Anything gemini-cli's internal utility calls resolve to (see
+    ``models.py``) is classified "utility" instead.
+
+    When a root slug is itself one of those utility slugs -- the presented
+    model is ``gemini-3-pro-preview``, or ``flash`` resolves to
+    ``gemini-3-flash-preview`` -- utility calls under that slug are
+    indistinguishable from main-thread traffic and classify "root". That is
+    the under-attribution ``models.py`` documents, the best a slug-only
+    classifier can do, and the harmless direction: the alternative (keying
+    on the raw alias) would classify the real root thread "utility" for the
+    whole episode. Each such slug is dropped from the kind map here rather
+    than left for `slug_map_classifier` to warn about on every sample.
+    """
+    root_slugs = {gemini_model, *GEMINI_PRIMARY_ALIAS_TARGETS.get(gemini_model, ())}
+    kind_by_slug = {
+        slug: kind
+        for slug, kind in GEMINI_UTILITY_MODEL_KINDS.items()
+        if slug not in root_slugs
+    }
+    return classify_filter(filter, slug_map_classifier(root_slugs, kind_by_slug))
 
 
 @agent
@@ -125,7 +164,7 @@ def gemini_cli(
             state,
             model=model,
             model_aliases=model_aliases,
-            filter=filter,
+            filter=build_gemini_filter(filter, gemini_model),
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,

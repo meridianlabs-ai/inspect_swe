@@ -36,17 +36,21 @@ independently via its unique spawn `tool_call_id`.
 from dataclasses import dataclass
 from logging import getLogger
 
+from inspect_ai.agent import AgentBridgeContext, current_bridge_request
 from inspect_ai.event import CompactionEvent, SpanBeginEvent, SpanEndEvent
 from inspect_ai.event._model import ModelEvent
 from inspect_ai.log import transcript
+from inspect_ai.model import Model
 from inspect_ai.model._chat_message import (
     ChatMessage,
     ChatMessageTool,
     ChatMessageUser,
 )
 from inspect_ai.model._model import ModelEventSink
+from inspect_ai.tool import ToolInfo
 from inspect_ai.util._span import current_span_id
 
+from ..config import GUARDIAN_MODEL_SLUG
 from .detection import (
     agent_message_recipients,
     completed_thread_ids,
@@ -120,13 +124,8 @@ class CodexConsumer(ModelEventSink):
     # ------------------------------------------------------------------
 
     def on_pending(self, event: ModelEvent) -> None:
-        # bind thread ids from any spawn results, then close completed threads
-        # (V1: wait/close status dicts; V2: FINAL_ANSWER agent_messages)
-        self._harvest_bindings(event.input)
-        for thread_id in completed_thread_ids(event.input):
-            self._close_thread(thread_id)
-        for author in final_answer_authors(event.input):
-            self._close_thread(author)
+        # idempotent if classify() already ran over this request
+        self._sync_threads(event.input)
 
         # attribute this call to a span
         span_id = self._attribute(event.input)
@@ -193,8 +192,71 @@ class CodexConsumer(ModelEventSink):
             transcript()._event_updated(event)
 
     # ------------------------------------------------------------------
+    # filter-time classification (AgentContextClassifier)
+    # ------------------------------------------------------------------
+
+    def classify(
+        self, _model: Model, messages: list[ChatMessage], _tools: list[ToolInfo]
+    ) -> AgentBridgeContext:
+        """Filter-time agent classification from the same maps as span attribution.
+
+        Runs inside the bridge filter (before generation), so it must not
+        assume `on_pending` has already seen this request — it does its own
+        `_sync_threads` + `_attribute`, exactly as `on_pending` would. The
+        sync matters for the root thread: under V1 the request that follows
+        the last sub-agent's completion carries that completion in its own
+        input (wait/close result or notification) and has no agent_message
+        recipient, so it is only recognisably "root" once that thread is
+        closed here rather than later in `on_pending`.
+
+        Two positive claims are checked first, since neither is visible to
+        `_attribute`: the guardian (`auto_review`) model slug and Codex's own
+        local-compaction marker both mean "utility" regardless of any open
+        sub-agent. Then a call addressed to the root thread itself — a
+        sub-agent's inbound `agent_message` with recipient "/root" — is a
+        positive root claim even while sub-agents are open; `_attribute` has
+        no such case (it only ever falls back to the outer span there), so
+        it's special-cased here. Everything else defers to `_attribute`:
+        a sub-agent span means "subagent"; the outer span means "root" only
+        when no sub-agents are open (an unattributed call with open
+        sub-agents is `_attribute`'s own ambiguity fallback, not a genuine
+        root signal) — otherwise "unknown".
+        """
+        request = current_bridge_request()
+        if request is not None and request.model == GUARDIAN_MODEL_SLUG:
+            return AgentBridgeContext("utility")
+        if is_compaction_request(messages):
+            return AgentBridgeContext("utility")
+
+        # nothing open → nothing to bind, close, or attribute against
+        if not self._agents:
+            return AgentBridgeContext("root")
+
+        self._sync_threads(messages)
+        if agent_message_recipients(messages) == {"/root"}:
+            return AgentBridgeContext("root")
+
+        span_id = self._attribute(messages)
+        if span_id != self.outer_span_id:
+            return AgentBridgeContext("subagent")
+        return AgentBridgeContext("root" if not self._agents else "unknown")
+
+    # ------------------------------------------------------------------
     # internal
     # ------------------------------------------------------------------
+
+    def _sync_threads(self, input_messages: list[ChatMessage]) -> None:
+        """Bind spawn-result thread ids, then close threads this request completes.
+
+        Completion carriers: V1 wait/close status dicts and notifications; V2
+        FINAL_ANSWER agent_messages. Idempotent: closing pops the thread, so a
+        second pass over the same request emits no second SpanEndEvent.
+        """
+        self._harvest_bindings(input_messages)
+        for thread_id in completed_thread_ids(input_messages):
+            self._close_thread(thread_id)
+        for author in final_answer_authors(input_messages):
+            self._close_thread(author)
 
     def _harvest_bindings(self, input_messages: list[ChatMessage]) -> None:
         """Bind thread_id → span from spawn_agent tool results (by tool_call_id)."""
