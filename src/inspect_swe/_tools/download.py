@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, get_args
 
 from .._claude_code.agentbinary import claude_code_binary_source
 from .._codex_cli.agentbinary import codex_cli_binary_source
@@ -9,7 +9,7 @@ from .._opencode.agentbinary import opencode_binary_source
 from .._util._async import run_coroutine
 from .._util.agentbinary import (
     AgentBinarySource,
-    _resolve_agent_binary_version,
+    resolve_agent_binary_version,
     download_agent_binary_async,
 )
 from .._util.sandbox import SandboxPlatform
@@ -158,10 +158,15 @@ def resolve_agent_version(
         The concrete version string.
     """
     source = _agent_binary_source(agent)
+    if platform not in get_args(SandboxPlatform):
+        raise ValueError(
+            f"Unsupported platform: {platform} "
+            f"(expected one of {', '.join(get_args(SandboxPlatform))})"
+        )
     if version not in ["stable", "latest"]:
         return version
 
-    resolved = run_coroutine(_resolve_agent_binary_version(source, version, platform))
+    resolved = run_coroutine(resolve_agent_binary_version(source, version, platform))
     return resolved.version
 
 

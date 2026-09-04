@@ -92,6 +92,11 @@ def test_resolve_agent_version_passes_through_pinned_version() -> None:
     assert resolve_agent_version("codex_cli", "0.50.0") == "0.50.0"
 
 
+def test_resolve_agent_version_rejects_unknown_platform() -> None:
+    with pytest.raises(ValueError, match="Unsupported platform"):
+        resolve_agent_version("codex_cli", "0.50.0", "win-x64")  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("version", ["stable", "1.2.3"])
 def test_resolve_agent_version_rejects_unknown_agent(version: str) -> None:
     with pytest.raises(ValueError, match="claude_code, codex_cli, kimi_code"):
