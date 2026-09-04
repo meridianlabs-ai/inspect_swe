@@ -10,6 +10,7 @@ from inspect_swe import (
     cached_agent_binaries,
     download_agent_binary,
     download_wheels_tarball,
+    resolve_agent_version,
 )
 from inspect_swe._util.download import download_file
 
@@ -74,6 +75,17 @@ def test_cached_agent_binaries_lists_opencode(tmp_path: Path) -> None:
         cached = cached_agent_binaries("opencode")
 
     assert [(b.agent, b.version) for b in cached] == [("opencode", "1.14.30")]
+
+
+def test_resolve_agent_version_passes_through_pinned_version() -> None:
+    # an explicit version needs no network: it is returned unchanged
+    assert resolve_agent_version("codex_cli", "0.50.0") == "0.50.0"
+
+
+@pytest.mark.parametrize("version", ["stable", "1.2.3"])
+def test_resolve_agent_version_rejects_unknown_agent(version: str) -> None:
+    with pytest.raises(ValueError, match="claude_code, codex_cli, kimi_code"):
+        resolve_agent_version("gemini_cli", version)  # type: ignore[arg-type]
 
 
 @pytest.mark.slow
