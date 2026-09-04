@@ -1,24 +1,33 @@
 """Claude Code agent via the ``claude-agent-acp`` ACP adapter."""
 
 import logging
+import shlex
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 from inspect_ai.agent import AgentState, SandboxAgentBridge, agent, sandbox_agent_bridge
 from inspect_ai.model import Model, get_model
 from inspect_ai.tool import Skill, install_skills, read_skills
-from inspect_ai.util import ExecRemoteProcess, ExecRemoteStreamingOptions, store
+from inspect_ai.util import (
+    ExecRemoteProcess,
+    ExecRemoteStreamingOptions,
+    SandboxEnvironment,
+    store,
+)
 from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
 from inspect_swe._claude_code.env import DISABLE_AUTO_MEMORY_ENV
 from inspect_swe._util.path import join_path
+from inspect_swe._util.sandbox import expand_sandbox_home, sandbox_exec
 from inspect_swe._util.websearch import web_search_tool_disallowed
 from inspect_swe.acp import ACPAgent
 from inspect_swe.acp.agent import ACPAgentParams
 
 from .agentbinary import ensure_claude_code_acp_setup
+from .transcript import TranscriptSpec, build_transcript, project_slug
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +88,9 @@ class ClaudeCode(ACPAgent):
         sonnet_model: str | Model | None = None,
         haiku_model: str | Model | None = None,
         subagent_model: str | Model | None = None,
+        config_dir: str | None = None,
+        resume_transcript: TranscriptSpec | None = None,
+        resume_message_uuid: str | None = None,
         **kwargs: Unpack[ACPAgentParams],
     ) -> None:
         self._disallowed_tools = list(disallowed_tools or [])
@@ -87,7 +99,34 @@ class ClaudeCode(ACPAgent):
         self._sonnet_model: str | Model | None = sonnet_model
         self._haiku_model: str | Model | None = haiku_model
         self._subagent_model: str | Model | None = subagent_model
+        self._config_dir = config_dir
+        # Resolved in _start_agent (needs the sandbox), read by
+        # _resolve_resume_session to place the transcript.
+        self._resolved_config_dir: str | None = None
+        # A transcript carries its own session id, so combining it with either
+        # of the base class's resume inputs is contradictory.
+        if resume_transcript is not None and (
+            kwargs.get("resume_session_id") is not None
+            or kwargs.get("resume_messages") is not None
+        ):
+            raise ValueError(
+                "`resume_transcript` already carries the session id and the content "
+                "to materialize; pass it alone, not with `resume_session_id` or "
+                "`resume_messages`."
+            )
+        self._resume_transcript = resume_transcript
+        self._resume_message_uuid = resume_message_uuid
+        if resume_transcript is not None:
+            kwargs["resume_session_id"] = resume_transcript.session_id
         super().__init__(**kwargs)
+        if resume_message_uuid is not None and (
+            self.resume_session_id is None or self.resume_messages is not None
+        ):
+            raise ValueError(
+                "`resume_message_uuid` truncates a conversation being resumed, so it "
+                "needs `resume_session_id` or `resume_transcript` alongside it; "
+                "`resume_messages` builds fresh row uuids that the caller cannot target."
+            )
 
     def _build_model_map(self) -> dict[str, str | Model]:
         """Build model map from all configured CC model names."""
@@ -175,6 +214,16 @@ class ClaudeCode(ACPAgent):
                 | self.env
             )
 
+            # Resolve CLAUDE_CONFIG_DIR — where Claude Code keeps its sessions,
+            # and so where a resumed transcript has to be written. When resuming
+            # we pin it explicitly even if the caller didn't override it: we
+            # resolve $HOME through a shell exec, the adapter resolves it in its
+            # own process env, and if those disagree the transcript lands where
+            # session/load never looks (which reads as a silently fresh session).
+            if self._config_dir is not None or self.is_resuming:
+                self._resolved_config_dir = await self._resolve_config_dir(sbox)
+                agent_env["CLAUDE_CONFIG_DIR"] = str(self._resolved_config_dir)
+
             # System prompt via env (the ACP adapter will forward to CC)
             resolved_prompt = self._resolve_system_prompt(state)
             if resolved_prompt:
@@ -205,6 +254,104 @@ class ClaudeCode(ACPAgent):
 
             yield proc, bridge
 
+    async def _resolve_config_dir(self, sbox: SandboxEnvironment) -> str:
+        """Resolve ``CLAUDE_CONFIG_DIR`` in the sandbox (default ``$HOME/.claude``)."""
+        target = (
+            self._config_dir
+            if self._config_dir is not None
+            else self.env.get("CLAUDE_CONFIG_DIR", "$HOME/.claude")
+        )
+        resolved = await expand_sandbox_home(sbox, target, user=self.user, cwd=self.cwd)
+        await sandbox_exec(
+            sbox,
+            cmd=f"mkdir -p {shlex.quote(resolved)}",
+            user=self.user,
+            cwd=self.cwd,
+        )
+        return resolved
+
+    async def _resolve_resume_session(self) -> str:
+        """Write the session to resume into the sandbox and return its id.
+
+        Claude Code resolves a resumed session by reading
+        ``$CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<session-id>.jsonl`` off disk,
+        so the transcript must exist before the base class issues
+        ``session/load``. ``_start_agent`` has already resolved
+        ``CLAUDE_CONFIG_DIR`` by the time this runs.
+
+        ``resume_session_id`` alone re-attaches to a transcript already on disk
+        and writes nothing.
+        """
+        spec = self._resume_transcript
+        if spec is None and self.resume_messages is not None:
+            spec = build_transcript(
+                cwd=self.cwd,
+                items=self.resume_messages,
+                model=get_model(self.model).canonical_name(),
+            )
+        if spec is None:
+            assert self.resume_session_id is not None  # guarded by is_resuming
+            return self.resume_session_id
+
+        if self._resolved_config_dir is None:
+            raise RuntimeError(
+                "ClaudeCode._resolve_resume_session invoked before _start_agent "
+                "resolved CLAUDE_CONFIG_DIR"
+            )
+        if spec.cwd != self.cwd:
+            raise ValueError(
+                f"Resume transcript was built for cwd {spec.cwd!r} but this agent runs "
+                f"in {self.cwd!r}. Claude Code locates a session by its cwd, so the "
+                f"two have to match — rebuild the transcript with cwd={self.cwd!r}."
+            )
+        sbox = sandbox_env(self.sandbox)
+        # The SDK resolves symlinks before slugging the cwd, so place the file
+        # under the resolved spelling rather than spec.relative_path (built from
+        # the logical cwd on the host, which can't see the sandbox's fs).
+        resolved_cwd = await sandbox_exec(
+            sbox, f"realpath {shlex.quote(self.cwd)}", user=self.user, cwd=self.cwd
+        )
+        transcript_path = join_path(
+            self._resolved_config_dir,
+            f"projects/{project_slug(resolved_cwd)}/{spec.session_id}.jsonl",
+        )
+        self._warn_if_visible_to_agent(transcript_path, resolved_cwd)
+        await sbox.write_file(transcript_path, spec.content)
+        logger.info(
+            "Wrote synthetic claude code transcript to %s (session_id=%s)",
+            transcript_path,
+            spec.session_id,
+        )
+        return spec.session_id
+
+    def _warn_if_visible_to_agent(
+        self, transcript_path: str, resolved_cwd: str
+    ) -> None:
+        """Warn when the planted transcript is readable below the agent cwd."""
+        if PurePosixPath(transcript_path).is_relative_to(resolved_cwd):
+            logger.warning(
+                "Synthetic Claude Code transcript will be written to %s, inside "
+                "the agent's working directory (%s), where the agent can read its "
+                "own planted history. Pass config_dir=... (a path outside cwd, "
+                "e.g. '/opt/claude-home') to move CLAUDE_CONFIG_DIR out of the "
+                "agent's working directory.",
+                transcript_path,
+                resolved_cwd,
+            )
+
+    def _load_session_meta(self) -> dict[str, Any]:
+        """Pass ``resumeSessionAt`` through to the Agent SDK when truncating.
+
+        The adapter spreads ``_meta.claudeCode.options`` into the options it
+        hands the Agent SDK, whose ``resumeSessionAt`` resumes a session only up
+        to and including the row with that uuid.
+        """
+        if self._resume_message_uuid is None:
+            return {}
+        return {
+            "claudeCode": {"options": {"resumeSessionAt": self._resume_message_uuid}}
+        }
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -221,6 +368,9 @@ def interactive_claude_code(
     sonnet_model: str | Model | None = None,
     haiku_model: str | Model | None = None,
     subagent_model: str | Model | None = None,
+    config_dir: str | None = None,
+    resume_transcript: TranscriptSpec | None = None,
+    resume_message_uuid: str | None = None,
     # Forwarded to ACPAgent
     **kwargs: Unpack[ACPAgentParams],
 ) -> ACPAgent:
@@ -236,7 +386,20 @@ def interactive_claude_code(
         sonnet_model: Model for sonnet calls.
         haiku_model: Model for haiku / background calls.
         subagent_model: Model for subagents.
-        **kwargs: See :class:`ACPAgentParams` for all base options.
+        config_dir: Override for ``CLAUDE_CONFIG_DIR`` in the sandbox, where
+            Claude Code keeps its sessions (default ``$HOME/.claude``).
+        resume_transcript: Resume from a prior session instead of starting
+            fresh, with full control over the transcript. Build it with
+            :func:`build_transcript` (its ``cwd`` must match this agent's);
+            the transcript is written into the sandbox's ``CLAUDE_CONFIG_DIR``
+            and loaded via ACP ``session/load``. For the common case pass
+            ``resume_messages`` instead and the transcript is built for you.
+        resume_message_uuid: Resume only up to and including the transcript row
+            with this uuid — the branch-at-a-turn case. Combine with
+            ``resume_session_id`` or ``resume_transcript``; uuids come from
+            ``TranscriptSpec.item_uuids`` or ``ParsedTranscript.item_uuids``.
+        **kwargs: See :class:`ACPAgentParams` for all base options, including
+            ``resume_messages`` and ``resume_session_id``.
     """
     return ClaudeCode(
         disallowed_tools=disallowed_tools,
@@ -245,5 +408,8 @@ def interactive_claude_code(
         sonnet_model=sonnet_model,
         haiku_model=haiku_model,
         subagent_model=subagent_model,
+        config_dir=config_dir,
+        resume_transcript=resume_transcript,
+        resume_message_uuid=resume_message_uuid,
         **kwargs,
     )
