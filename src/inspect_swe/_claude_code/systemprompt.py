@@ -44,7 +44,7 @@ import inspect
 import warnings
 from hashlib import sha256
 from logging import getLogger
-from typing import Awaitable, Callable, cast
+from typing import Callable
 
 from inspect_ai._util.logger import warn_once
 from inspect_ai.model import (
@@ -57,23 +57,12 @@ from inspect_ai.model import (
     Model,
     ModelOutput,
 )
+from inspect_ai.model._model import ModelGenerateFilter, StrGenerateFilter
 from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.util import store
+from typing_extensions import TypeIs
 
 logger = getLogger(__name__)
-
-# GenerateFilter is a union of Model-first and (deprecated) str-first
-# callables; the bridge dispatches on the user filter's first-parameter
-# annotation. Our wrapper hides the user filter from that dispatch, so it
-# replicates it: Model-first filters get the Model, str-first get model.name.
-_ModelFilter = Callable[
-    [Model, list[ChatMessage], list[ToolInfo], "ToolChoice | None", GenerateConfig],
-    Awaitable["ModelOutput | GenerateInput | None"],
-]
-_StrFilter = Callable[
-    [str, list[ChatMessage], list[ToolInfo], "ToolChoice | None", GenerateConfig],
-    Awaitable["ModelOutput | GenerateInput | None"],
-]
 
 
 def pin_system_prompt_filter(
@@ -86,8 +75,18 @@ def pin_system_prompt_filter(
     the pinned messages. `session_id` is read per-request so the pin tracks
     a session id restored from a checkpoint.
     """
-    user_is_legacy = user_filter is not None and _is_legacy_str_filter(user_filter)
-    if user_is_legacy:
+    # GenerateFilter is a union of Model-first and (deprecated) str-first
+    # callables; the bridge dispatches on the user filter's first-parameter
+    # annotation. Our wrapper hides the user filter from that dispatch, so it
+    # replicates it: Model-first filters get the Model, str-first model.name.
+    legacy_filter: StrGenerateFilter | None = None
+    model_filter: ModelGenerateFilter | None = None
+    if user_filter is not None:
+        if _is_legacy_str_filter(user_filter):
+            legacy_filter = user_filter
+        else:
+            model_filter = user_filter
+    if legacy_filter is not None:
         # the bridge emits this for str-first filters it dispatches; our
         # wrapper is all it sees, so replicate the migration signal
         warnings.warn(
@@ -116,15 +115,11 @@ def pin_system_prompt_filter(
             # so once so an inert pin is visible in the log
             warn_once(logger, problem)
 
-        if user_filter is None:
-            return None
-        if user_is_legacy:
-            return await cast(_StrFilter, user_filter)(
-                model.name, messages, tools, tool_choice, config
-            )
-        return await cast(_ModelFilter, user_filter)(
-            model, messages, tools, tool_choice, config
-        )
+        if legacy_filter is not None:
+            return await legacy_filter(model.name, messages, tools, tool_choice, config)
+        if model_filter is not None:
+            return await model_filter(model, messages, tools, tool_choice, config)
+        return None
 
     return _filter
 
@@ -149,11 +144,13 @@ def _pin_messages(messages: list[ChatMessage], session_id: str) -> str | None:
     anchor = messages[len(system)] if len(system) < len(messages) else None
     if not system or not isinstance(anchor, ChatMessageUser):
         return None
-    if not all(isinstance(m.content, str) for m in system):
-        # the bridge only produces str-content system messages; rewriting a
-        # list-content message as a str would collapse it
-        return None
-    texts = [cast(str, m.content) for m in system]
+    texts: list[str] = []
+    for message in system:
+        if not isinstance(message.content, str):
+            # the bridge only produces str-content system messages; rewriting
+            # a list-content message as a str would collapse it
+            return None
+        texts.append(message.content)
     # identify the conversation by a digest of the anchor's full content (not
     # `.text`, which drops non-text parts and joins text parts, and not the
     # content itself, which may carry large images into the store). Only the
@@ -187,7 +184,7 @@ def _pin_messages(messages: list[ChatMessage], session_id: str) -> str | None:
     return None
 
 
-def _is_legacy_str_filter(fn: GenerateFilter) -> bool:
+def _is_legacy_str_filter(fn: GenerateFilter) -> TypeIs[StrGenerateFilter]:
     """True when `fn`'s first parameter is annotated `str` (deprecated dispatch)."""
     first = next(iter(inspect.signature(fn).parameters.values()), None)
     return first is not None and first.annotation is str
