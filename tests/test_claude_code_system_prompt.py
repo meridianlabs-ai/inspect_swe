@@ -1,11 +1,20 @@
+import os
+import subprocess
+from pathlib import Path
+
+import anyio
 import pytest
+from inspect_ai.agent import AgentState
 from inspect_ai.model import ChatMessage, ChatMessageSystem, ChatMessageUser
 from inspect_swe import claude_code
+from inspect_swe._claude_code import claude_code as claude_code_module
 from inspect_swe._claude_code.claude_code import (
     _centaur_claude_cmd,
     _system_prompt_args,
     _system_texts,
+    run_claude_code_centaur,
 )
+from inspect_swe._util.centaur import CentaurOptions
 
 
 def test_system_prompt_appends_to_default() -> None:
@@ -85,8 +94,7 @@ def test_centaur_alias_carries_the_task_and_caller_system_prompts() -> None:
     cmd = _centaur_claude_cmd(
         "/usr/bin/claude",
         ["--model", "sonnet"],
-        [ChatMessageSystem(content="Task prompt")],
-        "Agent prompt",
+        ["Task prompt"],
         None,
     )
 
@@ -95,7 +103,7 @@ def test_centaur_alias_carries_the_task_and_caller_system_prompts() -> None:
         "--model",
         "sonnet",
         "--append-system-prompt",
-        "Task prompt\n\nAgent prompt",
+        "Task prompt",
     ]
 
 
@@ -104,7 +112,6 @@ def test_centaur_alias_replaces_the_stock_prompt_when_asked() -> None:
         "/usr/bin/claude",
         ["--model", "sonnet"],
         [],
-        None,
         "Replacement prompt",
     )
 
@@ -118,10 +125,73 @@ def test_centaur_alias_replaces_the_stock_prompt_when_asked() -> None:
 
 
 def test_centaur_alias_adds_no_prompt_flags_when_there_is_no_prompt() -> None:
-    assert _centaur_claude_cmd(
-        "/usr/bin/claude", ["--model", "sonnet"], [], None, None
-    ) == [
+    assert _centaur_claude_cmd("/usr/bin/claude", ["--model", "sonnet"], [], None) == [
         "/usr/bin/claude",
         "--model",
         "sonnet",
+    ]
+
+
+def test_centaur_claude_resume_omits_appended_messages_but_reapplies_replacement_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`claude --resume` must not append prompts already in the session."""
+    captured: dict[str, str] = {}
+
+    async def fake_run_centaur(
+        options: CentaurOptions, instructions: str, bashrc: str, state: AgentState
+    ) -> None:
+        captured["bashrc"] = bashrc
+
+    monkeypatch.setattr(claude_code_module, "run_centaur", fake_run_centaur)
+
+    capture_file = tmp_path / "claude-args"
+    claude_binary = tmp_path / "claude"
+    claude_binary.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CLAUDE_CAPTURE"\n')
+    claude_binary.chmod(0o755)
+
+    anyio.run(
+        lambda: run_claude_code_centaur(
+            options=CentaurOptions(),
+            claude_cmd=_centaur_claude_cmd(
+                str(claude_binary),
+                ["--model", "sonnet"],
+                ["Task prompt"],
+                "Replacement prompt",
+            ),
+            resume_claude_cmd=_centaur_claude_cmd(
+                str(claude_binary),
+                ["--model", "sonnet"],
+                ["Task prompt"],
+                "Replacement prompt",
+                is_resume=True,
+            ),
+            agent_env={},
+            state=AgentState(messages=[]),
+        )
+    )
+
+    bashrc = tmp_path / "bashrc"
+    bashrc.write_text(captured["bashrc"])
+    shell = tmp_path / "run-claude"
+    shell.write_text(
+        f'shopt -s expand_aliases\nsource "{bashrc}"\nclaude --resume session-123\n'
+    )
+    subprocess.run(
+        ["bash", str(shell)],
+        check=True,
+        env={
+            "CLAUDE_CAPTURE": str(capture_file),
+            "HOME": str(tmp_path / "home"),
+            "PATH": os.environ["PATH"],
+        },
+    )
+
+    assert capture_file.read_text().splitlines() == [
+        "--model",
+        "sonnet",
+        "--system-prompt",
+        "Replacement prompt",
+        "--resume",
+        "session-123",
     ]
