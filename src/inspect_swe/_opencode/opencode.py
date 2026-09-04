@@ -48,7 +48,6 @@ def opencode(
     bridged_tools: Sequence[BridgedToolsSpec] | None = None,
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     centaur: bool | CentaurOptions = False,
-    commands_filter: CommandsFilter | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
@@ -61,6 +60,8 @@ def opencode(
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
     debug: bool | None = None,
+    *,
+    commands_filter: CommandsFilter | None = None,
 ) -> Agent:
     """OpenCode agent.
 

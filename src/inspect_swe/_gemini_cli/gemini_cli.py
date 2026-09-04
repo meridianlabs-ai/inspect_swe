@@ -49,7 +49,6 @@ def gemini_cli(
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     web_search: bool = True,
     centaur: bool | CentaurOptions = False,
-    commands_filter: CommandsFilter | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
@@ -62,6 +61,8 @@ def gemini_cli(
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
     debug: bool | None = None,
+    *,
+    commands_filter: CommandsFilter | None = None,
 ) -> Agent:
     """Gemini CLI agent.
 

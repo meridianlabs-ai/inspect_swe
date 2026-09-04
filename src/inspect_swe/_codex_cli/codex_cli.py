@@ -104,7 +104,6 @@ def codex_cli(
     goals: bool = True,
     auto_review: bool | CodexAutoReview = False,
     centaur: bool | CentaurOptions = False,
-    commands_filter: CommandsFilter | None = None,
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
@@ -123,6 +122,8 @@ def codex_cli(
     approval_policy: CodexApprovalPolicy = "never",
     network_access: bool = True,
     approve_static_mcp_tools: bool = False,
+    *,
+    commands_filter: CommandsFilter | None = None,
     **deprecated_args: Unpack[CodexDeprecatedArgs],
 ) -> Agent:
     """Codex CLI.
