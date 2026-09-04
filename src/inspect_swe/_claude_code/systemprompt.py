@@ -44,7 +44,7 @@ import inspect
 import warnings
 from hashlib import sha256
 from logging import getLogger
-from typing import Callable
+from typing import Awaitable, Callable
 
 from inspect_ai._util.logger import warn_once
 from inspect_ai.model import (
@@ -57,12 +57,22 @@ from inspect_ai.model import (
     Model,
     ModelOutput,
 )
-from inspect_ai.model._model import ModelGenerateFilter, StrGenerateFilter
 from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.util import store
 from typing_extensions import TypeIs
 
 logger = getLogger(__name__)
+
+# the two members of inspect_ai's GenerateFilter union (Model-first, and the
+# deprecated str-first form), spelled locally since only the union is public
+_ModelFilter = Callable[
+    [Model, list[ChatMessage], list[ToolInfo], "ToolChoice | None", GenerateConfig],
+    Awaitable["ModelOutput | GenerateInput | None"],
+]
+_StrFilter = Callable[
+    [str, list[ChatMessage], list[ToolInfo], "ToolChoice | None", GenerateConfig],
+    Awaitable["ModelOutput | GenerateInput | None"],
+]
 
 
 def pin_system_prompt_filter(
@@ -79,8 +89,8 @@ def pin_system_prompt_filter(
     # callables; the bridge dispatches on the user filter's first-parameter
     # annotation. Our wrapper hides the user filter from that dispatch, so it
     # replicates it: Model-first filters get the Model, str-first model.name.
-    legacy_filter: StrGenerateFilter | None = None
-    model_filter: ModelGenerateFilter | None = None
+    legacy_filter: _StrFilter | None = None
+    model_filter: _ModelFilter | None = None
     if user_filter is not None:
         if _is_legacy_str_filter(user_filter):
             legacy_filter = user_filter
@@ -184,7 +194,7 @@ def _pin_messages(messages: list[ChatMessage], session_id: str) -> str | None:
     return None
 
 
-def _is_legacy_str_filter(fn: GenerateFilter) -> TypeIs[StrGenerateFilter]:
+def _is_legacy_str_filter(fn: GenerateFilter) -> TypeIs[_StrFilter]:
     """True when `fn`'s first parameter is annotated `str` (deprecated dispatch)."""
     first = next(iter(inspect.signature(fn).parameters.values()), None)
     return first is not None and first.annotation is str
