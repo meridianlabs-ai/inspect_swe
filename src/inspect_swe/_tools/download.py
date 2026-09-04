@@ -101,8 +101,9 @@ def cached_agent_binaries(
 
     def parse_name(name: str) -> tuple[str, str, int, int, int]:
         # artifact names are either "<agent>-<version>-<platform>" (single
-        # binary) or "<agent>-package-<version>-<platform>.tar.gz" (package)
-        match = re.match(r"([a-z_]+(?:-package)?)-(\d+)\.(\d+)\.(\d+)", name)
+        # binary) or "<agent>-package-<version>-<platform>.tar.gz" (package);
+        # the agent prefix may itself be hyphenated ("kimi-code")
+        match = re.match(r"([a-z_-]+?)-(\d+)\.(\d+)\.(\d+)", name)
         if match:
             return (
                 match.group(1),  # agent type
@@ -151,7 +152,7 @@ def resolve_agent_version(
     Args:
         agent: Agent whose version to resolve.
         version: Version to resolve ("stable", "latest", or an explicit version number).
-        platform: Target platform ("linux-x64", "linux-arm64", "linux-x64-musl", or "linux-arm64-musl"). The version does not vary by platform, but resolution consults the platform's release manifest and may fail for a platform the release does not ship.
+        platform: Target platform ("linux-x64", "linux-arm64", "linux-x64-musl", or "linux-arm64-musl"). The version string is the same on every platform, but resolution (and its per-process cache) is per platform and consults that platform's release manifest, which may not exist for every platform.
 
     Returns:
         The concrete version string.

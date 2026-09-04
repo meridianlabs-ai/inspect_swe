@@ -77,6 +77,16 @@ def test_cached_agent_binaries_lists_opencode(tmp_path: Path) -> None:
     assert [(b.agent, b.version) for b in cached] == [("opencode", "1.14.30")]
 
 
+def test_cached_agent_binaries_lists_kimi_code(tmp_path: Path) -> None:
+    from inspect_swe._kimi_code import agentbinary as kimi_agentbinary
+
+    with patch.object(kimi_agentbinary, "package_cache_dir", return_value=tmp_path):
+        (tmp_path / "kimi-code-1.2.3-linux-x64").write_bytes(b"x")
+        cached = cached_agent_binaries("kimi_code")
+
+    assert [(b.agent, b.version) for b in cached] == [("kimi_code", "1.2.3")]
+
+
 def test_resolve_agent_version_passes_through_pinned_version() -> None:
     # an explicit version needs no network: it is returned unchanged
     assert resolve_agent_version("codex_cli", "0.50.0") == "0.50.0"
