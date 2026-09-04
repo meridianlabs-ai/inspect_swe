@@ -116,14 +116,23 @@ def _catalog_models(catalog: dict[str, Any] | None) -> list[dict[str, Any]]:
 def latest_openai_slug(catalog: dict[str, Any] | None) -> str | None:
     """Return the "latest" general coding slug in the catalog.
 
-    "Latest" is the entry with the highest priority (lowest ``priority`` value),
-    excluding ``-mini`` variants when any non-mini entry exists. Returns ``None``
-    if the catalog has no usable entries.
+    "Latest" is the entry with the highest priority (lowest ``priority`` value)
+    among the entries Codex itself would offer: those whose ``visibility`` is not
+    ``"hide"`` (Codex's picker filters hidden entries out and only marks a
+    visible one as its default -- ``ModelPreset::mark_default_by_picker_visibility``
+    in ``codex-rs/models-manager``). Hidden entries are staged rollouts, retired
+    models with an ``upgrade`` pointer, codenames, and the auto-review guardian;
+    a slug the user could not pick in Codex is not "latest" for aliasing
+    purposes either. ``-mini`` variants are likewise excluded when any non-mini
+    entry exists. Each filter falls back to the unfiltered list when it would
+    leave nothing (a catalog with only hidden or only mini entries). Returns
+    ``None`` if the catalog has no usable entries.
     """
     models = _catalog_models(catalog)
     if not models:
         return None
-    preferred = [m for m in models if not m["slug"].endswith("-mini")] or models
+    visible = [m for m in models if m.get("visibility") != "hide"] or models
+    preferred = [m for m in visible if not m["slug"].endswith("-mini")] or visible
     preferred.sort(key=lambda m: m.get("priority", 1_000_000))
     return str(preferred[0]["slug"])
 
