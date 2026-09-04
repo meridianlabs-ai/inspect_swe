@@ -42,6 +42,7 @@ warned once).
 
 import inspect
 import warnings
+from hashlib import sha256
 from logging import getLogger
 from typing import Awaitable, Callable, cast
 
@@ -153,9 +154,13 @@ def _pin_messages(messages: list[ChatMessage], session_id: str) -> str | None:
         # list-content message as a str would collapse it
         return None
     texts = [cast(str, m.content) for m in system]
-    # compare the anchor's full content (not `.text`, which drops non-text
-    # parts and joins text parts) so distinct first messages never collide
-    anchor_key = anchor.model_dump_json(include={"content"})
+    # identify the conversation by a digest of the anchor's full content (not
+    # `.text`, which drops non-text parts and joins text parts, and not the
+    # content itself, which may carry large images into the store). Only the
+    # first user message is serialized, once per request.
+    anchor_key = sha256(
+        anchor.model_dump_json(include={"content"}).encode()
+    ).hexdigest()
 
     key = f"claude_code_pinned_system_prompt:{session_id}"
     stored = store().get(key, None)
