@@ -112,8 +112,9 @@ def resolve_claude_code_acp_models(
     Claude Code shows unrecognized model ids verbatim, so the synthetic
     name is cosmetic.
 
-    Must be called at execution time -- ``get_model()`` resolves against the
-    active eval/sample.
+    Calls ``get_model()``, so it needs an active eval/sample; `ACPAgent`
+    already requires one at construction, which is where `_build_model_map`
+    invokes this.
     """
     served = get_model(model)
     presented = served.canonical_name()

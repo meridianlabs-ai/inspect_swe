@@ -288,3 +288,22 @@ async def test_codex_acp_filter_stamps_unknown_for_unrecognized_slug() -> None:
     assert await _invoke(wrapped, "some-unrecognized-slug") == AgentBridgeContext(
         "unknown"
     )
+
+
+async def test_gemini_filter_presented_utility_slug_is_root_without_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Presenting a model that is also a utility slug is documented under-attribution.
+
+    `gemini-3-pro-preview` is both a legitimate `gemini_model` and the slug
+    `loop-detection-double-check` resolves to. Requests under it classify
+    "root", the other utility slugs still classify "utility", and building
+    the filter must not log a collision warning on every sample.
+    """
+    with caplog.at_level(logging.WARNING, logger="inspect_swe._util.agentcontext"):
+        wrapped = build_gemini_filter(None, "gemini-3-pro-preview")
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert await _invoke(wrapped, "gemini-3-pro-preview") == AgentBridgeContext("root")
+    assert await _invoke(wrapped, "gemini-3-flash-preview") == AgentBridgeContext(
+        "utility"
+    )

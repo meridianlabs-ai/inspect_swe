@@ -54,8 +54,12 @@ def build_codex_acp_filter(
     so there's no spawn_agent thread tracking or compaction-marker detection
     available here -- just the guardian slug's structural check from
     `CodexConsumer.classify` (see `_codex_cli/_events/consumer.py`).
-    Unattributed subagent traffic (codex-acp's own delegation, if any) has
-    no known slug to key on and falls through to "unknown".
+    There is NO sub-agent detection in this variant: Codex's `spawn_agent`
+    takes no per-agent model, so a spawned sub-agent requests the same
+    ``default_model`` as the root thread and classifies "root". A filter
+    gated on `is_root_agent()` therefore also steers codex-acp sub-agents;
+    the native `codex_cli` tracks spawned threads from its event stream,
+    which codex-acp does not expose.
     """
     return classify_filter(
         filter, slug_map_classifier({default_model}, {GUARDIAN_MODEL_SLUG: "utility"})

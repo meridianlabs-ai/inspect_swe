@@ -156,7 +156,7 @@ def resolve_claude_code_models(
         subagent_name = presented
         subagent_route: Model = served_model
     else:
-        subagent_route = get_model(subagent_model)
+        subagent_route = served(subagent_model)
         subagent_name = subagent_route.name
 
     role_names = {presented, opus, sonnet, haiku}

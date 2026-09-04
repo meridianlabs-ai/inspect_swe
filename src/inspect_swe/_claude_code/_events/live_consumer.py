@@ -287,10 +287,16 @@ class LiveConsumer(ModelEventSink):
     def _attribute(self, input_messages: list[ChatMessage]) -> str | None:
         """Resolve the span_id for an incoming bridge call.
 
-        Delegates the substring match to `_match_pending_prompt` (shared with
-        `classify`) and resolves the matched sub-agent's span, falling back
-        to the outer span whenever there's no unambiguous match.
+        A request under a main-thread slug is the root thread's regardless
+        of prompt content (same reasoning as `classify` step 3), so it lands
+        on the outer span. Otherwise delegates the substring match to
+        `_match_pending_prompt` (shared with `classify`) and resolves the
+        matched sub-agent's span, falling back to the outer span whenever
+        there's no unambiguous match.
         """
+        request = current_bridge_request()
+        if self._is_root_slug(request.model if request is not None else None):
+            return self.outer_span_id
         tool_use_id = self._match_pending_prompt(input_messages)
         if tool_use_id is not None:
             agent = self._open_agents.get(tool_use_id)
@@ -354,13 +360,19 @@ class LiveConsumer(ModelEventSink):
         Truth table (checked in this order):
 
         1. slug == subagent slug → "subagent" (structural)
-        2. slug == small-fast slug != presented slug → "utility" (structural)
-        3. pending-subagent prompt match → "subagent" (inferred; covers
-           slug-bypass drift, and is checked ahead of the presented-slug
-           check below since it's a stronger, content-derived signal)
-        4. slug in {presented, opus, sonnet} → "root" (structural: per P1,
-           subagent traffic never carries any main-thread slug, so such a
-           call with sub-agents open is still main-thread, not ambiguous)
+        2. slug == small-fast slug, and that slug is not also a main-thread
+           slug → "utility" (structural)
+        3. slug in {presented, opus, sonnet} → "root" (structural: per P1,
+           subagent traffic never carries a main-thread slug, so such a
+           call with sub-agents open is still main-thread, not ambiguous).
+           Checked BEFORE the prompt match below: the root thread's first
+           user message is its task prompt, and a Task prompt is often a
+           verbatim excerpt of it, so a content match alone would stamp the
+           root thread "subagent" for the whole delegation window -- the
+           harmful direction for an `is_root_agent()` gate.
+        4. pending-subagent prompt match → "subagent" (inferred; only
+           reached for an unrecognized or missing slug, i.e. it covers
+           slug-bypass drift rather than overriding a structural answer)
         5. otherwise (unrecognized slug, or no request info available) →
            "root" if no sub-agents are currently pending, else "unknown"
            (honest admission: an unmatched call could be main-thread or an
@@ -372,13 +384,26 @@ class LiveConsumer(ModelEventSink):
 
         if slug == self._models.subagent:
             return AgentBridgeContext("subagent")
-        if slug == self._models.haiku and self._models.haiku != self._models.presented:
+        if slug == self._models.haiku and not self._is_root_slug(slug):
             return AgentBridgeContext("utility")
+        if self._is_root_slug(slug):
+            return AgentBridgeContext("root")
         if self._match_pending_prompt(messages) is not None:
             return AgentBridgeContext("subagent")
-        if slug in (self._models.presented, self._models.opus, self._models.sonnet):
-            return AgentBridgeContext("root")
         return AgentBridgeContext("root" if not self._pending_subagents else "unknown")
+
+    def _is_root_slug(self, slug: str | None) -> bool:
+        """Whether `slug` is one Claude Code uses for main-thread traffic.
+
+        `presented` plus the opus/sonnet tiers (env.py exports them as
+        ANTHROPIC_DEFAULT_OPUS_MODEL / ANTHROPIC_DEFAULT_SONNET_MODEL); per
+        probe P1, sub-agent traffic never carries any of them.
+        """
+        return slug is not None and slug in (
+            self._models.presented,
+            self._models.opus,
+            self._models.sonnet,
+        )
 
     def _check_subagent_slug_drift(self, slug: str | None) -> None:
         """Warn (once, per consumer instance) if reality contradicts probe P1.

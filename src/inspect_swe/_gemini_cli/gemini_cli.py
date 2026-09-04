@@ -48,11 +48,20 @@ def build_gemini_filter(
 
     ``gemini_model`` is the exact ``--model`` value passed to the CLI (the
     presented/primary slug); anything gemini-cli's internal utility calls
-    resolve to (see ``models.py``) is classified "utility" instead.
+    resolve to (see ``models.py``) is classified "utility" instead. When the
+    presented model is itself one of those utility slugs (e.g.
+    ``gemini-3-pro-preview``), utility calls under it are indistinguishable
+    from main-thread traffic and classify "root" -- the under-attribution
+    ``models.py`` documents, not a misconfiguration, so it is dropped from
+    the kind map here rather than left for `slug_map_classifier` to warn
+    about on every sample.
     """
-    return classify_filter(
-        filter, slug_map_classifier({gemini_model}, GEMINI_UTILITY_MODEL_KINDS)
-    )
+    kind_by_slug = {
+        slug: kind
+        for slug, kind in GEMINI_UTILITY_MODEL_KINDS.items()
+        if slug != gemini_model
+    }
+    return classify_filter(filter, slug_map_classifier({gemini_model}, kind_by_slug))
 
 
 @agent

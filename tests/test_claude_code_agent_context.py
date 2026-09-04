@@ -341,3 +341,54 @@ def test_subagent_slug_drift_requires_a_first_span(
 
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert len(warnings) == 0
+
+
+# ---------------------------------------------------------------------------
+# structural slug beats the prompt heuristic
+# ---------------------------------------------------------------------------
+
+
+def test_classify_root_slug_wins_over_prompt_match(monkeypatch: Any) -> None:
+    """A root request whose task prompt contains the delegated prompt is root.
+
+    The root thread's first user message is its own task prompt, and a Task
+    prompt is often a verbatim excerpt of it. Under the presented slug that
+    request is structurally main-thread (P1), so the content match must not
+    stamp it "subagent" -- that would switch an `is_root_agent()` gate off
+    for the root thread for the whole delegation window.
+    """
+    consumer = _consumer(monkeypatch)
+    root_task = f"{_TASK_PROMPT} Then update the CHANGELOG."
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+    with bridged_request_scope(consumer._models.presented):
+        result = _classify(consumer, text=root_task)
+    assert result == AgentBridgeContext("root")
+
+
+def test_attribute_root_slug_lands_on_outer_span(monkeypatch: Any) -> None:
+    """Span attribution agrees: a root-slug request is never put on a sub-agent span."""
+    consumer = _consumer(monkeypatch)
+    root_task = f"{_TASK_PROMPT} Then update the CHANGELOG."
+    _spawn_pending(consumer, "call_1", _TASK_PROMPT)
+    with bridged_request_scope(consumer._models.presented):
+        span_id = consumer._attribute([ChatMessageUser(content=root_task)])
+    assert span_id == consumer.outer_span_id
+    # ...while the sub-agent's own request (no root slug) still resolves its span
+    with bridged_request_scope(consumer._models.subagent):
+        span_id = consumer._attribute([ChatMessageUser(content=_TASK_PROMPT)])
+    assert span_id == "agent-call_1"
+
+
+def test_classify_small_fast_slug_equal_to_a_tier_is_root(monkeypatch: Any) -> None:
+    """haiku_model resolving to the same name as opus_model is a main-thread slug.
+
+    Mirrors the ACP variant: small-fast traffic sharing ANY main-thread slug
+    is indistinguishable from it and must not be stamped "utility".
+    """
+    consumer = _consumer(
+        monkeypatch, opus_model="mockllm/shared", haiku_model="mockllm/shared"
+    )
+    assert consumer._models.haiku == consumer._models.opus
+    with bridged_request_scope(consumer._models.haiku):
+        result = _classify(consumer)
+    assert result == AgentBridgeContext("root")

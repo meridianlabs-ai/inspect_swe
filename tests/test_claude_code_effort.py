@@ -49,3 +49,16 @@ def test_effort_does_not_override_caller_supplied_model_aliases() -> None:
     )
     # the caller-supplied alias is a plain model spec string, untouched by effort
     assert models.aliases["model"] == "mockllm/override"
+
+
+def test_effort_applies_to_an_explicit_subagent_model() -> None:
+    """The subagent role gets `effort` like every other role it resolves."""
+    models = resolve_claude_code_models(
+        "mockllm/model",
+        None,
+        effort="high",
+        subagent_model="mockllm/sub",
+    )
+    subagent_model = models.aliases[models.subagent]
+    assert isinstance(subagent_model, Model)
+    assert subagent_model.config.reasoning_effort == "high"
