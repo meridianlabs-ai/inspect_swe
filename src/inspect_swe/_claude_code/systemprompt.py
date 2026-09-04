@@ -36,8 +36,8 @@ via ``GenerateInput`` so the pinned text is what the bridge records into
 ``bridge.state.messages`` (and so the eval log), not just what reaches the
 model. Anything unexpected -- no leading system messages, no user message
 following them, a different system message count, non-text system content,
-or an exception -- fails open to today's behavior (warned once per agent
-instance).
+or an exception -- fails open to today's behavior (each distinct problem
+warned once).
 """
 
 import inspect
@@ -45,6 +45,7 @@ import warnings
 from logging import getLogger
 from typing import Awaitable, Callable, cast
 
+from inspect_ai._util.logger import warn_once
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageSystem,
@@ -96,7 +97,6 @@ def pin_system_prompt_filter(
             # the claude_code() body, and inspect's @agent wrapper sit between
             stacklevel=4,
         )
-    warned = False
 
     async def _filter(
         model: Model,
@@ -105,17 +105,15 @@ def pin_system_prompt_filter(
         tool_choice: ToolChoice | None,
         config: GenerateConfig,
     ) -> ModelOutput | GenerateInput | None:
-        nonlocal warned
         try:
             problem = _pin_messages(messages, session_id())
         except Exception as ex:
             problem = f"error pinning claude code system prompt: {ex}"
-        if problem is not None and not warned:
+        if problem is not None:
             # never let pinning break generation -- fall back to the
             # unpinned request (cache misses, but correct output), and say
             # so once so an inert pin is visible in the log
-            warned = True
-            logger.warning(problem)
+            warn_once(logger, problem)
 
         if user_filter is None:
             return None
@@ -173,9 +171,9 @@ def _pin_messages(messages: list[ChatMessage], session_id: str) -> str | None:
         or not all(isinstance(t, str) for t in pinned)
     ):
         return (
-            "claude code system prompt not pinned: the conversation matches "
-            f"but its system prompt layout changed ({len(system)} leading "
-            "system messages vs "
+            f"claude code system prompt not pinned for session {session_id}: "
+            "the conversation matches but its system prompt layout changed "
+            f"({len(system)} leading system messages vs "
             f"{len(pinned) if isinstance(pinned, list) else '?'} recorded)"
         )
     for message, text in zip(system, pinned, strict=True):
