@@ -9,8 +9,8 @@ from .._opencode.agentbinary import opencode_binary_source
 from .._util._async import run_coroutine
 from .._util.agentbinary import (
     AgentBinarySource,
-    resolve_agent_binary_version,
     download_agent_binary_async,
+    resolve_agent_binary_version,
 )
 from .._util.sandbox import SandboxPlatform
 
