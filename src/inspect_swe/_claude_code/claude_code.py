@@ -13,7 +13,13 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, StopReason
+from inspect_ai.model import (
+    ChatMessage,
+    ChatMessageSystem,
+    GenerateFilter,
+    Model,
+    StopReason,
+)
 from inspect_ai.scorer import score
 from inspect_ai.tool import (
     MCPServerConfig,
@@ -450,9 +456,22 @@ def claude_code(
 
             # centaur mode uses human_cli with custom instructions and bash rc
             if centaur:
+                centaur_system_texts = _system_texts(state.messages, system_prompt)
                 await run_claude_code_centaur(
                     options=centaur,
-                    claude_cmd=[claude_binary] + cmd,
+                    claude_cmd=_centaur_claude_cmd(
+                        claude_binary,
+                        cmd,
+                        centaur_system_texts,
+                        replace_system_prompt,
+                    ),
+                    resume_claude_cmd=_centaur_claude_cmd(
+                        claude_binary,
+                        cmd,
+                        centaur_system_texts,
+                        replace_system_prompt,
+                        is_resume=True,
+                    ),
                     agent_env=agent_env,
                     state=state,
                 )
@@ -477,15 +496,8 @@ def claude_code(
                         # resume. Appended messages are not re-sent because the bridge
                         # round-trips them into state.messages and appending them again
                         # would duplicate the effective prompt.
-                        system_texts = [
-                            m.text
-                            for m in state.messages
-                            if isinstance(m, ChatMessageSystem)
-                        ]
-                        if system_prompt is not None:
-                            system_texts.append(system_prompt)
                         system_args = _system_prompt_args(
-                            system_texts,
+                            _system_texts(state.messages, system_prompt),
                             replace_system_prompt,
                             is_resume=is_resume,
                         )
@@ -648,6 +660,44 @@ def claude_code(
     return agent_with(execute, name=name, description=description)
 
 
+def _system_texts(
+    messages: Sequence[ChatMessage], system_prompt: str | None
+) -> list[str]:
+    """System texts to append: the task's own, then the caller's.
+
+    Shared by the centaur and unattended launches so the operator's `claude`
+    alias and the unattended agent cannot disagree about the effective prompt.
+    """
+    texts = [m.text for m in messages if isinstance(m, ChatMessageSystem)]
+    if system_prompt is not None:
+        texts.append(system_prompt)
+    return texts
+
+
+def _centaur_claude_cmd(
+    claude_binary: str,
+    cmd: Sequence[str],
+    system_texts: Sequence[str],
+    replace_system_prompt: str | None,
+    *,
+    is_resume: bool = False,
+) -> list[str]:
+    """Build a Claude invocation for the operator's Centaur shell.
+
+    A resumed Claude session already contains appended task and caller prompts,
+    so it retains a replacement prompt but omits appended system prompt args.
+    """
+    return (
+        [claude_binary]
+        + list(cmd)
+        + _system_prompt_args(
+            system_texts,
+            replace_system_prompt,
+            is_resume=is_resume,
+        )
+    )
+
+
 def _system_prompt_args(
     system_texts: Sequence[str],
     replace_system_prompt: str | None,
@@ -750,6 +800,7 @@ def resolve_mcp_server_allowed_tools(
 async def run_claude_code_centaur(
     options: CentaurOptions,
     claude_cmd: list[str],
+    resume_claude_cmd: list[str],
     agent_env: dict[str, str],
     state: AgentState,
 ) -> None:
@@ -763,10 +814,30 @@ async def run_claude_code_centaur(
         'export PATH="$HOME/.local/bin:$PATH"',
         f'ln -sf {claude_cmd[0]} "$HOME/.local/bin/claude"',
     ]
-    alias_cmd = shlex.join(claude_cmd)
-    alias_cmd = "alias claude='" + alias_cmd.replace("'", "'\\''") + "'"
+    if claude_cmd == resume_claude_cmd:
+        alias_cmd = shlex.join(claude_cmd)
+        claude_cmd_def = "alias claude='" + alias_cmd.replace("'", "'\\''") + "'"
+    else:
+        fresh_cmd = shlex.join(claude_cmd)
+        resume_cmd = shlex.join(resume_claude_cmd)
+        claude_cmd_def = dedent(f"""
+            claude() {{
+              for arg in "$@"; do
+                case "$arg" in
+                  --resume|--resume=*)
+                    command {resume_cmd} "$@"
+                    return
+                    ;;
+                  --)
+                    break
+                    ;;
+                esac
+              done
+              command {fresh_cmd} "$@"
+            }}
+        """).strip()
     bashrc = "\n".join(
-        agent_env_vars + path_config + ["", claude_config, "", alias_cmd]
+        agent_env_vars + path_config + ["", claude_config, "", claude_cmd_def]
     )
 
     # run the human cli
