@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.71](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.70...0.2.71) (2026-09-05)
+
+
+### Features
+
+* **bridge:** add transparent_proxy to codex_cli and claude_code ([#100](https://github.com/meridianlabs-ai/inspect_swe/issues/100)) ([f08dcca](https://github.com/meridianlabs-ai/inspect_swe/commit/f08dccac5d49d93b9e448fc0bd822cc289faae76))
+* claude_code reasoning effort option and bridged-MCP allowlist opt-out ([#119](https://github.com/meridianlabs-ai/inspect_swe/issues/119)) ([7eb75e8](https://github.com/meridianlabs-ai/inspect_swe/commit/7eb75e8cc423c419dd7b75d447189daa14e1e5de))
+* **codex_cli:** attach input images via codex exec --image ([#140](https://github.com/meridianlabs-ai/inspect_swe/issues/140)) ([e5ffedf](https://github.com/meridianlabs-ai/inspect_swe/commit/e5ffedfb26533252aafa096fc7bd68bbda56917b))
+* **codex_cli:** configure sandbox and approval policies ([#88](https://github.com/meridianlabs-ai/inspect_swe/issues/88)) ([a038ece](https://github.com/meridianlabs-ai/inspect_swe/commit/a038ece49a6f296fb52625aa3b875efa61a3572b))
+* resolve "stable"/"latest" to the agent version that will be installed ([#147](https://github.com/meridianlabs-ai/inspect_swe/issues/147)) ([9a6e92b](https://github.com/meridianlabs-ai/inspect_swe/commit/9a6e92b614fc224b157d7a7bed8df175ea13f7d4))
+
+
+### Bug Fixes
+
+* acquire the OpenCode binary host-side, not via in-sandbox npm ([#133](https://github.com/meridianlabs-ai/inspect_swe/issues/133)) ([e195f6a](https://github.com/meridianlabs-ai/inspect_swe/commit/e195f6aee5a3468c1a12500ab7b1e680397381d5))
+* **claude_code:** disable auto-memory so sandboxed agents use task-provided memory tools ([#145](https://github.com/meridianlabs-ai/inspect_swe/issues/145)) ([8730154](https://github.com/meridianlabs-ai/inspect_swe/commit/8730154c58998fd1ddc963b586c538e6a805da57))
+* **claude_code:** tolerate current install.sh DOWNLOAD_BASE_URL syntax ([#89](https://github.com/meridianlabs-ai/inspect_swe/issues/89)) ([654f8b4](https://github.com/meridianlabs-ai/inspect_swe/commit/654f8b44c70d8c912393915d0b4b91a98d9e5801))
+* **codex_cli:** "latest" catalog slug ignores hidden models, matching Codex's picker ([#148](https://github.com/meridianlabs-ai/inspect_swe/issues/148)) ([1201ea3](https://github.com/meridianlabs-ai/inspect_swe/commit/1201ea308cdba555f16a865747798cd5ad72d4c2))
+* default Claude Code env to disable SDK retry watchdogs behind the bridge ([#99](https://github.com/meridianlabs-ai/inspect_swe/issues/99)) ([0ccc009](https://github.com/meridianlabs-ai/inspect_swe/commit/0ccc009694cc6f75023bf1dffffcf119885a5eef))
+* gate agent launch on bridged MCP readiness and block Claude Code's first model call on MCP connect ([#106](https://github.com/meridianlabs-ai/inspect_swe/issues/106)) ([cd03b95](https://github.com/meridianlabs-ai/inspect_swe/commit/cd03b957dc7ecdd0fddbef0c2794e078f043b1e5))
+* make bridged MCP readiness timeouts configurable ([#123](https://github.com/meridianlabs-ai/inspect_swe/issues/123)) ([d63ca56](https://github.com/meridianlabs-ai/inspect_swe/commit/d63ca5699c72033272e35a655731424d5f4c2e5d))
+* resolve npm agent versions once per process to avoid GitHub rate limits ([#127](https://github.com/meridianlabs-ai/inspect_swe/issues/127)) ([b4a988b](https://github.com/meridianlabs-ai/inspect_swe/commit/b4a988b5823bf515879018fef3ee7db24b5509d9))
+* retry agent binary downloads and raise the http timeout ([#130](https://github.com/meridianlabs-ai/inspect_swe/issues/130)) ([cdf1010](https://github.com/meridianlabs-ai/inspect_swe/commit/cdf10108e271bcf5f00fd9668c1ab519458c7cdd))
+* warn when unsupported input content is dropped from the agent ([e5ffedf](https://github.com/meridianlabs-ai/inspect_swe/commit/e5ffedfb26533252aafa096fc7bd68bbda56917b))
+
 ## [0.2.70](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.69...0.2.70) (2026-08-09)
 
 
