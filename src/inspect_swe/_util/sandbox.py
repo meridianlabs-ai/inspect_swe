@@ -94,6 +94,29 @@ async def resolve_agent_cwd(
     return home_dir
 
 
+async def expand_sandbox_home(
+    sandbox: SandboxEnvironment,
+    path: str,
+    user: str | None = None,
+    cwd: str | None = None,
+) -> str:
+    """Expand a leading ``~``/``$HOME`` without evaluating shell syntax."""
+    prefixes = ("~", "$HOME", "${HOME}")
+    prefix = next(
+        (candidate for candidate in prefixes if path in (candidate, f"{candidate}/")),
+        None,
+    )
+    if prefix is None:
+        prefix = next(
+            (candidate for candidate in prefixes if path.startswith(f"{candidate}/")),
+            None,
+        )
+    if prefix is None:
+        return path
+    home = await sandbox_exec(sandbox, 'printf "%s" "$HOME"', user=user, cwd=cwd)
+    return f"{home}{path[len(prefix) :]}"
+
+
 async def sandbox_exec(
     sandbox: SandboxEnvironment,
     cmd: str,
