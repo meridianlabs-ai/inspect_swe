@@ -151,23 +151,17 @@ def resolve_agent_version(
 
     Args:
         agent: Agent whose version to resolve.
-        version: Version to resolve ("stable", "latest", or an explicit version number). "auto" and "sandbox" refer to whatever is installed in the sandbox and cannot be resolved on the host, so they raise `ValueError`.
+        version: Version to resolve. "stable" and "latest" are resolved against the agent's release manifest. Any other value is returned unchanged: an explicit version number is already concrete, and "auto" / "sandbox" refer to whatever is installed in the sandbox and cannot be resolved on the host, so they pass through for the agent function to handle at install time.
         platform: Target platform ("linux-x64", "linux-arm64", "linux-x64-musl", or "linux-arm64-musl"). The version string is the same on every platform, but resolution (and its per-process cache) is per platform and consults that platform's release manifest, which may not exist for every platform.
 
     Returns:
-        The concrete version string.
+        The concrete version string for "stable" / "latest"; otherwise `version` unchanged.
     """
     source = _agent_binary_source(agent)
     if platform not in get_args(SandboxPlatform):
         raise ValueError(
             f"Unsupported platform: {platform} "
             f"(expected one of {', '.join(get_args(SandboxPlatform))})"
-        )
-    if version in ["auto", "sandbox"]:
-        raise ValueError(
-            f"Cannot resolve version '{version}' on the host: it refers to the "
-            f"{source.agent} installed in the sandbox. Pass 'stable', 'latest', "
-            "or an explicit version number."
         )
     if version not in ["stable", "latest"]:
         return version

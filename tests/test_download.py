@@ -362,8 +362,7 @@ def test_ensure_pip_available_raises_on_failure() -> None:
 
 
 @pytest.mark.parametrize("version", ["auto", "sandbox"])
-def test_resolve_agent_version_rejects_sandbox_aliases(version: str) -> None:
-    with pytest.raises(
-        ValueError, match="cannot be resolved on the host|Cannot resolve"
-    ):
-        resolve_agent_version("claude_code", version)
+def test_resolve_agent_version_passes_sandbox_aliases_through(version: str) -> None:
+    # "auto" / "sandbox" cannot be resolved on the host; they are returned unchanged
+    # so a task that pins with resolve_agent_version() behaves as if it had not.
+    assert resolve_agent_version("claude_code", version) == version
