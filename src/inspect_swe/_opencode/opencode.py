@@ -1,5 +1,6 @@
 import json
 import shlex
+import uuid
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
@@ -183,15 +184,19 @@ def opencode(
 
             opencode_config_dir = f"{sandbox_home}/.config/opencode"
             opencode_config_path = f"{opencode_config_dir}/opencode.json"
-            await sbox.exec(["mkdir", "-p", opencode_config_dir], user=user)
+            # per-invocation prompt file (see opencode_stdin_prompt_cmd); unique so
+            # concurrent opencode agents sharing a sandbox can't clobber each other
+            prompt_dir = f"{sandbox_home}/.inspect_swe/opencode"
+            prompt_path = f"{prompt_dir}/prompt-{uuid.uuid4().hex}.txt"
+            await sbox.exec(["mkdir", "-p", opencode_config_dir, prompt_dir], user=user)
             if resolved_skills is not None:
                 await install_skills(
                     resolved_skills, sbox, user, f"{opencode_config_dir}/skills"
                 )
             await sbox.write_file(opencode_config_path, json.dumps(opencode_config))
 
-            # build system prompt (opencode run takes a single positional message
-            # and has no separate --system-prompt flag, so we prepend)
+            # build system prompt (opencode run takes a single message and has no
+            # separate --system-prompt flag, so we prepend)
             system_messages = [
                 m.text for m in state.messages if isinstance(m, ChatMessageSystem)
             ]
@@ -277,8 +282,9 @@ def opencode(
                     if has_assistant_response or attempt_count > 0:
                         agent_cmd.append("--continue")
 
-                    # add prompt as positional argument at the end
-                    agent_cmd.append(agent_prompt)
+                    # deliver the prompt on stdin rather than as a positional
+                    # argument (see opencode_stdin_prompt_cmd)
+                    await sbox.write_file(prompt_path, agent_prompt)
 
                     # Retry-loop gate: fires ONLY when this loop is actually
                     # retrying (attempt_count > 0), so the cold-start
@@ -294,8 +300,7 @@ def opencode(
                         )
 
                     result = await sbox.exec_remote(
-                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
-                        + agent_cmd,
+                        cmd=opencode_stdin_prompt_cmd(agent_cmd, prompt_path),
                         options=ExecRemoteAwaitableOptions(
                             cwd=agent_cwd,
                             env=agent_env,
@@ -343,6 +348,29 @@ def opencode(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+def opencode_stdin_prompt_cmd(opencode_cmd: list[str], prompt_path: str) -> list[str]:
+    r"""Command that runs `opencode_cmd` with the prompt at `prompt_path` on stdin.
+
+    `opencode run` quote-wraps a positional message that contains spaces and
+    backslash-escapes the double quotes inside it (`packages/opencode/src/cli/
+    cmd/run.ts`), so a prompt passed as an argument reaches the model — and
+    crosses the agent bridge — as `"..."` with `\"` inside rather than as the
+    task input. The bridge anchors main-thread tracking on the task input, and
+    for prompts containing `"` that mismatch let opencode's session-title
+    generation call displace the agent's answer as the sample output. Piped
+    stdin is used verbatim (`resolveRunInput`), and also sidesteps argv length
+    limits for long prompts.
+    """
+    return [
+        "bash",
+        "-c",
+        'exec 0<"$1"; shift; exec "$@"',
+        "bash",
+        prompt_path,
+        *opencode_cmd,
+    ]
 
 
 def resolve_mcp_servers(
