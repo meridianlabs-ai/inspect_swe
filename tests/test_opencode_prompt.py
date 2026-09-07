@@ -41,6 +41,8 @@ def test_prompt_reaches_the_agent_verbatim_on_stdin(tmp_path: Path) -> None:
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
     assert result.stdout == PROMPT
+    # the file is unlinked once it is held open on stdin
+    assert not prompt_file.exists()
 
 
 def test_stdin_redirection_tolerates_spaces_in_the_prompt_path(

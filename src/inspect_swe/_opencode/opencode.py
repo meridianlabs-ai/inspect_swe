@@ -184,11 +184,7 @@ def opencode(
 
             opencode_config_dir = f"{sandbox_home}/.config/opencode"
             opencode_config_path = f"{opencode_config_dir}/opencode.json"
-            # per-invocation prompt file (see opencode_stdin_prompt_cmd); unique so
-            # concurrent opencode agents sharing a sandbox can't clobber each other
-            prompt_dir = f"{sandbox_home}/.inspect_swe/opencode"
-            prompt_path = f"{prompt_dir}/prompt-{uuid.uuid4().hex}.txt"
-            await sbox.exec(["mkdir", "-p", opencode_config_dir, prompt_dir], user=user)
+            await sbox.exec(["mkdir", "-p", opencode_config_dir], user=user)
             if resolved_skills is not None:
                 await install_skills(
                     resolved_skills, sbox, user, f"{opencode_config_dir}/skills"
@@ -270,6 +266,13 @@ def opencode(
                     state=state,
                 )
             else:
+                # per-invocation prompt file (see opencode_stdin_prompt_cmd); unique
+                # so concurrent opencode agents sharing a sandbox can't clobber each
+                # other, in a user-owned dir so the wrapper can unlink it
+                prompt_dir = f"{sandbox_home}/.inspect_swe/opencode"
+                prompt_path = f"{prompt_dir}/prompt-{uuid.uuid4().hex}.txt"
+                await sbox.exec(["mkdir", "-p", prompt_dir], user=user)
+
                 debug_output: list[str] = []
                 agent_prompt = prompt
                 attempt_count = 0
@@ -361,12 +364,13 @@ def opencode_stdin_prompt_cmd(opencode_cmd: list[str], prompt_path: str) -> list
     for prompts containing `"` that mismatch let opencode's session-title
     generation call displace the agent's answer as the sample output. Piped
     stdin is used verbatim (`resolveRunInput`), and also sidesteps argv length
-    limits for long prompts.
+    limits for long prompts. The file is unlinked once the redirect holds it
+    open, so nothing is left behind in the sandbox.
     """
     return [
         "bash",
         "-c",
-        'exec 0<"$1"; shift; exec "$@"',
+        'exec 0<"$1"; rm -f -- "$1"; shift; exec "$@"',
         "bash",
         prompt_path,
         *opencode_cmd,
