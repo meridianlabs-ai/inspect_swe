@@ -91,6 +91,12 @@ def make_filter(user_filter: Any = None) -> Any:
     return pin_system_prompt_filter(lambda: session, user_filter)
 
 
+def pinned_texts(result: Any) -> list[str]:
+    """System texts of the GenerateInput a pinning call returns."""
+    assert isinstance(result, GenerateInput)
+    return system_texts(result.input)
+
+
 async def test_first_request_passes_through() -> None:
     wrapped = make_filter()
     messages = request(SYSTEM_FIRST)
@@ -98,23 +104,48 @@ async def test_first_request_passes_through() -> None:
     assert system_texts(messages) == SYSTEM_FIRST
 
 
-async def test_resumed_request_gets_first_system_prompt_in_place() -> None:
+async def test_resumed_request_gets_first_system_prompt() -> None:
     wrapped = make_filter()
     assert await wrapped(*filter_args(request(SYSTEM_FIRST))) is None
 
     messages = request(SYSTEM_RESUMED, turns=1)
-    originals = [m for m in messages if isinstance(m, ChatMessageSystem)]
-    # rewritten in place and None returned, so the pinned text reaches the
-    # model, the ModelEvent, and bridge.state.messages alike
-    assert await wrapped(*filter_args(messages)) is None
-    assert [m for m in messages if isinstance(m, ChatMessageSystem)] == originals
-    assert system_texts(messages) == SYSTEM_FIRST
-    # non-system messages untouched
-    assert [m.text for m in messages if not isinstance(m, ChatMessageSystem)] == [
-        ROOT_PROMPT,
-        "reply 0",
-        "follow-up 0",
-    ]
+    result = await wrapped(*filter_args(messages))
+    # returned as a GenerateInput: the pinned prompt reaches the model and
+    # the ModelEvent; the request's own messages are never mutated
+    assert pinned_texts(result) == SYSTEM_FIRST
+    assert system_texts(messages) == SYSTEM_RESUMED
+    # only the changed system messages are copied (keeping their ids);
+    # everything else is passed through as the same objects
+    assert isinstance(result, GenerateInput)
+    assert result.input[0] is messages[0]  # billing header, unchanged
+    assert result.input[1] is not messages[1] and result.input[1].id == messages[1].id
+    others = [m for m in messages if not isinstance(m, ChatMessageSystem)]
+    assert all(
+        a is b
+        for a, b in zip(
+            [m for m in result.input if not isinstance(m, ChatMessageSystem)],
+            others,
+            strict=True,
+        )
+    )
+    assert [m.text for m in others] == [ROOT_PROMPT, "reply 0", "follow-up 0"]
+
+
+async def test_pinned_generate_input_passes_through_tools_and_config() -> None:
+    from inspect_ai.tool import ToolFunction
+
+    wrapped = make_filter()
+    assert await wrapped(*filter_args(request(SYSTEM_FIRST))) is None
+    tools = [ToolInfo(name="bash", description="run a command")]
+    tool_choice = ToolFunction(name="bash")
+    config = GenerateConfig(temperature=0.123)
+    result = await wrapped(
+        get_model("mockllm/model"), request(SYSTEM_RESUMED), tools, tool_choice, config
+    )
+    assert isinstance(result, GenerateInput)
+    assert result.tools is tools
+    assert result.tool_choice is tool_choice
+    assert result.config is config
 
 
 async def test_unchanged_system_prompt_left_alone() -> None:
@@ -129,8 +160,9 @@ async def test_flattened_system_message_is_pinned() -> None:
     wrapped = make_filter()
     assert await wrapped(*filter_args(flattened(SYSTEM_FIRST))) is None
     messages = flattened(SYSTEM_RESUMED)
-    assert await wrapped(*filter_args(messages)) is None
-    assert system_texts(messages) == system_texts(flattened(SYSTEM_FIRST))
+    result = await wrapped(*filter_args(messages))
+    assert pinned_texts(result) == system_texts(flattened(SYSTEM_FIRST))
+    assert system_texts(messages) == system_texts(flattened(SYSTEM_RESUMED))
 
 
 async def test_other_conversations_are_not_touched() -> None:
@@ -143,8 +175,7 @@ async def test_other_conversations_are_not_touched() -> None:
     assert system_texts(messages) == SUBAGENT_SYSTEM
     # and it does not disturb the root baseline
     root = request(SYSTEM_RESUMED, turns=1)
-    assert await wrapped(*filter_args(root)) is None
-    assert system_texts(root) == SYSTEM_FIRST
+    assert pinned_texts(await wrapped(*filter_args(root))) == SYSTEM_FIRST
 
 
 async def test_system_message_count_mismatch_fails_open() -> None:
@@ -162,8 +193,7 @@ async def test_request_without_user_message_is_ignored() -> None:
     assert await wrapped(*filter_args(orphan)) is None
     assert await wrapped(*filter_args(request(SYSTEM_FIRST))) is None
     messages = request(SYSTEM_RESUMED, turns=1)
-    assert await wrapped(*filter_args(messages)) is None
-    assert system_texts(messages) == SYSTEM_FIRST
+    assert pinned_texts(await wrapped(*filter_args(messages))) == SYSTEM_FIRST
     # ...nor gets pinned
     assert await wrapped(*filter_args(orphan)) is None
     assert system_texts(orphan) == SYSTEM_RESUMED
@@ -175,8 +205,7 @@ async def test_request_without_system_messages_is_ignored() -> None:
     assert await wrapped(*filter_args(bare)) is None
     assert await wrapped(*filter_args(request(SYSTEM_FIRST))) is None
     messages = request(SYSTEM_RESUMED, turns=1)
-    assert await wrapped(*filter_args(messages)) is None
-    assert system_texts(messages) == SYSTEM_FIRST
+    assert pinned_texts(await wrapped(*filter_args(messages))) == SYSTEM_FIRST
 
 
 async def test_list_content_system_message_fails_open() -> None:
@@ -222,8 +251,8 @@ async def test_pinning_is_idempotent_on_retries() -> None:
     assert await wrapped(*filter_args(request(SYSTEM_FIRST))) is None
     messages = request(SYSTEM_RESUMED, turns=1)
     for _ in range(3):
-        assert await wrapped(*filter_args(messages)) is None
-    assert system_texts(messages) == SYSTEM_FIRST
+        assert pinned_texts(await wrapped(*filter_args(messages))) == SYSTEM_FIRST
+    assert system_texts(messages) == SYSTEM_RESUMED
 
 
 async def test_pinning_error_fails_open(caplog: pytest.LogCaptureFixture) -> None:
@@ -255,8 +284,11 @@ async def test_user_filter_sees_pinned_messages() -> None:
 
     wrapped = make_filter(user_filter)
     assert await wrapped(*filter_args(request(SYSTEM_FIRST))) is None
-    assert await wrapped(*filter_args(request(SYSTEM_RESUMED, turns=1))) is None
+    # the user filter sees the pinned messages; when it returns None the
+    # pinned request is what gets generated
+    result = await wrapped(*filter_args(request(SYSTEM_RESUMED, turns=1)))
     assert seen["texts"] == SYSTEM_FIRST
+    assert pinned_texts(result) == SYSTEM_FIRST
 
 
 async def test_user_filter_result_is_returned() -> None:
@@ -276,6 +308,23 @@ async def test_user_filter_result_is_returned() -> None:
     result = await wrapped(*filter_args(request(SYSTEM_RESUMED, turns=1)))
     assert isinstance(result, GenerateInput)
     assert len(result.input) == 1
+
+
+async def test_user_filter_model_output_is_returned_on_pinned_turn() -> None:
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        return ModelOutput.from_content(model="mockllm/model", content="canned")
+
+    wrapped = make_filter(user_filter)
+    await wrapped(*filter_args(request(SYSTEM_FIRST)))
+    result = await wrapped(*filter_args(request(SYSTEM_RESUMED, turns=1)))
+    assert isinstance(result, ModelOutput)
+    assert result.completion == "canned"
 
 
 async def test_legacy_str_filter_gets_model_name_and_deprecation_warning() -> None:
@@ -299,8 +348,9 @@ async def test_legacy_str_filter_gets_model_name_and_deprecation_warning() -> No
     model, *rest = filter_args(request(SYSTEM_FIRST))
     await wrapped(model, *rest)
     assert seen["model"] == model.name
-    assert await wrapped(*filter_args(request(SYSTEM_RESUMED, turns=1))) is None
+    result = await wrapped(*filter_args(request(SYSTEM_RESUMED, turns=1)))
     assert seen["texts"] == SYSTEM_FIRST
+    assert pinned_texts(result) == SYSTEM_FIRST
 
 
 def test_claude_code_wraps_filter_at_construction() -> None:
@@ -349,11 +399,12 @@ async def test_only_leading_system_messages_are_pinned() -> None:
         ChatMessageSystem(content="<total_tokens>14976190 tokens left</total_tokens>"),
     ]
     messages = request(SYSTEM_RESUMED) + history
-    assert await wrapped(*filter_args(messages)) is None
-    assert system_texts(messages)[: len(SYSTEM_RESUMED)] == SYSTEM_FIRST
-    assert system_texts(messages)[len(SYSTEM_RESUMED) :] == [
+    texts = pinned_texts(await wrapped(*filter_args(messages)))
+    assert texts[: len(SYSTEM_RESUMED)] == SYSTEM_FIRST
+    assert texts[len(SYSTEM_RESUMED) :] == [
         m.text for m in history if isinstance(m, ChatMessageSystem)
     ]
+    assert system_texts(messages)[: len(SYSTEM_RESUMED)] == SYSTEM_RESUMED
 
 
 async def test_leading_run_followed_by_assistant_is_ignored() -> None:

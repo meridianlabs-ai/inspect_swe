@@ -23,21 +23,25 @@ conversation prefix on every resumed turn.
 semantics of a single interactive process: the session's first bridged
 request records its system prompt (the leading system messages) together
 with its first user message; a later request whose first user message has identical
-content belongs to the same conversation and gets the recorded system prompt
-written back in place. Conversations with a different first user message
+content belongs to the same conversation and is generated with the recorded
+system prompt substituted into a copy of the request. Conversations with a different first user message
 -- Task-tool sub-agents, utility calls -- carry their own system prompts
 and pass through untouched. Nothing in Claude Code's system prompt is
 parsed; the first user message (system reminders + task prompt) is the
 only anchor, and Claude Code replays it verbatim from its session file.
 
 Recorded state lives in the sample store keyed by session id, so it
-survives a checkpoint restore. Messages are rewritten in place rather than
-via ``GenerateInput`` so the pinned text is what the bridge records into
-``bridge.state.messages`` (and so the eval log), not just what reaches the
-model. Anything unexpected -- no leading system messages, no user message
-following them, a different system message count, non-text system content,
-or an exception -- fails open to today's behavior (each distinct problem
-warned once).
+survives a checkpoint restore. The pinned request is returned as a
+``GenerateInput`` (the incoming messages are never mutated), so the pinned
+prompt is what reaches the model and is recorded in each ``ModelEvent``.
+The bridge tracks agent state from the scaffold's own request, so
+``bridge.state.messages`` (and the eval log's ``sample.messages``) keep the
+system prompt as Claude Code sent it on that launch -- the model events are
+the record of what the model saw, exactly as with inspect-side compaction.
+Anything unexpected -- no leading system messages, no user message following
+them, a different system message count, non-text system content, or an
+exception -- fails open to today's behavior (each distinct problem warned
+once).
 """
 
 import inspect
@@ -80,10 +84,11 @@ def pin_system_prompt_filter(
 ) -> GenerateFilter:
     """Bridge filter that pins the root conversation's system prompt.
 
-    Rewrites qualifying requests in place (see module docstring) before
-    delegating to `user_filter`, so the user's filter and the model both see
-    the pinned messages. `session_id` is read per-request so the pin tracks
-    a session id restored from a checkpoint.
+    Pins qualifying requests (see module docstring) before delegating to
+    `user_filter`, so the user's filter and the model both see the pinned
+    messages; when the user filter returns None (or there is none) the pinned
+    request is returned as a `GenerateInput`. `session_id` is read per-request
+    so the pin tracks a session id restored from a checkpoint.
     """
     # GenerateFilter is a union of Model-first and (deprecated) str-first
     # callables; the bridge dispatches on the user filter's first-parameter
@@ -115,8 +120,9 @@ def pin_system_prompt_filter(
         tool_choice: ToolChoice | None,
         config: GenerateConfig,
     ) -> ModelOutput | GenerateInput | None:
+        pinned: list[ChatMessage] | None = None
         try:
-            problem = _pin_messages(messages, session_id())
+            pinned, problem = _pin_messages(messages, session_id())
         except Exception as ex:
             problem = f"error pinning claude code system prompt: {ex}"
         if problem is not None:
@@ -124,21 +130,34 @@ def pin_system_prompt_filter(
             # unpinned request (cache misses, but correct output), and say
             # so once so an inert pin is visible in the log
             warn_once(logger, problem)
+        if pinned is not None:
+            messages = pinned
 
+        result: ModelOutput | GenerateInput | None = None
         if legacy_filter is not None:
-            return await legacy_filter(model.name, messages, tools, tool_choice, config)
-        if model_filter is not None:
-            return await model_filter(model, messages, tools, tool_choice, config)
-        return None
+            result = await legacy_filter(
+                model.name, messages, tools, tool_choice, config
+            )
+        elif model_filter is not None:
+            result = await model_filter(model, messages, tools, tool_choice, config)
+        if result is None and pinned is not None:
+            return GenerateInput(
+                input=pinned, tools=tools, tool_choice=tool_choice, config=config
+            )
+        return result
 
     return _filter
 
 
-def _pin_messages(messages: list[ChatMessage], session_id: str) -> str | None:
-    """Record the session's system prompt on first sight; write it back after.
+def _pin_messages(
+    messages: list[ChatMessage], session_id: str
+) -> tuple[list[ChatMessage] | None, str | None]:
+    """Record the session's system prompt on first sight; apply it after.
 
-    Returns a warning when the request is recognizably the pinned
-    conversation but cannot be pinned (the pin has gone inert), else None.
+    Returns (pinned, warning): `pinned` is a copy of `messages` with the
+    recorded system prompt substituted, or None when there is nothing to
+    change; `warning` is set when the request is recognizably the pinned
+    conversation but cannot be pinned (the pin has gone inert).
     """
     # the system prompt is the leading run of system messages (the request's
     # `system` blocks, hoisted by the bridge). Claude Code also injects
@@ -153,13 +172,13 @@ def _pin_messages(messages: list[ChatMessage], session_id: str) -> str | None:
         system.append(message)
     anchor = messages[len(system)] if len(system) < len(messages) else None
     if not system or not isinstance(anchor, ChatMessageUser):
-        return None
+        return None, None
     texts: list[str] = []
     for message in system:
         if not isinstance(message.content, str):
-            # the bridge only produces str-content system messages; rewriting
-            # a list-content message as a str would collapse it
-            return None
+            # the bridge only produces str-content system messages; a str
+            # substitute for a list-content message would collapse it
+            return None, None
         texts.append(message.content)
     # identify the conversation by a digest of the anchor's full content (not
     # `.text`, which drops non-text parts and joins text parts, and not the
@@ -173,25 +192,30 @@ def _pin_messages(messages: list[ChatMessage], session_id: str) -> str | None:
     stored = store().get(key, None)
     if stored is None:
         store().set(key, {"anchor": anchor_key, "system": texts})
-        return None
+        return None, None
     if not isinstance(stored, dict) or stored.get("anchor") != anchor_key:
-        return None
+        return None, None
     pinned = stored.get("system")
     if (
         not isinstance(pinned, list)
         or len(pinned) != len(system)
         or not all(isinstance(t, str) for t in pinned)
     ):
-        return (
+        return None, (
             f"claude code system prompt not pinned for session {session_id}: "
             "the conversation matches but its system prompt layout changed "
             f"({len(system)} leading system messages vs "
             f"{len(pinned) if isinstance(pinned, list) else '?'} recorded)"
         )
-    for message, text in zip(system, pinned, strict=True):
+    if texts == pinned:
+        return None, None
+    # substitute copies for the changed system messages; everything else is
+    # passed through as the same objects
+    result: list[ChatMessage] = list(messages)
+    for index, (message, text) in enumerate(zip(system, pinned, strict=True)):
         if message.content != text:
-            message.content = text
-    return None
+            result[index] = message.model_copy(update={"content": text})
+    return result, None
 
 
 def _is_legacy_str_filter(fn: GenerateFilter) -> TypeIs[_StrFilter]:
