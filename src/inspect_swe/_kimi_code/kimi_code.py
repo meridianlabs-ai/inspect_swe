@@ -1,14 +1,14 @@
-import inspect
 import json
 import re
 import shlex
 from pathlib import Path
 from textwrap import dedent
-from typing import Awaitable, Callable, Literal, Sequence, cast
+from typing import Literal, Sequence
 
 from inspect_ai.agent import (
     Agent,
     AgentAttempts,
+    AgentBridgeContext,
     AgentState,
     BridgedToolsSpec,
     agent,
@@ -46,6 +46,7 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
+from inspect_swe._util.agentcontext import ModelFilter, classify_filter
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
@@ -58,25 +59,6 @@ from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.sandbox import resolve_agent_cwd
 from .._util.toml import _format_value
 from .agentbinary import kimi_code_binary_source
-
-# GenerateFilter is a union of Model-first and (deprecated) str-first callables;
-# the bridge dispatches on the user filter's first-parameter annotation. Our
-# combined_filter wrapper hides the user filter from that dispatch, so we
-# replicate it: Model-first filters get the Model, str-first get model.name.
-_ModelFilter = Callable[
-    [Model, list[ChatMessage], list[ToolInfo], "ToolChoice | None", GenerateConfig],
-    Awaitable["ModelOutput | GenerateInput | None"],
-]
-_StrFilter = Callable[
-    [str, list[ChatMessage], list[ToolInfo], "ToolChoice | None", GenerateConfig],
-    Awaitable["ModelOutput | GenerateInput | None"],
-]
-
-
-def _is_legacy_str_filter(fn: GenerateFilter) -> bool:
-    first = next(iter(inspect.signature(fn).parameters.values()), None)
-    return first is not None and first.annotation is str
-
 
 # Kimi Code's CLI appends escalating <system-reminder> nags to tool results when
 # it detects an identical tool call repeated N times in a row (tool-dedup: tier 1
@@ -102,6 +84,85 @@ _REPEAT_REMINDER_RE = re.compile(
     + r").*?</system-reminder>",
     re.DOTALL,
 )
+
+# Kimi Code's own context-compaction summarizer runs through the same bridge
+# as ordinary turns: when the conversation nears max_context_size (which this
+# agent always configures), kimi appends a plain ChatMessageUser carrying a
+# fixed compaction instruction to the (still-full) projected history and sends
+# that as the request -- there is no separate system prompt, model name, or
+# port to key off of. Left unclassified, the request would fall to root,
+# falsely attributing kimi's own housekeeping call to the agent's own thread;
+# inspect_ai's AgentBridgeContext names this exact case "utility" (machinery
+# serving the main agent's plumbing -- compaction is its canonical example,
+# per inspect_ai/agent/_bridge/context.py).
+#
+# The preamble is the instruction's first sentence and the marker the phrase
+# that follows it, from
+# packages/agent-core/src/agent/compaction/compaction-instruction.md (rendered
+# via buildInstruction/createUserMessage in
+# packages/agent-core/src/agent/compaction/full.ts:compactionRound, with
+# nothing prepended). Verified byte-identical across @moonshot-ai/kimi-code
+# tags 0.23.4 through 0.34.0 (latest at check time, 2026-08-08; re-checked
+# against upstream main 2026-09-03). This module has no hard version pin --
+# "auto"/"stable"/"latest" all resolve against Kimi's own latest.json at
+# runtime -- so there is no single version to key a per-era marker set to the
+# way _REPEAT_REMINDER_MARKERS does; unlike that nag wording, this instruction
+# has not changed release to release, so one preamble + marker suffices.
+# tests/test_kimi_setup.py::test_live_compaction_instruction_marker checks
+# upstream main for drift.
+_COMPACTION_INSTRUCTION_PREAMBLE = "You are about to run out of context."
+_COMPACTION_INSTRUCTION_MARKER = "Write a first-person handoff note"
+
+
+def kimi_classifier(
+    model: Model, messages: list[ChatMessage], tools: list[ToolInfo]
+) -> AgentBridgeContext:
+    """Classify kimi's auto-compaction summarizer requests as utility, root otherwise.
+
+    Positive match requires the last message to be a ChatMessageUser that
+    *opens* with the preamble sentence and carries the marker — tool output
+    echoing kimi's own docs/source can't flip a main-thread request to utility
+    (the harmful failure direction; a missed match merely reverts to root,
+    which no gate acts on differently), and neither can a task prompt that
+    merely mentions the marker phrase mid-text (which would otherwise make
+    every turn ending in that prompt "utility"). Whitespace is collapsed
+    before matching so upstream re-wrapping the template doesn't break it.
+    """
+    if messages and isinstance(messages[-1], ChatMessageUser):
+        text = " ".join(messages[-1].text.split())
+        if (
+            text.startswith(_COMPACTION_INSTRUCTION_PREAMBLE)
+            and _COMPACTION_INSTRUCTION_MARKER in text
+        ):
+            return AgentBridgeContext("utility")
+    return AgentBridgeContext("root")
+
+
+def build_kimi_filter(filter: GenerateFilter | None) -> ModelFilter:
+    """Kimi bridge filter: message cleanup + agent-context classification."""
+    delegate = classify_filter(filter, kimi_classifier)
+
+    async def kimi_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        # in place (not via GenerateInput) so the rewritten ids persist in
+        # both the recorded ModelEvent input and bridge.state.messages
+        _dedupe_tool_call_ids(messages)
+        cleaned, changed = _strip_repeat_reminders(messages)
+        result = await delegate(model, cleaned, tools, tool_choice, config)
+        if result is not None:
+            return result
+        if changed:
+            return GenerateInput(
+                input=cleaned, tools=tools, tool_choice=tool_choice, config=config
+            )
+        return None
+
+    return kimi_filter
 
 
 @agent
@@ -189,7 +250,6 @@ def kimi_code(
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
     resolved_disallowed = list(disallowed_tools or [])
-    filter_is_legacy = filter is not None and _is_legacy_str_filter(filter)
 
     async def execute(state: AgentState) -> AgentState:
         resolved_model = _resolve_model(model=model, model_aliases=model_aliases)
@@ -202,39 +262,11 @@ def kimi_code(
         port = store().get(MODEL_PORT, 3100) + 1
         store().set(MODEL_PORT, port)
 
-        async def combined_filter(
-            model: Model,
-            messages: list[ChatMessage],
-            tools: list[ToolInfo],
-            tool_choice: ToolChoice | None,
-            config: GenerateConfig,
-        ) -> ModelOutput | GenerateInput | None:
-            # in place (not via GenerateInput) so the rewritten ids persist in
-            # both the recorded ModelEvent input and bridge.state.messages
-            _dedupe_tool_call_ids(messages)
-            cleaned, changed = _strip_repeat_reminders(messages)
-            if filter is not None:
-                if filter_is_legacy:
-                    result = await cast(_StrFilter, filter)(
-                        model.name, cleaned, tools, tool_choice, config
-                    )
-                else:
-                    result = await cast(_ModelFilter, filter)(
-                        model, cleaned, tools, tool_choice, config
-                    )
-                if result is not None:
-                    return result
-            if changed:
-                return GenerateInput(
-                    input=cleaned, tools=tools, tool_choice=tool_choice, config=config
-                )
-            return None
-
         async with sandbox_agent_bridge(
             state,
             model=bridge_model,
             model_aliases=model_aliases,
-            filter=combined_filter,
+            filter=build_kimi_filter(filter),
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,

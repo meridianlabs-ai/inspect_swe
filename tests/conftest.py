@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import os
 import subprocess
 from typing import Any, Callable, List, Literal, TypeVar, cast
@@ -7,6 +8,23 @@ from unittest.mock import MagicMock
 import pytest
 from inspect_ai import eval
 from inspect_ai.log import EvalLog
+
+
+# ---------------------------------------------------------------------------
+# Automatically mark every async test function with @pytest.mark.anyio so
+# pytest can run it (anyio is registered but requires the marker in strict
+# mode). A hookwrapper is required because its setup phase executes *before*
+# the anyio plugin's tryfirst pytest_pycollect_makeitem hook, which is where
+# anyio looks for the marker. A conftest-level ``pytestmark`` would be too
+# late (applied after collection). Mirrors inspect_ai's tests/conftest.py.
+# ---------------------------------------------------------------------------
+@pytest.hookimpl(hookwrapper=True)
+def pytest_pycollect_makeitem(
+    collector: pytest.Module | pytest.Class, name: str, obj: object
+) -> Any:
+    if inspect.iscoroutinefunction(obj) or inspect.isasyncgenfunction(obj):
+        pytest.mark.anyio(obj)
+    yield
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

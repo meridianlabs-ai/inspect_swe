@@ -1,0 +1,62 @@
+---
+title: "Sub-Agent Context"
+subtitle: Confining generate filters to the top-level agent
+---
+
+## Overview
+
+The `filter` option accepted by every agent in this package runs on *every* bridged model request the agent makes — not just the top-level agent's own turns. When an agent delegates work to a sub-agent (a Claude Code Task agent, a Codex spawned agent, an OpenCode Task-tool agent, ...), the sub-agent's model requests flow through the same bridge and the same filter. The same is true of internal machinery calls an agent makes on its own behalf (context compaction, approval review, title generation). A filter that injects steering, counts turns, or ends an episode early is almost always written with the top-level agent's own thread in mind, so it should actively confine itself to that thread rather than firing for delegated or internal traffic too.
+
+Every agent in `inspect_swe` classifies each bridged request into `inspect_ai`'s ambient `AgentBridgeContext` before your filter runs, so you can gate on it directly.
+
+## Confining a Filter to the Root Agent
+
+Use `is_root_agent()` at the top of your filter to skip anything that isn't the top-level agent's own thread:
+
+```python
+from inspect_swe import is_root_agent
+
+async def my_filter(model, messages, tools, tool_choice, config):
+    if not is_root_agent():
+        return None   # never steer a sub-agent or utility thread
+    ...
+```
+
+`is_root_agent()` is a permissive gate: it returns `False` only for requests attributed to a `"subagent"` or `"utility"` thread, and `True` for everything else (including `"root"`, `"unknown"`, and code running outside a bridged request at all) — so steering logic keeps working on agents or requests that can't be attributed, rather than silently disabling itself.
+
+## Agent Context
+
+`current_agent_bridge_context()` reads the classification attached to the request currently in flight. Its `kind` is one of:
+
+| Kind | Meaning |
+|------------------------------------|------------------------------------|
+| `"root"` | The top-level agent's own thread — the request you're almost always trying to steer. |
+| `"subagent"` | A delegated agent with its own goal and conversation thread (e.g. a Claude Code Task agent or a Codex spawned agent). |
+| `"utility"` | Machinery calls serving the main agent's own plumbing — compaction, approval review, title generation, or another internal helper model — with no delegated goal or thread of its own. |
+| `"unknown"` | The classifier couldn't attribute this request to any of the above. |
+
+: {tbl-colwidths=\[20,80\]}
+
+`AgentBridgeContext` and `current_agent_bridge_context` are re-exported from `inspect_swe` for convenience, along with `is_root_agent` and the narrower `is_sub_agent` (`True` only for `"subagent"` — note it's `False` for `"utility"`, so prefer `is_root_agent()` for steering gates).
+
+## Per-Agent Guarantees
+
+How each agent tells `"subagent"` and `"utility"` traffic apart from `"root"` differs by backend, reflecting what each CLI actually exposes on the wire:
+
+| Agent | Sub-agent detection | Utility detection | Notes |
+|-------|---------------------|--------------------|-------|
+| `claude_code` | Structural: the requested model carries the synthetic subagent slug (`CLAUDE_CODE_SUBAGENT_MODEL`), including custom agents defined via front-matter `model:`. Falls back to a pending-subagent prompt-substring match if the slug signal is missing. | Only when `haiku_model` is configured distinct from the presented model — otherwise the small-fast slug is indistinguishable from main-thread traffic. | A drift canary logs a warning (once) if Claude Code ever stops honoring the subagent slug this classification depends on. |
+| `codex_cli` | Structural: tracks spawned sub-agent threads via `spawn_agent` tool calls and `agent_message` recipient routing. | The guardian (`auto_review`) model slug, plus Codex's own local-compaction request marker. | An unattributed call while sub-agents are open resolves to `"unknown"` rather than guessing "root". |
+| `opencode` | Structural, but only for the three built-in (`general`/`explore`/`scout`) sub-agents — routed to a distinct sentinel model via injected per-agent config — and only when `opencode_model` is an `anthropic/` model, the one provider whose sentinel id is live-verified against OpenCode's model catalog (a catalog-rejected sentinel hard-fails the sub-agent's Task call, so unverified providers skip injection, log once, and classify everything `"root"`). Custom Task-tool agents aren't covered: one left at the default model inherits the primary slug and classifies `"root"` (it would be steered — the harmful direction); one configured with its own `model:` gets a slug in neither map and classifies `"unknown"`. | Best-effort only: `small_model` is set to a small-model sentinel, but OpenCode (1.18.15) was observed to ignore it for title generation, so utility traffic classifies `"root"` in practice. Per-agent `title`/`summary`/`compaction` overrides are deliberately not injected (unverified, and on an install where those names aren't reserved they would create spawnable agents that misclassify as `"utility"`). | Sentinel selection avoids colliding with the caller's own primary model slug; a collision (e.g. `opencode_model="anthropic/claude-haiku-4-5-20251001"`) omits the sub-agent override so that traffic degrades to `"root"` rather than falling back to an unverified id. |
+| `gemini_cli` | None — gemini-cli's own subagent feature has no reserved model slug, so sub-agent traffic isn't distinguishable from root by slug alone. | Known internal utility calls (loop detection, web search/fetch, edit correction, next-speaker checks, some compaction variants) resolve to a small, known set of concrete model slugs. | Two compaction aliases resolve to the same slug as the presented model, so those specific calls are honestly under-attributed as `"root"`, not misclassified. Likewise when `gemini_model` is a primary alias (`auto`, `pro`, `flash`, ...): every concrete slug it can resolve to is treated as root, so utility calls landing on the same slug are under-attributed rather than the root thread being mislabeled `"utility"`. |
+| `kimi_code` | None — Kimi Code has no delegation feature. | Its own auto-compaction summarizer is matched by a fixed marker string carried in the request. | Everything else classifies `"root"`. |
+| `mini_swe_agent` / `antigravity` | None — neither agent supports delegation. | None. | Every bridged request classifies `"root"`. |
+| ACP variants (`interactive_claude_code`, `interactive_codex_cli`, `interactive_gemini_cli`) | Slug-only, via the same static root/subagent/utility slug maps their native counterparts use for their structural signal. | Slug-only, same maps. | No JSONL/event-stream consumer is available in the ACP path to drive the richer, stateful attribution the native agents layer on top — so ACP classification is exactly as good as the underlying agent's slug signal alone (e.g. `gemini_cli`'s "no subagent slug" gap, `codex_cli`'s guardian slug). In particular `interactive_codex_cli` has no sub-agent detection at all: Codex's `spawn_agent` takes no per-agent model, so its sub-agents request the primary slug and classify `"root"` (they would be steered). `interactive_claude_code` presents sub-agents under a synthetic `<presented>-subagent` slug (aliased to the primary model when `subagent_model` is unset, exactly as the native `claude_code` does), so Task sub-agent traffic is attributable out of the box; utility detection still requires a `haiku_model` distinct from the presented/opus/sonnet models, since an unset one shares the primary slug. |
+
+## A Note on "unknown"
+
+`"unknown"` is a first-class, honest answer, not a bug: some classifiers fall back to it deliberately rather than guess at an attribution they can't support — an unattributed `codex_cli` call while sub-agents are open, or a `claude_code` call whose requested slug matches no known role while sub-agents are pending (it could be the main thread or an unattributed sub-agent call; the classifier can't tell, so it says so rather than guessing `"root"`). `is_root_agent()` treats `"unknown"` — and having no context at all — as root, precisely so that turn-counting and early-stop logic keeps working on agents (or agent versions) that a classifier can't fully attribute, rather than silently going dark. Consumers that need a positive confirmation that a request belongs to the top-level agent, rather than merely "not known to belong to a sub-agent or utility thread", should check `current_agent_bridge_context()` for `kind == "root"` explicitly instead of relying on `is_root_agent()`.
+
+## See Also
+
+See the Inspect AI [Agent Context](https://inspect.aisi.org.uk/agent-bridge.html#agent-context) documentation for the underlying `AgentBridgeContext` API, how bridge implementers set it, and how it composes with in-process (non-`inspect_swe`) scaffolds.

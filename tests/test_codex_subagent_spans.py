@@ -20,12 +20,16 @@ Fixture shapes below are copied from a real gpt-5.6-sol eval log
 (codex 0.147.0, 2026-08-07).
 """
 
+import json
 from typing import Any
 
+import pytest
 from inspect_ai._util.content import ContentText
+from inspect_ai.agent import AgentBridgeContext
+from inspect_ai.agent._bridge.context import bridged_request_scope
 from inspect_ai.event import SpanBeginEvent, SpanEndEvent
 from inspect_ai.event._model import ModelEvent
-from inspect_ai.model import GenerateConfig, ModelOutput
+from inspect_ai.model import GenerateConfig, ModelOutput, get_model
 from inspect_ai.model._chat_message import (
     ChatMessage,
     ChatMessageAssistant,
@@ -36,6 +40,7 @@ from inspect_ai.tool import ToolCall
 from inspect_swe._codex_cli._events import consumer as consumer_module
 from inspect_swe._codex_cli._events.consumer import CodexConsumer
 from inspect_swe._codex_cli._events.detection import (
+    COMPACTION_MARKER,
     agent_message_recipients,
     final_answer_authors,
     find_spawned_agents,
@@ -345,3 +350,297 @@ def test_consumer_v1_prompt_attribution_unchanged(monkeypatch: Any) -> None:
     child_call = _model_event([ChatMessageUser(content=prompt)])
     consumer.on_pending(child_call)
     assert child_call.span_id == span
+
+
+# ---------------------------------------------------------------------------
+# 7. classify(): filter-time agent context from the same attribution maps
+# ---------------------------------------------------------------------------
+
+
+def test_classify_root_before_any_spawn(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+
+    result = consumer.classify(
+        get_model("mockllm/model"), [ChatMessageUser(content="plain task")], []
+    )
+
+    assert result == AgentBridgeContext("root")
+
+
+def test_classify_bound_subagent(monkeypatch: Any) -> None:
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v2_spawn_call("call_pr", "write_primes")],
+    )
+    consumer.on_complete(parent)
+    pr_span = stub.span_begins()[0].id
+
+    # first call from the sub-agent's thread: binds by recipient basename
+    # ("write_primes") the same way on_pending's _attribute() would.
+    child_messages: list[ChatMessage] = [
+        _agent_message_user("/root", "/root/write_primes")
+    ]
+    result = consumer.classify(get_model("mockllm/model"), child_messages, [])
+
+    assert result == AgentBridgeContext("subagent")
+    # the binding stuck (not a one-off side effect of classify alone) —
+    # a later call resolves to the same span without re-deriving it.
+    assert consumer._attribute(child_messages) == pr_span
+
+
+def test_classify_compaction_as_utility(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+
+    messages: list[ChatMessage] = [
+        ChatMessageUser(
+            content=f"{COMPACTION_MARKER}\nSummarize the conversation so far."
+        )
+    ]
+    result = consumer.classify(get_model("mockllm/model"), messages, [])
+
+    assert result == AgentBridgeContext("utility")
+
+
+def test_classify_guardian_slug_as_utility(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+
+    messages: list[ChatMessage] = [ChatMessageUser(content="review this diff")]
+    with bridged_request_scope("codex-auto-review"):
+        result = consumer.classify(get_model("mockllm/model"), messages, [])
+
+    assert result == AgentBridgeContext("utility")
+
+
+def test_classify_ambiguous_falls_to_unknown(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+
+    # two unbound spawns sharing the same task name -> a recipient basename
+    # match can't disambiguate between them.
+    parent = _model_event(
+        [ChatMessageUser(content="spawn two same-named agents")],
+        tool_calls=[
+            _v2_spawn_call("call_1", "write_fizzbuzz"),
+            _v2_spawn_call("call_2", "write_fizzbuzz"),
+        ],
+    )
+    consumer.on_complete(parent)
+
+    messages: list[ChatMessage] = [_agent_message_user("/root", "/root/write_fizzbuzz")]
+    result = consumer.classify(get_model("mockllm/model"), messages, [])
+
+    assert result == AgentBridgeContext("unknown")
+
+
+def test_classify_root_while_subagents_open(monkeypatch: Any) -> None:
+    """A genuine root-thread request while a sub-agent is open.
+
+    Fixture evidence (see `test_consumer_attributes_subagent_call_by_recipient`
+    and `test_consumer_closes_span_on_final_answer` above): when a sub-agent
+    sends the *parent* a message, the bridge produces a ChatMessageUser whose
+    agent_message item has recipient "/root" — that is the only positive
+    "this call belongs to root" signal these fixtures carry once agents are
+    open (root's own plain-text turns look identical whether or not
+    sub-agents are open, so they can't serve as that signal). `classify`
+    must special-case recipients == {"/root"} to "root"; without it, an
+    open sub-agent set would otherwise push this call to "unknown".
+    """
+    consumer, _ = _consumer(monkeypatch)
+
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v2_spawn_call("call_pr", "write_primes")],
+    )
+    consumer.on_complete(parent)
+
+    root_messages: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _agent_message_user("/root/write_primes", "/root", "MESSAGE", "status update"),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), root_messages, [])
+
+    assert result == AgentBridgeContext("root")
+
+
+def test_classify_matches_span_attribution(monkeypatch: Any) -> None:
+    """Shared-resolver invariant: classify() agrees with _attribute()'s span.
+
+    For any request, classify() reports "subagent" exactly when _attribute()
+    resolved a sub-agent span (rather than the outer span) — classify is a
+    thin reclassification of the same maps _attribute uses, not a second
+    source of truth.
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        [ChatMessageUser(content="spawn two agents")],
+        tool_calls=[
+            _v2_spawn_call("call_fb", "write_fizzbuzz"),
+            _v2_spawn_call("call_pr", "write_primes"),
+        ],
+    )
+    consumer.on_complete(parent)
+
+    requests: list[list[ChatMessage]] = [
+        [_agent_message_user("/root", "/root/write_fizzbuzz")],
+        [_agent_message_user("/root", "/root/write_primes")],
+        [
+            ChatMessageUser(content="spawn two agents"),
+            _agent_message_user("/root/write_primes", "/root"),
+        ],
+    ]
+    for messages in requests:
+        is_subagent_span = consumer._attribute(messages) != consumer.outer_span_id
+        kind = consumer.classify(get_model("mockllm/model"), messages, []).kind
+        assert (kind == "subagent") == is_subagent_span
+
+
+def test_classify_then_on_pending_is_idempotent(monkeypatch: Any) -> None:
+    """The bridge runs classify() then on_pending() for the same request.
+
+    This is the actual production call sequence, not just each method
+    exercised in isolation. Both derive the request's span
+    via `_attribute`; the first call from a sub-agent's thread binds it
+    (mutating `_thread_index` and the matched `_OpenAgent.thread_id`) as a
+    side effect of `_attribute_by_recipient`'s basename match. `on_pending`'s
+    own `_attribute` pass over the *same* event must resolve to that already-
+    bound span (not re-derive, and potentially disagree with, the binding)
+    and must not mutate that state any further.
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v2_spawn_call("call_pr", "write_primes")],
+    )
+    consumer.on_complete(parent)
+    pr_span = stub.span_begins()[0].id
+
+    # first call from the sub-agent's thread -- unbound until classify()
+    # resolves it via recipient basename matching.
+    child_call = _model_event([_agent_message_user("/root", "/root/write_primes")])
+
+    classified = consumer.classify(get_model("mockllm/model"), child_call.input, [])
+    assert classified == AgentBridgeContext("subagent")
+
+    thread_index_after_classify = dict(consumer._thread_index)
+    agents_after_classify = {
+        call_id: (agent.thread_id, agent.span_id)
+        for call_id, agent in consumer._agents.items()
+    }
+
+    consumer.on_pending(child_call)
+
+    # on_pending's own _attribute() pass agreed with classify()'s implied span.
+    assert child_call.span_id == pr_span
+
+    # ... and the second pass left the binding state exactly as classify()
+    # left it -- no re-derivation, no drift.
+    assert dict(consumer._thread_index) == thread_index_after_classify
+    assert {
+        call_id: (agent.thread_id, agent.span_id)
+        for call_id, agent in consumer._agents.items()
+    } == agents_after_classify
+
+
+# ---------------------------------------------------------------------------
+# 8. classify(): thread-close signals in the request itself
+# ---------------------------------------------------------------------------
+
+
+def _v1_completion_carrier(kind: str, thread_id: str) -> ChatMessage:
+    """The two V1 carriers of a `completed` status for a thread (detection.py)."""
+    if kind == "wait_agent":
+        return ChatMessageTool(
+            content=json.dumps({"status": {thread_id: {"completed": "done"}}}),
+            tool_call_id="call_wait",
+            function="wait_agent",
+        )
+    return ChatMessageUser(
+        content="<subagent_notification>"
+        + json.dumps({"agent_path": thread_id, "status": {"completed": "done"}})
+        + "</subagent_notification>"
+    )
+
+
+@pytest.mark.parametrize("carrier", ["wait_agent", "subagent_notification"])
+def test_classify_root_after_v1_completion_in_request(
+    monkeypatch: Any, carrier: str
+) -> None:
+    """V1: the last open sub-agent completes; root's next request proves it.
+
+    The bridge runs classify() before on_pending(), so classify must apply
+    the request's own completion signal before deciding whether any
+    sub-agent is still open. Without that, a genuine root request whose
+    input closes the last thread is stamped "unknown" (no agent_message
+    recipient under V1, `_agents` still non-empty).
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v1_spawn_call("call_1", prompt)],
+    )
+    consumer.on_complete(parent)
+    span = stub.span_begins()[0].id
+
+    child_call = _model_event([ChatMessageUser(content=prompt)])
+    consumer.on_pending(child_call)
+    assert child_call.span_id == span
+
+    # root's next request: full history (spawn result binds the thread id)
+    # plus the completion of that thread.
+    root_messages: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _spawn_result_tool_message(
+            "call_1", '{"agent_id":"thread_abc","nickname":"Explorer"}'
+        ),
+        _v1_completion_carrier(carrier, "thread_abc"),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), root_messages, [])
+
+    assert result == AgentBridgeContext("root")
+    assert [e.id for e in stub.span_ends()] == [span]
+
+    # on_pending over the same request must not close the span twice
+    consumer.on_pending(_model_event(root_messages))
+    assert [e.id for e in stub.span_ends()] == [span]
+    assert not consumer._agents and not consumer._thread_index
+
+
+def test_classify_closes_span_on_v2_final_answer(monkeypatch: Any) -> None:
+    """V2: a FINAL_ANSWER in root's request closes the child's span at filter time.
+
+    The following on_pending over the same request must not close it again.
+    (Classification itself was already "root" here via the `/root`
+    recipient rescue; this pins the span-close timing and single emission.)
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v2_spawn_call("call_pr", "write_primes")],
+    )
+    consumer.on_complete(parent)
+    pr_span = stub.span_begins()[0].id
+
+    child_call = _model_event([_agent_message_user("/root", "/root/write_primes")])
+    consumer.on_pending(child_call)
+    assert child_call.span_id == pr_span
+
+    root_messages: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _agent_message_user(
+            "/root/write_primes", "/root", "FINAL_ANSWER", "all primes written"
+        ),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), root_messages, [])
+
+    assert result == AgentBridgeContext("root")
+    assert [e.id for e in stub.span_ends()] == [pr_span]
+    assert not consumer._agents
+
+    consumer.on_pending(_model_event(root_messages))
+    assert [e.id for e in stub.span_ends()] == [pr_span]
