@@ -367,7 +367,7 @@ def test_concurrent_version_resolution_shares_one_request(tmp_path: Path) -> Non
     async def run() -> None:
         async def one() -> None:
             results.append(
-                await agentbinary._resolve_agent_binary_version(
+                await agentbinary.resolve_agent_binary_version(
                     source, "9.5.1", "linux-x64"
                 )
             )
@@ -410,7 +410,7 @@ def test_concurrent_version_resolution_failure_is_shared(tmp_path: Path) -> None
     async def run() -> None:
         async def one() -> None:
             try:
-                await agentbinary._resolve_agent_binary_version(
+                await agentbinary.resolve_agent_binary_version(
                     source, "9.5.2", "linux-x64"
                 )
             except RuntimeError as ex:
@@ -443,6 +443,6 @@ def test_concurrent_version_resolution_failure_is_shared(tmp_path: Path) -> None
         post_install=None,
     )
     resolved = anyio.run(
-        agentbinary._resolve_agent_binary_version, retry_source, "9.5.2", "linux-x64"
+        agentbinary.resolve_agent_binary_version, retry_source, "9.5.2", "linux-x64"
     )
     assert resolved.version == "9.5.2"

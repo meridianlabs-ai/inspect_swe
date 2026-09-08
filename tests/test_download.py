@@ -10,6 +10,7 @@ from inspect_swe import (
     cached_agent_binaries,
     download_agent_binary,
     download_wheels_tarball,
+    resolve_agent_version,
 )
 from inspect_swe._util.download import download_file
 
@@ -74,6 +75,32 @@ def test_cached_agent_binaries_lists_opencode(tmp_path: Path) -> None:
         cached = cached_agent_binaries("opencode")
 
     assert [(b.agent, b.version) for b in cached] == [("opencode", "1.14.30")]
+
+
+def test_cached_agent_binaries_lists_kimi_code(tmp_path: Path) -> None:
+    from inspect_swe._kimi_code import agentbinary as kimi_agentbinary
+
+    with patch.object(kimi_agentbinary, "package_cache_dir", return_value=tmp_path):
+        (tmp_path / "kimi-code-1.2.3-linux-x64").write_bytes(b"x")
+        cached = cached_agent_binaries("kimi_code")
+
+    assert [(b.agent, b.version) for b in cached] == [("kimi_code", "1.2.3")]
+
+
+def test_resolve_agent_version_passes_through_pinned_version() -> None:
+    # an explicit version needs no network: it is returned unchanged
+    assert resolve_agent_version("codex_cli", "0.50.0") == "0.50.0"
+
+
+def test_resolve_agent_version_rejects_unknown_platform() -> None:
+    with pytest.raises(ValueError, match="Unsupported platform"):
+        resolve_agent_version("codex_cli", "0.50.0", "win-x64")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("version", ["stable", "1.2.3"])
+def test_resolve_agent_version_rejects_unknown_agent(version: str) -> None:
+    with pytest.raises(ValueError, match="claude_code, codex_cli, kimi_code"):
+        resolve_agent_version("gemini_cli", version)  # type: ignore[arg-type]
 
 
 @pytest.mark.slow
@@ -332,3 +359,10 @@ def test_ensure_pip_available_raises_on_failure() -> None:
             _ensure_pip_available()
 
         assert "ensurepip disabled" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("version", ["auto", "sandbox"])
+def test_resolve_agent_version_passes_sandbox_aliases_through(version: str) -> None:
+    # "auto" / "sandbox" cannot be resolved on the host; they are returned unchanged
+    # so a task that pins with resolve_agent_version() behaves as if it had not.
+    assert resolve_agent_version("claude_code", version) == version

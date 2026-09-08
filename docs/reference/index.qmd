@@ -17,6 +17,7 @@ reference: inspect_swe
 
 ### download_agent_binary
 ### cached_agent_binaries
+### resolve_agent_version
 ### download_wheels_tarball
 ### AgentBinary
 ### SandboxPlatform

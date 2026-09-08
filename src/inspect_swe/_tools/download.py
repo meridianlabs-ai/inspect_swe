@@ -1,14 +1,16 @@
 import re
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, get_args
 
 from .._claude_code.agentbinary import claude_code_binary_source
 from .._codex_cli.agentbinary import codex_cli_binary_source
+from .._kimi_code.agentbinary import kimi_code_binary_source
 from .._opencode.agentbinary import opencode_binary_source
 from .._util._async import run_coroutine
 from .._util.agentbinary import (
     AgentBinarySource,
     download_agent_binary_async,
+    resolve_agent_binary_version,
 )
 from .._util.sandbox import SandboxPlatform
 
@@ -16,7 +18,7 @@ from .._util.sandbox import SandboxPlatform
 class AgentBinary(NamedTuple):
     """Agent binary."""
 
-    agent: Literal["claude_code", "codex_cli", "opencode"]
+    agent: Literal["claude_code", "codex_cli", "kimi_code", "opencode"]
     """Agent type."""
 
     version: str
@@ -52,7 +54,7 @@ class AgentBinaries(list[AgentBinary]):
 
 
 def download_agent_binary(
-    binary: Literal["claude_code", "codex_cli", "opencode"],
+    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform,
 ) -> None:
@@ -73,7 +75,7 @@ def download_agent_binary(
 
 
 def cached_agent_binaries(
-    binary: Literal["claude_code", "codex_cli", "opencode"] | None = None,
+    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"] | None = None,
     quiet: bool = False,
 ) -> AgentBinaries:
     """List the agent binaries which have been cached on this system.
@@ -90,6 +92,7 @@ def cached_agent_binaries(
         return AgentBinaries(
             cached_agent_binaries("claude_code")
             + cached_agent_binaries("codex_cli")
+            + cached_agent_binaries("kimi_code")
             + cached_agent_binaries("opencode")
         )
 
@@ -98,8 +101,9 @@ def cached_agent_binaries(
 
     def parse_name(name: str) -> tuple[str, str, int, int, int]:
         # artifact names are either "<agent>-<version>-<platform>" (single
-        # binary) or "<agent>-package-<version>-<platform>.tar.gz" (package)
-        match = re.match(r"([a-z_]+(?:-package)?)-(\d+)\.(\d+)\.(\d+)", name)
+        # binary) or "<agent>-package-<version>-<platform>.tar.gz" (package);
+        # the agent prefix may itself be hyphenated ("kimi-code")
+        match = re.match(r"([a-z_-]+?)-(\d+)\.(\d+)\.(\d+)", name)
         if match:
             return (
                 match.group(1),  # agent type
@@ -136,15 +140,50 @@ def cached_agent_binaries(
     )
 
 
+def resolve_agent_version(
+    agent: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
+    version: Literal["stable", "latest"] | str,
+    platform: SandboxPlatform = "linux-x64",
+) -> str:
+    """Resolve the version of an agent binary that would be installed.
+
+    Resolves "stable" or "latest" to the concrete version `agent` would install in this process (an explicit version number is returned unchanged). Use this to pin a version once at setup time so every sample in a run installs the same binary and the run records which version actually ran.
+
+    Args:
+        agent: Agent whose version to resolve.
+        version: Version to resolve. "stable" and "latest" are resolved against the agent's release manifest. Any other value is returned unchanged: an explicit version number is already concrete, and "auto" / "sandbox" refer to whatever is installed in the sandbox and cannot be resolved on the host, so they pass through for the agent function to handle at install time.
+        platform: Target platform ("linux-x64", "linux-arm64", "linux-x64-musl", or "linux-arm64-musl"). The version string is the same on every platform, but resolution (and its per-process cache) is per platform and consults that platform's release manifest, which may not exist for every platform.
+
+    Returns:
+        The concrete version string for "stable" / "latest"; otherwise `version` unchanged.
+    """
+    source = _agent_binary_source(agent)
+    if platform not in get_args(SandboxPlatform):
+        raise ValueError(
+            f"Unsupported platform: {platform} "
+            f"(expected one of {', '.join(get_args(SandboxPlatform))})"
+        )
+    if version not in ["stable", "latest"]:
+        return version
+
+    resolved = run_coroutine(resolve_agent_binary_version(source, version, platform))
+    return resolved.version
+
+
 def _agent_binary_source(
-    binary: Literal["claude_code", "codex_cli", "opencode"],
+    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
 ) -> AgentBinarySource:
     match binary:
         case "claude_code":
             return claude_code_binary_source()
         case "codex_cli":
             return codex_cli_binary_source()
+        case "kimi_code":
+            return kimi_code_binary_source()
         case "opencode":
             return opencode_binary_source()
         case _:
-            raise ValueError(f"Unsuported agent binary type: {binary}")
+            raise ValueError(
+                f"Unsupported agent binary type: {binary} "
+                "(expected one of claude_code, codex_cli, kimi_code, opencode)"
+            )
