@@ -1,6 +1,5 @@
 import json
 import shlex
-import uuid
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
@@ -266,13 +265,6 @@ def opencode(
                     state=state,
                 )
             else:
-                # per-invocation prompt file (see opencode_stdin_prompt_cmd); unique
-                # so concurrent opencode agents sharing a sandbox can't clobber each
-                # other, in a user-owned dir so the wrapper can unlink it
-                prompt_dir = f"{sandbox_home}/.inspect_swe/opencode"
-                prompt_path = f"{prompt_dir}/prompt-{uuid.uuid4().hex}.txt"
-                await sbox.exec(["mkdir", "-p", prompt_dir], user=user)
-
                 debug_output: list[str] = []
                 agent_prompt = prompt
                 attempt_count = 0
@@ -284,10 +276,6 @@ def opencode(
                     # the inbound state already carries an assistant turn)
                     if has_assistant_response or attempt_count > 0:
                         agent_cmd.append("--continue")
-
-                    # deliver the prompt on stdin rather than as a positional
-                    # argument (see opencode_stdin_prompt_cmd)
-                    await sbox.write_file(prompt_path, agent_prompt)
 
                     # Retry-loop gate: fires ONLY when this loop is actually
                     # retrying (attempt_count > 0), so the cold-start
@@ -302,9 +290,24 @@ def opencode(
                             required=True,
                         )
 
+                    # Deliver the prompt on stdin rather than as a positional
+                    # argument. `opencode run` quote-wraps a positional message
+                    # that contains spaces and backslash-escapes the double
+                    # quotes inside it (packages/opencode/src/cli/cmd/run.ts),
+                    # so a prompt passed as an argument reaches the model -- and
+                    # crosses the agent bridge -- as `"..."` with `\"` inside
+                    # rather than as the task input. The bridge anchors
+                    # main-thread tracking on the task input, and for prompts
+                    # containing `"` that mismatch let opencode's session-title
+                    # generation call displace the agent's answer as the sample
+                    # output. Piped stdin is used verbatim (`resolveRunInput`),
+                    # and also sidesteps argv length limits for long prompts.
+                    # exec_remote closes stdin after writing `input`, giving
+                    # opencode the EOF it needs.
                     result = await sbox.exec_remote(
-                        cmd=opencode_stdin_prompt_cmd(agent_cmd, prompt_path),
+                        cmd=agent_cmd,
                         options=ExecRemoteAwaitableOptions(
+                            input=agent_prompt,
                             cwd=agent_cwd,
                             env=agent_env,
                             user=user,
@@ -351,30 +354,6 @@ def opencode(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
-
-
-def opencode_stdin_prompt_cmd(opencode_cmd: list[str], prompt_path: str) -> list[str]:
-    r"""Command that runs `opencode_cmd` with the prompt at `prompt_path` on stdin.
-
-    `opencode run` quote-wraps a positional message that contains spaces and
-    backslash-escapes the double quotes inside it (`packages/opencode/src/cli/
-    cmd/run.ts`), so a prompt passed as an argument reaches the model — and
-    crosses the agent bridge — as `"..."` with `\"` inside rather than as the
-    task input. The bridge anchors main-thread tracking on the task input, and
-    for prompts containing `"` that mismatch let opencode's session-title
-    generation call displace the agent's answer as the sample output. Piped
-    stdin is used verbatim (`resolveRunInput`), and also sidesteps argv length
-    limits for long prompts. The file is unlinked once the redirect holds it
-    open, so nothing is left behind in the sandbox.
-    """
-    return [
-        "bash",
-        "-c",
-        'exec 0<"$1"; rm -f -- "$1"; shift; exec "$@"',
-        "bash",
-        prompt_path,
-        *opencode_cmd,
-    ]
 
 
 def resolve_mcp_servers(
