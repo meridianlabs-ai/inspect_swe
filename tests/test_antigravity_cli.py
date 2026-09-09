@@ -812,6 +812,64 @@ def test_centaur_launch_withholds_the_print_mode_flags() -> None:
     assert "--model" in cmd, cmd
 
 
+@skip_if_no_docker
+@pytest.mark.slow
+def test_centaur_provisions_native_onboarding_and_workspace_trust() -> None:
+    """A new sandbox reaches the human prompt without native setup questions."""
+    handed_env: list[dict[str, str]] = []
+    launches: list[_CaptureLaunch] = []
+
+    async def capture_centaur(
+        options: Any,
+        agy_cmd: list[str],
+        agent_env: dict[str, str],
+        state: Any,
+        *,
+        user: str | None,
+        sandbox: str | None,
+        cwd: str,
+    ) -> None:
+        handed_env.append(dict(agent_env))
+
+    def capture_sandbox(name: str | None = None) -> Any:
+        captured = _CaptureLaunch(sandbox(name))
+        launches.append(captured)
+        return captured
+
+    with (
+        patch.object(agy_module, "sandbox_env", capture_sandbox),
+        patch.object(agy_module, "_run_antigravity_cli_centaur", capture_centaur),
+    ):
+        logs = eval(_launch_task(centaur=True), model=_MODEL, limit=1, time_limit=300)
+
+    assert logs[0].status == "success", f"CLI run failed: {logs[0].error}"
+    assert len(launches) == 1
+    assert len(handed_env) == 1
+
+    settings = _settings_written(launches[0])
+    # Trust exactly the resolved workspace. A wildcard would give the human
+    # terminal more trust than the native CLI needs to skip its first-run gate.
+    assert settings["trustedWorkspaces"] == [_FIXTURE_DIR]
+    # The CLI's defaults remain its interactive approval policy.
+    assert "toolPermission" not in settings
+    assert "artifactReviewPolicy" not in settings
+    assert settings["enableTelemetry"] is False
+
+    onboarding_paths = [
+        path
+        for path in launches[0].written
+        if path.endswith(".gemini/antigravity-cli/cache/onboarding.json")
+    ]
+    assert len(onboarding_paths) == 1, sorted(launches[0].written)
+    assert json.loads(launches[0].written[onboarding_paths[0]]) == {
+        "consumerOnboardingComplete": True,
+        "enterpriseOnboardingComplete": False,
+        "onboardingComplete": True,
+    }
+    # 1.1.27's native updater recognizes the literal "true", not "1".
+    assert handed_env[0]["AGY_CLI_DISABLE_AUTO_UPDATE"] == "true"
+
+
 # --- canonical producer identity --------------------------------------------
 #
 # `agy` opens a second conversation of its own to generate a title, and that

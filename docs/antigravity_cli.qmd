@@ -50,6 +50,8 @@ For a CLI model that rejects the `--effort` flag, pass `effort=None`.
 
 `mcp_servers` accepts Inspect `MCPServerConfig` objects. The agent writes the native CLI MCP registry at `$HOME/.gemini/config/mcp_config.json`; stdio servers retain their command and arguments, while HTTP server URLs are written using the CLI's `serverUrl` field.
 
+For a fresh sandbox home, the agent records the native onboarding state and trusts exactly its resolved working directory. This bypasses the CLI's first-use consent and workspace-trust screens without trusting other paths. In Centaur Mode this setup does not set either tool or artifact approval policy; the person at the terminal remains the approver.
+
 Bridged tools are added to the same registry as bridge-provided MCP servers, and each of their tools is additionally marked eager (`tools.<tool>.eager`), so the CLI declares it as a native tool the model can call by name rather than routing it through its lazy MCP dispatcher. The registry key is the tool name the server serves, the same namespace as the CLI's `disabledTools` and `mcp(server/tool)` permission entries; the name the CLI then declares to the model is `mcp_<server>_<tool>`, with the server name spliced in verbatim: a tool named `echo` on a server named `inspect-tools` is declared as `mcp_inspect-tools_echo`, hyphens and all. When every server in the registry is bridge-provided, the CLI has nothing left to load lazily and declares no `call_mcp_tool` dispatcher at all. Servers you configure yourself through `mcp_servers` are left alone: their tools keep the CLI's default lazy loading, and the dispatcher is declared for them.
 
 Unattended runs pass `--disable-slash-commands`, so a prompt whose first token looks like `/something` reaches the model as text. Slash-command and skill expansion is therefore unavailable in unattended mode; it stays available to the person at the terminal in Centaur Mode.
@@ -78,7 +80,7 @@ By default, `version="auto"` uses an `agy` binary already present in the sandbox
 
 : {tbl-colwidths=\[25,75\]}
 
-`"stable"` and `"latest"` currently resolve the latest published release tag. Downloaded release assets are checksum-verified, and the agent disables the CLI's self-updater so an explicit version remains the version used in the sandbox.
+`"stable"` and `"latest"` currently resolve the latest published release tag. `antigravity_cli()` sets `AGY_CLI_DISABLE_AUTO_UPDATE=true` for every launch, so the native updater does not replace the selected binary while the sandbox is running. Downloaded release assets are checksum-verified.
 
 {{< include _snippets/agent_installation.md >}}
 

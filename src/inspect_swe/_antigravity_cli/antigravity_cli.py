@@ -49,6 +49,8 @@ AntigravityEffort = Literal["low", "medium", "high"]
 # the CLI's own state, MCP servers in the shared `~/.gemini/config` tree.
 _SETTINGS_DIR = ".gemini/antigravity-cli"
 _MCP_CONFIG_DIR = ".gemini/config"
+_ONBOARDING_CACHE_DIR = f"{_SETTINGS_DIR}/cache"
+_ONBOARDING_FILE = f"{_ONBOARDING_CACHE_DIR}/onboarding.json"
 
 # The CLI states the identity of its own conversation in every primary
 # request: official 1.1.27/1.1.28 requests carry exactly one system
@@ -332,11 +334,19 @@ def antigravity_cli(
             all_mcp_servers = list(mcp_servers or []) + list(bridge.mcp_server_configs)
 
             settings_dir = join_path(sandbox_home, _SETTINGS_DIR)
+            onboarding_cache_dir = join_path(sandbox_home, _ONBOARDING_CACHE_DIR)
             mcp_config_dir = join_path(sandbox_home, _MCP_CONFIG_DIR)
-            await sbox.exec(["mkdir", "-p", settings_dir, mcp_config_dir], user=user)
+            await sbox.exec(
+                ["mkdir", "-p", settings_dir, onboarding_cache_dir, mcp_config_dir],
+                user=user,
+            )
             await sbox.write_file(
                 join_path(settings_dir, "settings.json"),
-                build_antigravity_settings(unattended=centaur is False),
+                _workspace_settings(unattended=centaur is False, workspace=agent_cwd),
+            )
+            await sbox.write_file(
+                join_path(sandbox_home, _ONBOARDING_FILE),
+                _completed_onboarding(),
             )
             await sbox.write_file(
                 join_path(mcp_config_dir, "mcp_config.json"),
@@ -408,10 +418,9 @@ def antigravity_cli(
                 "GOOGLE_GEMINI_BASE_URL": f"http://localhost:{bridge.port}",
                 "GEMINI_API_KEY": "api-key",
                 # The CLI self-updates from its auto-updater service on startup.
-                # Left on, a run silently executes whatever version was stable
-                # that day rather than the pinned one -- the same
-                # eval-reproducibility hazard as an unpinned download.
-                "AGY_CLI_DISABLE_AUTO_UPDATE": "1",
+                # The actual native switch is the literal string "true"; "1" is
+                # ignored and lets a pinned binary replace itself.
+                "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
                 # Keep logo art out of captured transcripts.
                 "AGY_CLI_HIDE_LOGO": "1",
                 "HOME": sandbox_home,
@@ -584,6 +593,27 @@ def build_antigravity_settings(*, unattended: bool = True) -> str:
         settings["toolPermission"] = "always-proceed"
         settings["artifactReviewPolicy"] = "always-proceed"
     return json.dumps(settings, indent=2)
+
+
+def _workspace_settings(*, unattended: bool, workspace: str) -> str:
+    """Build settings for exactly the workspace the CLI process will use."""
+    settings: dict[str, Any] = json.loads(
+        build_antigravity_settings(unattended=unattended)
+    )
+    settings["trustedWorkspaces"] = [workspace]
+    return json.dumps(settings, indent=2)
+
+
+def _completed_onboarding() -> str:
+    """Native onboarding state that keeps a fresh sandbox at its CLI prompt."""
+    return json.dumps(
+        {
+            "consumerOnboardingComplete": True,
+            "enterpriseOnboardingComplete": False,
+            "onboardingComplete": True,
+        },
+        indent=2,
+    )
 
 
 def build_antigravity_mcp_config(
