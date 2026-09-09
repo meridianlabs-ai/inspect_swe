@@ -205,6 +205,7 @@ def run_example(
         "kimi_code",
         "mini_swe_agent",
         "opencode",
+        "pi",
     ],
     model: str,
     sandbox: str | None = None,
