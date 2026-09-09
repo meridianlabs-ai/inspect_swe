@@ -37,6 +37,7 @@ from inspect_swe._antigravity_cli import agentbinary
 from inspect_swe._antigravity_cli.antigravity_cli import (
     _native_conversation_id,
     _NativeConversation,
+    build_antigravity_agent_env,
     build_antigravity_mcp_config,
     build_antigravity_settings,
 )
@@ -107,6 +108,48 @@ def test_boolean_settings_are_json_booleans(key: str) -> None:
 )
 def test_enum_settings_use_the_cli_vocabulary(key: str, expected: str) -> None:
     assert _settings()[key] == expected
+
+
+def test_agent_env_defaults_have_no_caller_env() -> None:
+    # Byte-identical baseline: with no caller `env`, the merged environment is
+    # exactly the five wrapper-owned keys.
+    result = build_antigravity_agent_env(bridge_port=3000, sandbox_home="/root")
+    assert result == {
+        "GOOGLE_GEMINI_BASE_URL": "http://localhost:3000",
+        "GEMINI_API_KEY": "api-key",
+        "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
+        "AGY_CLI_HIDE_LOGO": "1",
+        "HOME": "/root",
+    }
+
+
+def test_caller_env_cannot_redirect_the_bridge_or_inject_a_credential() -> None:
+    # Credential boundary: a caller passing a full environment snapshot (the
+    # realistic `env=os.environ.copy()` case) must not be able to silently
+    # point the CLI at Google's real endpoint or supply a real Google
+    # credential in place of the bridge's placeholder.
+    caller_env = {
+        "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com",
+        "GEMINI_API_KEY": "real-google-api-key",
+    }
+    result = build_antigravity_agent_env(
+        bridge_port=3000, sandbox_home="/root", env=caller_env
+    )
+    assert result["GOOGLE_GEMINI_BASE_URL"] == "http://localhost:3000"
+    assert result["GEMINI_API_KEY"] == "api-key"
+
+
+def test_caller_env_still_overrides_the_cosmetic_defaults() -> None:
+    # Everything that is NOT the credential boundary keeps the established
+    # repo-wide "caller wins" contract (matches `claude_code_agent_env`):
+    # a caller may still override HOME or opt back into the auto-updater.
+    result = build_antigravity_agent_env(
+        bridge_port=3000,
+        sandbox_home="/root",
+        env={"HOME": "/home/custom", "AGY_CLI_DISABLE_AUTO_UPDATE": "false"},
+    )
+    assert result["HOME"] == "/home/custom"
+    assert result["AGY_CLI_DISABLE_AUTO_UPDATE"] == "false"
 
 
 def test_http_mcp_servers_use_server_url() -> None:
@@ -270,8 +313,18 @@ def test_eager_tool_names_are_written_verbatim() -> None:
     }
 
 
-def test_eager_marking_leaves_every_other_field_intact() -> None:
-    servers = _servers(
+def test_authenticated_http_server_is_rejected() -> None:
+    """Credential boundary.
+
+    `MCPServerConfigHTTP.headers` (e.g. an Authorization bearer token) would
+    otherwise be written verbatim into `$HOME/.gemini/config/mcp_config.json`
+    inside the sandbox -- a file the evaluated CLI, and any of its own tools,
+    can read back out at any point during the run.
+    `build_antigravity_mcp_config` must refuse a caller-supplied server
+    carrying headers rather than persist a real credential where the
+    sandboxed agent can read it.
+    """
+    with pytest.raises(ValueError, match="bridged_tools"):
         build_antigravity_mcp_config(
             [
                 MCPServerConfigHTTP(
@@ -283,13 +336,28 @@ def test_eager_marking_leaves_every_other_field_intact() -> None:
             ],
             eager_tools={"inspect-tools": ["submit"]},
         )
-    )
 
-    server = servers["inspect-tools"]
-    assert server["serverUrl"] == _BRIDGE_URL
-    assert server["headers"] == {"Authorization": "Bearer token"}
-    assert "url" not in server
-    assert set(server) == {"serverUrl", "headers", "tools"}
+
+def test_authenticated_stdio_server_is_rejected() -> None:
+    """Same credential boundary as the HTTP case above, for stdio transport.
+
+    `MCPServerConfigStdio.env` would land verbatim in the same
+    sandbox-readable `mcp_config.json`, so a real credential passed through
+    it must be refused rather than persisted where the sandboxed agent can
+    read it back out.
+    """
+    with pytest.raises(ValueError, match="bridged_tools"):
+        build_antigravity_mcp_config(
+            [
+                MCPServerConfigStdio(
+                    type="stdio",
+                    name="local",
+                    command="server",
+                    env={"API_TOKEN": "secret"},
+                )
+            ],
+            eager_tools={},
+        )
 
 
 def test_user_supplied_servers_keep_the_cli_default() -> None:

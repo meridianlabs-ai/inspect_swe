@@ -23,7 +23,7 @@ from inspect_ai.model import (
 )
 from inspect_ai.scorer import score
 from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
-from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
+from inspect_ai.tool._mcp._config import MCPServerConfigHTTP, MCPServerConfigStdio
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
@@ -410,24 +410,9 @@ def antigravity_cli(
                     ]
                 )
 
-            agent_env = {
-                # The CLI's direct-Gemini-API route, pointed at the bridge. Both
-                # halves are required: the base URL alone leaves the CLI on its
-                # sign-in path, and the key alone leaves generation on Google's
-                # endpoint.
-                "GOOGLE_GEMINI_BASE_URL": f"http://localhost:{bridge.port}",
-                "GEMINI_API_KEY": "api-key",
-                # The CLI self-updates from its auto-updater service on startup.
-                # The actual native switch is the literal string "true"; "1" is
-                # ignored and lets a pinned binary replace itself.
-                "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
-                # Keep logo art out of captured transcripts.
-                "AGY_CLI_HIDE_LOGO": "1",
-                "HOME": sandbox_home,
-                # No PATH: the CLI is a self-contained binary launched by
-                # absolute path, and overriding PATH would hide the image's
-                # toolchain from every command the agent runs.
-            } | (env or {})
+            agent_env = build_antigravity_agent_env(
+                bridge_port=bridge.port, sandbox_home=sandbox_home, env=env
+            )
 
             # Gate the launch on the bridged MCP endpoints actually serving
             # tools: the CLI blocks its first turn on MCP connect for headless
@@ -595,6 +580,63 @@ def build_antigravity_settings(*, unattended: bool = True) -> str:
     return json.dumps(settings, indent=2)
 
 
+def build_antigravity_agent_env(
+    *,
+    bridge_port: int,
+    sandbox_home: str,
+    env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Environment for the Antigravity CLI subprocess.
+
+    Args:
+        bridge_port: Port of the in-sandbox bridge the agent's model calls
+            go to.
+        sandbox_home: Detected sandbox $HOME (the CLI resolves both its
+            settings and its global MCP registry relative to this).
+        env: Caller overrides. Applied for everything except the two keys
+            that define the credential boundary itself -- caller values win
+            on conflict there, same contract as `claude_code_agent_env` --
+            but `GOOGLE_GEMINI_BASE_URL` and `GEMINI_API_KEY` are forced
+            unconditionally. Unlike `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`
+            in `claude_code_agent_env`, where AGENTS.md documents caller
+            override of the model-provider route/credential as an accepted,
+            deliberate escape hatch, a caller here (e.g. one passing
+            `env=os.environ.copy()`) must not be able to silently redirect
+            generation off the bridge onto Google's real endpoint, or inject
+            a real Google credential into the sandbox: those two keys ARE the
+            boundary, not a convenience default.
+
+    Returns:
+        The merged environment. `GOOGLE_GEMINI_BASE_URL` and `GEMINI_API_KEY`
+        always point at the bridge; every other key follows the caller's
+        `env` when supplied.
+    """
+    return (
+        {
+            # The CLI self-updates from its auto-updater service on startup. The
+            # actual native switch is the literal string "true"; "1" is ignored
+            # and lets a pinned binary replace itself.
+            "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
+            # Keep logo art out of captured transcripts.
+            "AGY_CLI_HIDE_LOGO": "1",
+            "HOME": sandbox_home,
+            # No PATH: the CLI is a self-contained binary launched by absolute
+            # path, and overriding PATH would hide the image's toolchain from
+            # every command the agent runs.
+        }
+        | (env or {})
+        | {
+            # The CLI's direct-Gemini-API route, pointed at the bridge. Both
+            # halves are required: the base URL alone leaves the CLI on its
+            # sign-in path, and the key alone leaves generation on Google's
+            # endpoint. Applied AFTER the caller's `env` so neither key can be
+            # silently overridden -- these two ARE the credential boundary.
+            "GOOGLE_GEMINI_BASE_URL": f"http://localhost:{bridge_port}",
+            "GEMINI_API_KEY": "api-key",
+        }
+    )
+
+
 def _workspace_settings(*, unattended: bool, workspace: str) -> str:
     """Build settings for exactly the workspace the CLI process will use."""
     settings: dict[str, Any] = json.loads(
@@ -640,9 +682,45 @@ def build_antigravity_mcp_config(
         eager_tools: Bridged tool names by server name (the bridge's
             `bridged_tools` registry). Only these servers are marked; anything
             the caller configured itself keeps the CLI's native lazy loading.
+
+    Raises:
+        ValueError: If a server carries transport credentials -- HTTP
+            `headers` or stdio `env` -- that would be written verbatim into
+            `$HOME/.gemini/config/mcp_config.json`. That file sits inside the
+            sandboxed CLI's own $HOME, where the evaluated agent's own tools
+            can read it just as readily as the CLI does, so a real credential
+            placed there crosses the sandbox credential boundary (AGENTS.md,
+            "Agent Guardrails"). Bridge-owned servers (built from
+            `bridged_tools`) never carry credentials, so this only affects
+            servers the caller passes directly via `mcp_servers`; route an
+            authenticated server through `bridged_tools` instead.
     """
     servers: dict[str, Any] = {}
     for server in mcp_servers:
+        if isinstance(server, MCPServerConfigHTTP) and server.headers:
+            raise ValueError(
+                f"MCP server {server.name!r} passed to `mcp_servers` carries "
+                "HTTP headers (e.g. an Authorization token). Antigravity CLI "
+                "persists this registry verbatim to "
+                "$HOME/.gemini/config/mcp_config.json inside the sandbox, "
+                "which the evaluated CLI -- and any of its tools -- can read, "
+                "so a real credential placed here crosses the credential "
+                "boundary (see AGENTS.md, 'Agent Guardrails'). Expose an "
+                "authenticated server via `bridged_tools` instead, which "
+                "keeps real credentials out of the sandbox entirely."
+            )
+        if isinstance(server, MCPServerConfigStdio) and server.env:
+            raise ValueError(
+                f"MCP server {server.name!r} passed to `mcp_servers` carries "
+                "an `env` map that may hold real credentials. Antigravity CLI "
+                "persists this registry verbatim to "
+                "$HOME/.gemini/config/mcp_config.json inside the sandbox, "
+                "which the evaluated CLI -- and any of its tools -- can read, "
+                "so a real credential placed here crosses the credential "
+                "boundary (see AGENTS.md, 'Agent Guardrails'). Expose an "
+                "authenticated server via `bridged_tools` instead, which "
+                "keeps real credentials out of the sandbox entirely."
+            )
         config = server.model_dump(exclude={"name", "tools", "type"}, exclude_none=True)
         if isinstance(server, MCPServerConfigHTTP) and "url" in config:
             config["serverUrl"] = config.pop("url")
