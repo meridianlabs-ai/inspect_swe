@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 from typing import Literal, NamedTuple, get_args
 
+from .._antigravity_cli.agentbinary import antigravity_cli_binary_source
 from .._claude_code.agentbinary import claude_code_binary_source
 from .._codex_cli.agentbinary import codex_cli_binary_source
 from .._kimi_code.agentbinary import kimi_code_binary_source
@@ -18,7 +19,9 @@ from .._util.sandbox import SandboxPlatform
 class AgentBinary(NamedTuple):
     """Agent binary."""
 
-    agent: Literal["claude_code", "codex_cli", "kimi_code", "opencode"]
+    agent: Literal[
+        "antigravity_cli", "claude_code", "codex_cli", "kimi_code", "opencode"
+    ]
     """Agent type."""
 
     version: str
@@ -54,13 +57,15 @@ class AgentBinaries(list[AgentBinary]):
 
 
 def download_agent_binary(
-    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
+    binary: Literal[
+        "antigravity_cli", "claude_code", "codex_cli", "kimi_code", "opencode"
+    ],
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform,
 ) -> None:
     """Download agent binary.
 
-    Download an agent binary. This version will be added to the cache of downloaded versions (which retains the 5 most recently downloaded versions).
+    Download an agent binary. This version will be added to the cache of downloaded versions (which retains the 3 most recently downloaded versions).
 
     Use this if you need to ensure that a specific version of an agent binary is downloaded in advance (e.g. if you are going to run your evaluations offline). After downloading, explicit requests for the downloaded version (e.g. `claude_code(version="1.0.98")`) will not require network access.
 
@@ -75,7 +80,10 @@ def download_agent_binary(
 
 
 def cached_agent_binaries(
-    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"] | None = None,
+    binary: Literal[
+        "antigravity_cli", "claude_code", "codex_cli", "kimi_code", "opencode"
+    ]
+    | None = None,
     quiet: bool = False,
 ) -> AgentBinaries:
     """List the agent binaries which have been cached on this system.
@@ -90,7 +98,8 @@ def cached_agent_binaries(
     """
     if binary is None:
         return AgentBinaries(
-            cached_agent_binaries("claude_code")
+            cached_agent_binaries("antigravity_cli")
+            + cached_agent_binaries("claude_code")
             + cached_agent_binaries("codex_cli")
             + cached_agent_binaries("kimi_code")
             + cached_agent_binaries("opencode")
@@ -141,7 +150,9 @@ def cached_agent_binaries(
 
 
 def resolve_agent_version(
-    agent: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
+    agent: Literal[
+        "antigravity_cli", "claude_code", "codex_cli", "kimi_code", "opencode"
+    ],
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform = "linux-x64",
 ) -> str:
@@ -171,9 +182,13 @@ def resolve_agent_version(
 
 
 def _agent_binary_source(
-    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
+    binary: Literal[
+        "antigravity_cli", "claude_code", "codex_cli", "kimi_code", "opencode"
+    ],
 ) -> AgentBinarySource:
     match binary:
+        case "antigravity_cli":
+            return antigravity_cli_binary_source()
         case "claude_code":
             return claude_code_binary_source()
         case "codex_cli":
@@ -185,5 +200,5 @@ def _agent_binary_source(
         case _:
             raise ValueError(
                 f"Unsupported agent binary type: {binary} "
-                "(expected one of claude_code, codex_cli, kimi_code, opencode)"
+                "(expected one of antigravity_cli, claude_code, codex_cli, kimi_code, opencode)"
             )

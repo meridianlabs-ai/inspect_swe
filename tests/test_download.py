@@ -12,6 +12,7 @@ from inspect_swe import (
     download_wheels_tarball,
     resolve_agent_version,
 )
+from inspect_swe._util.agentbinary import AgentBinaryVersion
 from inspect_swe._util.download import download_file
 
 
@@ -99,8 +100,62 @@ def test_resolve_agent_version_rejects_unknown_platform() -> None:
 
 @pytest.mark.parametrize("version", ["stable", "1.2.3"])
 def test_resolve_agent_version_rejects_unknown_agent(version: str) -> None:
-    with pytest.raises(ValueError, match="claude_code, codex_cli, kimi_code"):
+    # The whole allowed list, not a prefix of it: the message is how a caller
+    # discovers which agents this accepts, so an entry silently dropped from it
+    # is a supported agent nobody can find.
+    with pytest.raises(
+        ValueError,
+        match="antigravity_cli, claude_code, codex_cli, kimi_code, opencode",
+    ):
         resolve_agent_version("gemini_cli", version)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("version", ["1.1.27", "auto", "sandbox"])
+def test_resolve_agent_version_passes_antigravity_versions_through(
+    version: str,
+) -> None:
+    # An explicit version is already concrete, and "auto" / "sandbox" name
+    # whatever the sandbox happens to hold, so none of the three can be
+    # resolved on the host and none should cost a release lookup. Asserted as
+    # "no resolution was attempted": a passthrough that quietly reached the
+    # network would still return the right string, while making every pinned
+    # run depend on GitHub being up.
+    from inspect_swe._tools import download as download_tool
+
+    resolve = AsyncMock()
+    with patch.object(download_tool, "resolve_agent_binary_version", resolve):
+        assert resolve_agent_version("antigravity_cli", version) == version
+
+    resolve.assert_not_awaited()
+
+
+@pytest.mark.parametrize("version", ["stable", "latest"])
+def test_resolve_agent_version_resolves_antigravity_floating_versions(
+    version: str,
+) -> None:
+    # The two that do cost a lookup, and the reason the API exists: pin once at
+    # setup so every sample installs the same binary. The caller gets back the
+    # concrete version, resolved against the Antigravity source -- not whichever
+    # source the shared factory would otherwise fall through to.
+    from inspect_swe._tools import download as download_tool
+
+    resolve = AsyncMock(
+        return_value=AgentBinaryVersion(
+            "1.1.27", "digest", "https://example.com/agy_cli_linux_arm64.tar.gz"
+        )
+    )
+    with patch.object(download_tool, "resolve_agent_binary_version", resolve):
+        resolved = resolve_agent_version("antigravity_cli", version, "linux-arm64")
+
+    assert resolved == "1.1.27"
+    assert resolve.await_args is not None
+    source, requested, platform = resolve.await_args.args
+    # `agy` is the binary name, and the cache key resolution is stored under.
+    assert source.binary == "agy"
+    # Passed on as asked: resolving "stable" against the "latest" manifest, or
+    # against another platform's, silently pins the wrong build.
+    assert requested == version
+    assert platform == "linux-arm64"
 
 
 @pytest.mark.slow

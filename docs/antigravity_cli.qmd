@@ -1,0 +1,99 @@
+---
+title: Antigravity CLI
+agent: antigravity_cli
+agent_provider: "Google"
+agent_name: "Antigravity CLI"
+agent_url: "https://antigravity.google/docs/cli/overview"
+---
+
+`antigravity_cli()` runs the Antigravity CLI (`agy`) inside the Inspect sandbox. It is distinct from [`antigravity()`](antigravity.qmd), which runs the `google-antigravity` SDK and its localharness engine.
+
+The CLI uses its native Gemini API client, configured to call the local Inspect sandbox-agent bridge, so the model request is handled on the host. The agent sets a placeholder `GEMINI_API_KEY` only to satisfy the CLI's client-side check; it does not copy Google credentials into the sandbox.
+
+{{< include _snippets/agent_intro.md >}}
+
+## Options
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Additional system prompt to append to the task's system prompt. |
+| `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to install for the CLI. |
+| `mcp_servers` | MCP servers to configure for the CLI (see [MCP Servers](#mcp-servers) below for details). |
+| `bridged_tools` | Host-side Inspect tools to expose to the CLI through MCP (see [Bridged Tools](#bridged-tools) below for details). |
+| `mcp_ready_timeout` | Seconds to wait for bridged MCP endpoints to serve tools before agent launch errors. |
+| `centaur` | Run in [Centaur Mode](#centaur-mode), making the CLI available to an Inspect `human_cli()` agent rather than running it unattended. |
+| `attempts` | Allow multiple scored attempts at the task. |
+| `model` | Model name for the Inspect bridge. Defaults to the task's main model. |
+| `model_aliases` | Mapping of bridge model names to model names or `Model` instances. |
+| `agy_model` | Model identifier passed to `agy`. It selects the CLI's client-side model configuration; generation still goes through the Inspect bridge. Defaults to `"gemini-3.6-flash"`. |
+| `effort` | CLI reasoning effort: `"low"`, `"medium"`, `"high"`, or `None` to omit `--effort`. Defaults to `"low"`. |
+| `filter` | Filter for intercepting bridged model requests. |
+| `retry_refusals` | Number of refusal retries. |
+| `cwd` | Working directory for the CLI session. |
+| `env` | Environment variables for the CLI process. |
+| `user` | Sandbox user that runs the CLI. |
+| `sandbox` | Optional sandbox environment name. |
+| `version` | CLI version to use. See [Installation](#installation). |
+| `debug` | Trace the CLI's runner output. |
+
+: {tbl-colwidths=\[25,75\]}
+
+### Model selection
+
+`model` and `agy_model` configure different layers. `model` selects the model used by the Inspect bridge. `agy_model` is passed to the native CLI so it can select its own client-side behavior, including context-window, tool-schema, and effort handling. It does not route model requests directly to a Google endpoint.
+
+For a CLI model that rejects the `--effort` flag, pass `effort=None`.
+
+## Native CLI configuration
+
+`skills` accepts Inspect skill paths or `Skill` objects. They are installed in `<cwd>/.agents/skills` for `agy` to discover.
+
+`mcp_servers` accepts Inspect `MCPServerConfig` objects. The agent writes the native CLI MCP registry at `$HOME/.gemini/config/mcp_config.json`; stdio servers retain their command and arguments, while HTTP server URLs are written using the CLI's `serverUrl` field.
+
+Bridged tools are added to the same registry as bridge-provided MCP servers, and each of their tools is additionally marked eager (`tools.<tool>.eager`), so the CLI declares it as a native tool the model can call by name rather than routing it through its lazy MCP dispatcher. The registry key is the tool name the server serves, the same namespace as the CLI's `disabledTools` and `mcp(server/tool)` permission entries; the name the CLI then declares to the model is `mcp_<server>_<tool>`, with the server name spliced in verbatim: a tool named `echo` on a server named `inspect-tools` is declared as `mcp_inspect-tools_echo`, hyphens and all. When every server in the registry is bridge-provided, the CLI has nothing left to load lazily and declares no `call_mcp_tool` dispatcher at all. Servers you configure yourself through `mcp_servers` are left alone: their tools keep the CLI's default lazy loading, and the dispatcher is declared for them.
+
+Unattended runs pass `--disable-slash-commands`, so a prompt whose first token looks like `/something` reaches the model as text. Slash-command and skill expansion is therefore unavailable in unattended mode; it stays available to the person at the terminal in Centaur Mode.
+
+The CLI's own `search_web` tool is client-side: it reaches the network from inside the sandbox and so depends on sandbox egress. It is not Inspect's bridged web search, and `antigravity_cli()` has no web-search option.
+
+{{< include _snippets/agent_mcp_servers.md >}}
+
+{{< include _snippets/agent_bridged_tools.md >}}
+
+{{< include _snippets/agent_google_codec.md >}}
+
+## Installation
+
+The CLI binary is named `agy`. Downloaded binaries support glibc Linux sandbox targets `linux-x64` and `linux-arm64`. musl-based images, including Alpine, are not supported by the published CLI assets.
+
+By default, `version="auto"` uses an `agy` binary already present in the sandbox. If none is available, it downloads the current stable release. The `version` option selects a different behavior:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `"auto"` | Use `agy` available in the sandbox; otherwise download the stable release. |
+| `"sandbox"` | Use `agy` from the sandbox, raising `RuntimeError` if it is unavailable. |
+| `"stable"` | Download the current stable release. |
+| `"latest"` | Download the current latest release. |
+| `"x.x.x"` | Download that exact CLI release version. |
+
+: {tbl-colwidths=\[25,75\]}
+
+`"stable"` and `"latest"` currently resolve the latest published release tag. Downloaded release assets are checksum-verified, and the agent disables the CLI's self-updater so an explicit version remains the version used in the sandbox.
+
+{{< include _snippets/agent_installation.md >}}
+
+For the Antigravity CLI, that second approach reads:
+
+``` python
+# download the agy binary during installation/configuration
+download_agent_binary("antigravity_cli", "1.1.27", "linux-x64")
+
+# reference that version in your task (no download will occur)
+antigravity_cli(version="1.1.27")
+```
+
+{{< include _snippets/agent_centaur.md >}}
+
+In centaur mode the CLI is made available to the human as an `agy` shell alias carrying the agent's bridge configuration. The unattended-only `--dangerously-skip-permissions` flag is not passed, and the auto-approval settings the headless path writes (`toolPermission`, `artifactReviewPolicy`) are withheld as well, so the person at the terminal stays the approver for tool calls and artifact review.
+
+{{< include _snippets/agent_troubleshooting.md >}}
