@@ -1,0 +1,59 @@
+---
+title: Pi
+agent: pi
+agent_provider: "Earendil's"
+agent_name: Pi
+agent_url: "https://github.com/earendil-works/pi"
+---
+
+{{< include _snippets/agent_intro.md >}}
+
+## Options
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Instructions to append to the default system prompt. |
+| `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
+| `centaur` | Run in [centaur mode](#centaur-mode). |
+| `attempts` | Allow multiple scored attempts at solving the task. |
+| `model` | Model to use, defaulting to the task's main model. |
+| `thinking` | Pi thinking level. The default, `"off"`, leaves Inspect and provider reasoning defaults in effect. Other levels require reasoning support. |
+| `max_context_size` | Context window for Pi. Defaults to Inspect model metadata; required when that metadata is unavailable. |
+| `filter` | Filter for intercepting bridged model requests. |
+| `retry_refusals` | Number of times to retry refusals. |
+| `cwd` | Working directory for the Pi session. |
+| `env` | Sandbox environment variables, visible to the agent. Pi's config directory and offline settings cannot be overridden. |
+| `version` | Pi version to use. See [Installation](#installation). |
+
+: {tbl-colwidths=\[25,75\]}
+
+For example, specify a custom system prompt:
+
+```python
+{{< meta agent >}}(
+    system_prompt="Run the relevant tests after changing code."
+)
+```
+
+Pi uses its built-in tools without approval prompts, including in centaur mode. Extensions, MCP servers, bridged tools, and user image input are not supported. Only supplied skills are loaded. See the [API reference](reference/index.qmd#pi) for all options.
+
+## Installation
+
+Pi runs from a standalone release archive. Sandboxes need Linux x64 or arm64 with glibc and Bash, such as Debian or Ubuntu. Alpine is not supported. Node.js and npm are not required.
+
+Use `version` to control installation:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `"auto"` | Use Pi from the sandbox if installed, otherwise download the latest release. This is the default. |
+| `"sandbox"` | Require Pi to be installed in the sandbox. |
+| `"stable"`, `"latest"` | Download and use the latest release. |
+| `"x.x.x"` | Download and use a specific version. |
+
+: {tbl-colwidths=\[25,75\]}
+
+For offline evaluations, pre-install Pi and use `version="sandbox"`, or cache a specific release with [`download_agent_binary()`](reference/index.qmd#download_agent_binary) and use that version.
+
+{{< include _snippets/agent_centaur.md >}}
+
+{{< include _snippets/agent_troubleshooting.md >}}

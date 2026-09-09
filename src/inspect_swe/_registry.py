@@ -7,6 +7,7 @@ from ._gemini_cli.gemini_cli import gemini_cli
 from ._kimi_code.kimi_code import kimi_code
 from ._mini_swe_agent.mini_swe_agent import mini_swe_agent
 from ._opencode.opencode import opencode
+from ._pi.pi import pi
 
 __all__ = [
     "antigravity",
@@ -16,4 +17,5 @@ __all__ = [
     "kimi_code",
     "mini_swe_agent",
     "opencode",
+    "pi",
 ]
