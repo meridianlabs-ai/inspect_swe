@@ -1,0 +1,20 @@
+# Two identical containers, so that "which sandbox" is a question with a wrong
+# answer. `default` is a decoy: it is what an unnamed lookup resolves to, and
+# nothing in a run that selected `target` should ever touch it.
+#
+# Both services are the definition Inspect generates for a bare `sandbox="docker"`
+# (image, command, init, no network, short stop grace), so a test using this file
+# runs against the same container the rest of the suite does.
+services:
+  default:
+    image: "aisiuk/inspect-tool-support"
+    command: "tail -f /dev/null"
+    init: true
+    network_mode: none
+    stop_grace_period: 1s
+  target:
+    image: "aisiuk/inspect-tool-support"
+    command: "tail -f /dev/null"
+    init: true
+    network_mode: none
+    stop_grace_period: 1s

@@ -45,6 +45,8 @@ For example, here we specify a custom system prompt:
 
 {{< include _snippets/agent_bridged_tools.md >}}
 
+{{< include _snippets/agent_google_codec.md >}}
+
 ## Installation
 
 By default, the agent will download the current stable version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:

@@ -9,8 +9,10 @@ reference: inspect_swe
 ### claude_code
 ### codex_cli
 ### gemini_cli
+### kimi_code
 ### opencode
 ### mini_swe_agent
+### antigravity_cli
 ### antigravity
 
 ## Binaries
