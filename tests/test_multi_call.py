@@ -39,6 +39,7 @@ def test_claude_code_system_prompt_not_duplicated(sandbox: str) -> None:
     )[0]
     assert log.samples
     sample = log.samples[0]
+    _assert_sample_completed(sample)
 
     counts = _env_block_counts(sample)
     assert counts, "expected at least one model call carrying the system prompt"
@@ -46,6 +47,23 @@ def test_claude_code_system_prompt_not_duplicated(sandbox: str) -> None:
     assert max(counts) == 1, (
         f"system prompt duplicated in a resumed-turn request: per-call "
         f"'# Environment' counts were {counts}"
+    )
+
+
+def _assert_sample_completed(sample: EvalSample) -> None:
+    """Fail loudly if the sample was cut short by a limit or an error.
+
+    The multi_call solver only copies the agent's messages back into the sample
+    after all four turns complete, so a sample interrupted by a limit keeps just
+    the original input. Without this guard that surfaces downstream as a
+    misleading ``assert 1 >= 4`` (or, for the system-prompt regression test,
+    passes vacuously with a single turn's worth of model calls).
+    """
+    assert sample.limit is None, (
+        f"sample hit a {sample.limit.type} limit ({sample.limit.limit})"
+    )
+    assert sample.error is None, (
+        f"sample errored: {sample.error.message}\n{sample.error.traceback}"
     )
 
 
@@ -127,6 +145,7 @@ def check_multi_call(
     log = run_example("multi_call", agent, model, sandbox=sandbox)[0]
     assert log.samples
     sample = log.samples[0]
+    _assert_sample_completed(sample)
 
     user_messages = [m for m in sample.messages if isinstance(m, ChatMessageUser)]
     assistant_messages = [
