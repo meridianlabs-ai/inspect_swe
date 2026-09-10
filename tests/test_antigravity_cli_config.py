@@ -338,6 +338,65 @@ def test_authenticated_http_server_is_rejected() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param(
+            "https://user:sentinel-password@mcp.example.test/mcp",
+            id="user-and-password",
+        ),
+        pytest.param("https://user@mcp.example.test/mcp", id="user-only"),
+        pytest.param(
+            "https:user:sentinel-password@mcp.example.test/mcp", id="no-slashes"
+        ),
+        pytest.param(
+            "https:/user:sentinel-password@mcp.example.test/mcp", id="one-slash"
+        ),
+        pytest.param(
+            "https://user:p%40ss%2Fword@mcp.example.test/mcp", id="encoded-password"
+        ),
+    ],
+)
+def test_http_server_with_url_credentials_is_rejected(url: str) -> None:
+    """The same credential boundary, reached through the URL instead of a header.
+
+    HTTP Basic credentials in the userinfo component are the same secret as an
+    `Authorization` header and land in the same sandbox-readable
+    `$HOME/.gemini/config/mcp_config.json`. Refusing only `headers` left the
+    guard bypassable by moving the secret into the URL, where it was persisted
+    verbatim as `serverUrl`.
+    """
+    with pytest.raises(ValueError, match="bridged_tools"):
+        build_antigravity_mcp_config(
+            [MCPServerConfigHTTP(type="http", name="inspect-tools", url=url)],
+            eager_tools={"inspect-tools": ["submit"]},
+        )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param("https://mcp.example.test/mcp", id="plain"),
+        pytest.param("https://mcp.example.test/a@b/mcp", id="at-in-path"),
+        pytest.param("https://mcp.example.test/mcp?to=a@b", id="at-in-query"),
+    ],
+)
+def test_http_server_without_url_credentials_is_accepted(url: str) -> None:
+    """An `@` outside the authority is not a credential.
+
+    The check parses the URL rather than scanning for `@`, so a path or query
+    that legitimately contains one still reaches the registry. A guard that
+    rejected these would push callers toward disabling it.
+    """
+    config = json.loads(
+        build_antigravity_mcp_config(
+            [MCPServerConfigHTTP(type="http", name="inspect-tools", url=url)],
+            eager_tools={},
+        )
+    )
+    assert config["mcpServers"]["inspect-tools"]["serverUrl"] == url
+
+
 def test_authenticated_stdio_server_is_rejected() -> None:
     """Same credential boundary as the HTTP case above, for stdio transport.
 

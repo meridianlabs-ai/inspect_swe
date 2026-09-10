@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Iterable, Literal, Mapping, Sequence
+from urllib.parse import urlsplit
 
 from inspect_ai.agent import (
     Agent,
@@ -658,6 +659,39 @@ def _completed_onboarding() -> str:
     )
 
 
+# WHATWG 'special' schemes: a parser following that standard re-reads a missing `//`
+# into an authority for these, so a credential can hide behind the shorter spelling.
+_SPECIAL_URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ws", "wss", "ftp"})
+
+
+def _url_carries_credentials(url: str) -> bool:
+    """Whether an HTTP/SSE MCP URL embeds Basic credentials in its userinfo.
+
+    Parsed rather than pattern-matched: `urlsplit` isolates the authority, so a
+    password containing `@` or `/`, or a path or query that merely contains `@`,
+    is classified on structure instead of on the first matching character. A URL
+    too malformed to parse is treated as carrying credentials -- the sandbox
+    boundary is the wrong place to guess.
+
+    An http(s) URL with no `//` is treated the same way. `urlsplit` reads
+    `https:user:pw@host/mcp` as a scheme plus an opaque path, so it reports no
+    userinfo at all -- while a WHATWG special-URL parser, which is what a browser
+    or a JS/Go client uses, normalizes exactly that string back to
+    `https://user:pw@host/mcp` and sends the Basic credential. Refusing rather
+    than guessing which parser the CLI reaches for: either way the secret would
+    already be sitting in the sandbox-readable registry.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return True
+    if parts.scheme in _SPECIAL_URL_SCHEMES and not url[
+        len(parts.scheme) + 1 :
+    ].startswith("//"):
+        return True
+    return bool(parts.username or parts.password)
+
+
 def build_antigravity_mcp_config(
     mcp_servers: Sequence[MCPServerConfig],
     eager_tools: Mapping[str, Iterable[str]],
@@ -702,6 +736,24 @@ def build_antigravity_mcp_config(
                 f"MCP server {server.name!r} passed to `mcp_servers` carries "
                 "HTTP headers (e.g. an Authorization token). Antigravity CLI "
                 "persists this registry verbatim to "
+                "$HOME/.gemini/config/mcp_config.json inside the sandbox, "
+                "which the evaluated CLI -- and any of its tools -- can read, "
+                "so a real credential placed here crosses the credential "
+                "boundary (see AGENTS.md, 'Agent Guardrails'). Expose an "
+                "authenticated server via `bridged_tools` instead, which "
+                "keeps real credentials out of the sandbox entirely."
+            )
+        if isinstance(server, MCPServerConfigHTTP) and _url_carries_credentials(
+            server.url
+        ):
+            # Basic auth in the URL is the same credential as an Authorization
+            # header, and it lands in the same sandbox-readable file -- the
+            # header check above would otherwise be trivially bypassed by
+            # moving the secret into the userinfo component.
+            raise ValueError(
+                f"MCP server {server.name!r} passed to `mcp_servers` carries a "
+                "username or password in its URL (HTTP Basic credentials). "
+                "Antigravity CLI persists this registry verbatim to "
                 "$HOME/.gemini/config/mcp_config.json inside the sandbox, "
                 "which the evaluated CLI -- and any of its tools -- can read, "
                 "so a real credential placed here crosses the credential "
