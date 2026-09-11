@@ -27,6 +27,7 @@ The following options are supported for customizing the behavior of the agent:
 | `version` | Version of the `google-antigravity` SDK to provision when not already present in the image. |
 | `endpoint_model` | Model name the SDK client presents to the bridge endpoint. |
 | `debug` | Trace the full runner output. |
+| `exec_timeout` | Wall-time limit in seconds. Default: 1,800 (30 minutes); a healthy invocation exceeding it is terminated. `0` times out immediately; `None` is unbounded. |
 
 : {tbl-colwidths=\[25,75\]}
 

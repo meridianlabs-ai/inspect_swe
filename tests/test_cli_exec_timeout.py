@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
+from importlib import import_module
 from subprocess import Popen
 from sys import executable
 from typing import TypeVar, cast, final
@@ -13,6 +14,7 @@ from inspect_ai.util import SandboxEnvironment
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 from inspect_ai.util._sandbox import exec_remote as core_exec_remote
 from inspect_ai.util._subprocess import ExecResult
+from inspect_swe._antigravity.antigravity import antigravity
 from inspect_swe._codex_cli.codex_cli import codex_cli
 from pydantic import BaseModel
 
@@ -99,12 +101,17 @@ class _CoreKillSandbox:
         stream: bool,
     ) -> ExecResult[str]:
         assert stream is False
-        return await core_exec_remote.exec_remote_awaitable(
-            cast(SandboxEnvironment, self),
-            cmd,
-            sandbox_default_poll_interval=0.001,
-            options=options,
-        )
+        # A deadline the test owns, far above the sub-second timeouts these cases
+        # exercise, so it only trips when the production bounding is missing. Without
+        # it a regression to a bare await hangs the suite instead of failing it, and
+        # leaves the real subprocess alive past `cleanup()`.
+        with anyio.fail_after(30):
+            return await core_exec_remote.exec_remote_awaitable(
+                cast(SandboxEnvironment, self),
+                cmd,
+                sandbox_default_poll_interval=0.001,
+                options=options,
+            )
 
     async def exec_model_request(
         self,
@@ -254,3 +261,52 @@ def test_codex_exec_timeout_leaves_fast_cli_invocation_unchanged() -> None:
 
     assert result.messages[-1].text == "Solve the task."
     assert sandbox.timeout == 1800.0
+
+
+async def _ensure_antigravity_sdk(*_args: object, **_kwargs: object) -> str:
+    return "python"
+
+
+def _run_antigravity(
+    sandbox: _CoreKillSandbox | _FastSandbox,
+    *,
+    exec_timeout: float | None = None,
+) -> AgentState:
+    antigravity_module = import_module("inspect_swe._antigravity.antigravity")
+
+    with (
+        patch.object(antigravity_module, "sandbox_agent_bridge", _sandbox_agent_bridge),
+        patch.object(antigravity_module, "sandbox_env", return_value=sandbox),
+        patch.object(
+            antigravity_module, "ensure_antigravity_sdk", _ensure_antigravity_sdk
+        ),
+        patch.object(antigravity_module, "resolve_agent_cwd", _resolve_cwd),
+        patch.object(antigravity_module, "store", return_value=_FakeStore()),
+    ):
+        agent = (
+            antigravity()
+            if exec_timeout is None
+            else antigravity(exec_timeout=exec_timeout)
+        )
+        return anyio.run(agent, _agent_state())
+
+
+def test_antigravity_exec_timeout_kills_real_core_process() -> None:
+    sandbox = _CoreKillSandbox()
+
+    try:
+        with (
+            patch.object(
+                core_exec_remote, "exec_model_request", sandbox.exec_model_request
+            ),
+            pytest.raises(
+                RuntimeError,
+                match="Antigravity CLI execution timed out after 0.01 seconds",
+            ),
+        ):
+            _ = _run_antigravity(sandbox, exec_timeout=0.01)
+
+        assert sandbox.kill_rpc_count == 1
+        assert sandbox.exit_code == -9
+    finally:
+        sandbox.cleanup()
