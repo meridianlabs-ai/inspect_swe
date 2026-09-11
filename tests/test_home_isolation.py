@@ -25,6 +25,13 @@ from inspect_swe._util.appdirs import package_cache_dir, package_data_dir
 # what the conftest redirect already covers for every module.
 _REPRESENTATIVE_TEST_FILE = "tests/test_codex_agentbinary.py"
 
+# The live catalog drift check makes a real network request and is independently
+# runnable in the outer suite; it has nothing to do with home-directory isolation, and
+# a network failure/skip here must not be conflated with a home-isolation regression.
+_LIVE_DRIFT_TEST = (
+    f"{_REPRESENTATIVE_TEST_FILE}::test_bundled_catalog_tracks_live_latest"
+)
+
 
 def _is_under(path: Path, parent: Path) -> bool:
     return parent.resolve() in (path.resolve(), *path.resolve().parents)
@@ -67,6 +74,8 @@ def test_a_real_pytest_run_writes_nothing_into_a_clean_home() -> None:
                 "-m",
                 "pytest",
                 _REPRESENTATIVE_TEST_FILE,
+                "--deselect",
+                _LIVE_DRIFT_TEST,
                 "-q",
                 "-p",
                 "no:cacheprovider",
