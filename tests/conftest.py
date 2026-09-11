@@ -1,12 +1,17 @@
 import importlib
 import os
+import shutil
 import subprocess
+import tempfile
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, Callable, List, Literal, TypeVar, cast
 from unittest.mock import MagicMock
 
 import pytest
 from inspect_ai import eval
 from inspect_ai.log import EvalLog
+from inspect_swe._util import appdirs
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -21,7 +26,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+_HOME_ISOLATION_ROOT: Path | None = None
+
+
 def pytest_configure(config: pytest.Config) -> None:
+    # `minisweagent/__init__.py` mkdir()s its global config directory AT IMPORT, so a
+    # fixture cannot get there first -- collection imports the test modules. It honours
+    # MSWEA_GLOBAL_CONFIG_DIR, so redirect before anything imports it.
+    global _HOME_ISOLATION_ROOT
+    _HOME_ISOLATION_ROOT = Path(tempfile.mkdtemp(prefix="inspect-swe-test-home-"))
+    os.environ["MSWEA_GLOBAL_CONFIG_DIR"] = str(_HOME_ISOLATION_ROOT / "mini-swe-agent")
+
     config.addinivalue_line("markers", "slow: mark test as slow to run")
     config.addinivalue_line("markers", "api: mark test as requiring API access")
     config.addinivalue_line("markers", "flaky: mark test as flaky/unreliable")
@@ -285,3 +300,38 @@ def mock_pip_download_failure() -> Any:
                 stderr="ERROR: Could not find a version that satisfies the requirement (network error)",
             )
             yield mock_run
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _package_dirs_stay_out_of_the_real_home() -> Iterator[None]:
+    """Redirect the package cache/data roots so the suite never writes into $HOME.
+
+    Agent binaries, wheels, node and ripgrep all resolve their download directory
+    through `appdirs.package_cache_dir`, which `mkdir(parents=True)`s eagerly -- so
+    merely *resolving* a path creates it. A test that mocks the installer but not the
+    resolution still writes `~/.cache/inspect_swe/...` on the developer's machine.
+
+    The patch goes on `user_cache_path`/`user_data_path` as imported into
+    `_util.appdirs`, NOT on `package_cache_dir` itself: eleven modules do
+    `from .._util.appdirs import package_cache_dir`, so each holds its own reference and
+    patching that name would miss every one of them. Patching platformdirs' entry points
+    inside the one module that calls them covers all callers however they imported.
+
+    Setting `XDG_CACHE_HOME` would also work on Linux, and only on Linux: platformdirs
+    resolves macOS caches to `~/Library/Caches` and ignores XDG, so that variant would
+    look green in CI while still writing to a developer's home.
+    """
+    root = Path(tempfile.mkdtemp(prefix="inspect-swe-test-dirs-"))
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(appdirs, "user_cache_path", lambda _package: root / "cache")
+    monkeypatch.setattr(appdirs, "user_data_path", lambda _package: root / "data")
+    try:
+        yield
+    finally:
+        monkeypatch.undo()
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    if _HOME_ISOLATION_ROOT is not None:
+        shutil.rmtree(_HOME_ISOLATION_ROOT, ignore_errors=True)
