@@ -22,7 +22,7 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
-from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.centaur import CentaurOptions, CommandsFilter, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -60,6 +60,8 @@ def opencode(
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
     debug: bool | None = None,
+    *,
+    commands_filter: CommandsFilter | None = None,
 ) -> Agent:
     """OpenCode agent.
 
@@ -79,6 +81,8 @@ def opencode(
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
         centaur: Run in 'centaur' mode, which makes OpenCode available to an Inspect `human_cli()` agent rather than running it unattended.
+        commands_filter: In centaur mode only, filter or augment the human agent's
+            command list (e.g. to add task-specific commands). Ignored outside centaur mode.
         attempts: Configure agent to make multiple attempts
         model: Model name to use for inspect bridge (defaults to main model for task)
         model_aliases: Optional mapping of model names to Model instances or model name strings.
@@ -263,6 +267,8 @@ def opencode(
                     opencode_cmd=cmd,
                     agent_env=agent_env,
                     state=state,
+                    user=user,
+                    commands_filter=commands_filter,
                 )
             else:
                 debug_output: list[str] = []
@@ -396,6 +402,8 @@ async def _run_opencode_centaur(
     opencode_cmd: list[str],
     agent_env: dict[str, str],
     state: AgentState,
+    user: str | None = None,
+    commands_filter: CommandsFilter | None = None,
 ) -> None:
     instructions = (
         "OpenCode:\n\n"
@@ -411,4 +419,6 @@ async def _run_opencode_centaur(
     alias_cmd = "alias opencode='" + alias_cmd.replace("'", "'\\''") + "'"
     bashrc = "\n".join(agent_env_vars + ["", alias_cmd])
 
-    await run_centaur(options, instructions, bashrc, state)
+    await run_centaur(
+        options, instructions, bashrc, state, user=user, commands_filter=commands_filter
+    )

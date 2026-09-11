@@ -1,5 +1,12 @@
-from inspect_ai.agent import AgentState, human_cli, run
+import inspect
+from collections.abc import Callable
+from typing import cast
+
+from inspect_ai.agent import Agent, AgentState, human_cli, run
+from inspect_ai.agent._human.commands.command import HumanAgentCommand
 from pydantic import BaseModel, Field
+
+CommandsFilter = Callable[[list[HumanAgentCommand]], list[HumanAgentCommand]]
 
 
 class CentaurOptions(BaseModel):
@@ -20,13 +27,65 @@ class CentaurOptions(BaseModel):
 
 
 async def run_centaur(
-    options: CentaurOptions, instructions: str, bashrc: str, state: AgentState
+    options: CentaurOptions,
+    instructions: str,
+    bashrc: str,
+    state: AgentState,
+    user: str | None = None,
+    commands_filter: CommandsFilter | None = None,
 ) -> None:
-    agent = human_cli(
+    if commands_filter is not None:
+        try:
+            signature = inspect.signature(human_cli)
+        except (TypeError, ValueError) as error:
+            raise RuntimeError(
+                "commands_filter requires an inspect_ai human_cli() signature "
+                "that can be inspected."
+            ) from error
+
+        commands_filter_parameter = signature.parameters.get("commands_filter")
+        supports_commands_filter = (
+            commands_filter_parameter is not None
+            and commands_filter_parameter.kind is not inspect.Parameter.POSITIONAL_ONLY
+        ) or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        if not supports_commands_filter:
+            raise RuntimeError(
+                "commands_filter requires an inspect_ai version whose "
+                "human_cli() accepts commands_filter=."
+            )
+
+        agent = _human_cli_with_commands_filter(
+            options, instructions, bashrc, user, commands_filter
+        )
+    else:
+        agent = human_cli(
+            answer=options.answer,
+            intermediate_scoring=options.intermediate_scoring,
+            record_session=options.record_session,
+            instructions=instructions,
+            bashrc=bashrc,
+            user=user,
+        )
+
+    await run(agent, state)
+
+
+def _human_cli_with_commands_filter(
+    options: CentaurOptions,
+    instructions: str,
+    bashrc: str,
+    user: str | None,
+    commands_filter: CommandsFilter,
+) -> Agent:
+    return cast(Callable[..., Agent], human_cli)(
         answer=options.answer,
         intermediate_scoring=options.intermediate_scoring,
         record_session=options.record_session,
         instructions=instructions,
         bashrc=bashrc,
+        user=user,
+        commands_filter=commands_filter,
     )
-    await run(agent, state)
