@@ -43,7 +43,6 @@ from inspect_ai.tool import (
 )
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
-from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
@@ -55,7 +54,11 @@ from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
-from .._util.sandbox import resolve_agent_cwd
+from .._util.sandbox import (
+    DEFAULT_CLI_EXEC_TIMEOUT_SECONDS,
+    resolve_agent_cwd,
+    run_unattended_agent,
+)
 from .._util.toml import _format_value
 from .agentbinary import kimi_code_binary_source
 
@@ -123,6 +126,7 @@ def kimi_code(
     model_aliases: dict[str, str | Model] | None = None,
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
+    exec_timeout: float | None = DEFAULT_CLI_EXEC_TIMEOUT_SECONDS,
     disallowed_tools: Sequence[str] | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
@@ -162,6 +166,9 @@ def kimi_code(
         model_aliases: Optional mapping of model names to Model instances or model name strings.
         filter: Filter for intercepting bridged model requests
         retry_refusals: Should refusals be retried? (pass number of times to retry)
+        exec_timeout: Wall-time limit in seconds for each unattended Kimi Code
+            invocation. Defaults to 30 minutes; an invocation that exceeds it is
+            terminated. `0` times out immediately; `None` disables the deadline.
         disallowed_tools: Tool names to deny via Kimi permission rules
         cwd: Working directory to run kimi within
         env: Environment variables to set for kimi
@@ -366,16 +373,14 @@ def kimi_code(
                     # BLOCKING_MCP_ENV and codex via required=true; kimi has
                     # no equivalent knob.
 
-                    result = await sbox.exec_remote(
-                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
-                        + agent_cmd,
-                        options=ExecRemoteAwaitableOptions(
-                            cwd=agent_cwd,
-                            env=agent_env,
-                            user=user,
-                            concurrency=False,
-                        ),
-                        stream=False,
+                    result = await run_unattended_agent(
+                        sbox,
+                        ["bash", "-c", 'exec 0</dev/null; "$@"', "bash"] + agent_cmd,
+                        cwd=agent_cwd,
+                        env=agent_env,
+                        user=user,
+                        timeout=exec_timeout,
+                        agent_name="Kimi Code",
                     )
 
                     if debug:

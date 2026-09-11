@@ -27,6 +27,7 @@ The following options are supported for customizing the behavior of the agent:
 | `gemini_model` | Gemini model name to pass to CLI. This bypasses the auto-router. Use `"gemini-2.5-pro"` (default) or `"gemini-2.5-flash"`. |
 | `filter` | Filter for intercepting bridged model requests. |
 | `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
+| `exec_timeout` | Wall-time limit in seconds. Default: 1,800 (30 minutes); a healthy invocation exceeding it is terminated. `0` times out immediately; `None` is unbounded. |
 | `cwd` | Working directory for {{< meta agent_name >}} session. |
 | `env` | Environment variables to set for {{< meta agent_name >}}. |
 | `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |

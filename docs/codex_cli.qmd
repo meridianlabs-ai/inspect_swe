@@ -33,6 +33,7 @@ The following options are supported for customizing the behavior of the agent:
 | `model` | Model name to use for agent (defaults to main model for task). |
 | `filter` | Filter for intercepting bridged model requests. |
 | `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
+| `exec_timeout` | Wall-time limit in seconds. Default: 1,800 (30 minutes); a healthy invocation exceeding it is terminated. `0` times out immediately; `None` is unbounded. |
 | `home_dir` | Home directory to use for codex cli. When set, AGENTS.md and the MCP configuration will be written here rather than to .codex
 | `cwd` | Working directory for {{< meta agent_name >}} session. |
 | `env` | Environment variables to set for {{< meta agent_name >}}. |

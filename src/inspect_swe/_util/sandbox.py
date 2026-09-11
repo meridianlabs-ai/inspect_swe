@@ -3,6 +3,8 @@ from pathlib import PurePosixPath
 from typing import Literal, TypeAlias, cast
 
 from inspect_ai.util import SandboxEnvironment
+from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
+from inspect_ai.util._subprocess import ExecResult
 
 logger = getLogger(__name__)
 
@@ -12,6 +14,8 @@ SandboxPlatform: TypeAlias = Literal[
 """Target platform identifier for sandbox binary and wheel downloads."""
 
 SANDBOX_INSTALL_DIR = "/var/tmp/.5c95f967ca830048"
+
+DEFAULT_CLI_EXEC_TIMEOUT_SECONDS = 30.0 * 60.0
 
 
 async def detect_sandbox_platform(sandbox: SandboxEnvironment) -> SandboxPlatform:
@@ -104,3 +108,41 @@ async def sandbox_exec(
     if not result.success:
         raise RuntimeError(f"Error executing sandbox command {cmd}: {result.stderr}")
     return result.stdout.strip()
+
+
+async def run_unattended_agent(
+    sandbox: SandboxEnvironment,
+    cmd: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str],
+    user: str | None,
+    timeout: float | None,
+    agent_name: str,
+) -> ExecResult[str]:
+    """Run an unattended CLI command with a configured process lifetime.
+
+    ``exec_remote`` kills the sandbox process before raising ``TimeoutError`` when
+    the configured deadline expires. ``None`` disables the deadline. Translating
+    the timeout to ``RuntimeError`` lets Inspect record it as a regular sample error
+    and apply ``retry_on_error`` rather than treating it as an eval working-time
+    limit.
+    """
+    try:
+        return await sandbox.exec_remote(
+            cmd=cmd,
+            options=ExecRemoteAwaitableOptions(
+                cwd=cwd,
+                env=env,
+                user=user,
+                concurrency=False,
+                timeout=timeout,
+            ),
+            stream=False,
+        )
+    except TimeoutError as ex:
+        if timeout is None:
+            raise
+        raise RuntimeError(
+            f"{agent_name} CLI execution timed out after {timeout:g} seconds."
+        ) from ex

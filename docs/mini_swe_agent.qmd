@@ -21,6 +21,7 @@ The following options are supported for customizing the behavior of the agent:
 | `filter` | Filter for intercepting bridged model requests. |
 | `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
 | `compaction` | Compaction strategy for managing context window overflow. |
+| `exec_timeout` | Wall-time limit in seconds. Default: 1,800 (30 minutes); a healthy invocation exceeding it is terminated. `0` times out immediately; `None` is unbounded. |
 | `cwd` | Working directory for {{< meta agent_name >}} session. |
 | `env` | Environment variables to set for {{< meta agent_name >}}. |
 | `user` | User to execute {{< meta agent_name >}} as in the sandbox. |

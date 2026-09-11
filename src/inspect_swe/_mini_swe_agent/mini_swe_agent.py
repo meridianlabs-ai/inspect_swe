@@ -22,13 +22,16 @@ from inspect_ai.model import (
 from inspect_ai.scorer import score
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
-from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from .._util._async import is_callable_coroutine
 from .._util.agentwheel import AgentWheelSource, ensure_agent_wheel_installed
 from .._util.centaur import CentaurOptions, run_centaur
 from .._util.messages import build_user_prompt
-from .._util.sandbox import resolve_agent_cwd
+from .._util.sandbox import (
+    DEFAULT_CLI_EXEC_TIMEOUT_SECONDS,
+    resolve_agent_cwd,
+    run_unattended_agent,
+)
 from .._util.trace import trace
 from .setup import (
     RESUMABLE_AGENT_PATH,
@@ -61,6 +64,7 @@ def mini_swe_agent(
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     compaction: CompactionStrategy | None = None,
+    exec_timeout: float | None = DEFAULT_CLI_EXEC_TIMEOUT_SECONDS,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     user: str | None = None,
@@ -97,6 +101,10 @@ def mini_swe_agent(
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         compaction: Compaction strategy for managing context window overflow.
+        exec_timeout: Wall-time limit in seconds for each unattended
+            mini-swe-agent invocation. Defaults to 30 minutes; an invocation that
+            exceeds it is terminated. `0` times out immediately; `None` disables
+            the deadline.
         cwd: Working directory to run mini-swe-agent within.
         env: Environment variables to set for mini-swe-agent.
         user: User to execute mini-swe-agent with.
@@ -222,16 +230,14 @@ def mini_swe_agent(
                     }
                     agent_cmd = cmd + ["--task", agent_prompt]
 
-                    result = await sbox.exec_remote(
-                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
-                        + agent_cmd,
-                        options=ExecRemoteAwaitableOptions(
-                            cwd=agent_cwd,
-                            env=run_env,
-                            user=user,
-                            concurrency=False,
-                        ),
-                        stream=False,
+                    result = await run_unattended_agent(
+                        sbox,
+                        ["bash", "-c", 'exec 0</dev/null; "$@"', "bash"] + agent_cmd,
+                        cwd=agent_cwd,
+                        env=run_env,
+                        user=user,
+                        timeout=exec_timeout,
+                        agent_name="mini-swe-agent",
                     )
 
                     # track debug output
