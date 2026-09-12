@@ -99,6 +99,9 @@ def opencode(
             - "sandbox": Use sandbox version (raises RuntimeError if not available)
             - "stable"/"latest": Download and use the latest version
             - "x.x.x": Download and use a specific version
+            The prompt is delivered on stdin, which needs opencode >= 1.14.42;
+            earlier versions prepend a newline to piped input (only reachable
+            with an older opencode pre-installed in the sandbox).
         debug: Trace all debug output.
     """
     # resolve centaur
@@ -300,8 +303,11 @@ def opencode(
                     # main-thread tracking on the task input, and for prompts
                     # containing `"` that mismatch let opencode's session-title
                     # generation call displace the agent's answer as the sample
-                    # output. Piped stdin is used verbatim (`resolveRunInput`),
-                    # and also sidesteps argv length limits for long prompts.
+                    # output. Piped stdin is used verbatim (`resolveRunInput`,
+                    # opencode >= 1.14.42; earlier versions prepend "\n" to it,
+                    # which only costs exact-match anchoring for prompts under
+                    # the bridge's 20-char containment floor), and also
+                    # sidesteps argv length limits for long prompts.
                     # exec_remote closes stdin after writing `input`, giving
                     # opencode the EOF it needs.
                     result = await sbox.exec_remote(

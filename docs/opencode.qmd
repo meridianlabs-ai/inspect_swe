@@ -57,6 +57,10 @@ By default, the agent will download the current latest version of {{< meta agent
 
 : {tbl-colwidths=\[25,75\]}
 
+::: callout-note
+The task prompt is delivered to `opencode run` on stdin, which requires {{< meta agent_name >}} 1.14.42 or later (released May 2026). Earlier versions prepend a newline to piped input, and for very short prompts (under 20 characters) that can keep the agent's main conversation from being recognised in the Inspect transcript. This only matters when an older version is already installed in your sandbox image and picked up via `"auto"` or `"sandbox"`; downloaded versions are always recent enough.
+:::
+
 {{< include _snippets/agent_installation.md >}}
 
 {{< include _snippets/agent_centaur.md >}}
