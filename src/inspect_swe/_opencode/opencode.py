@@ -109,8 +109,8 @@ def opencode(
             makes opencode's session title non-default, so it skips its
             automatic title-generation model call -- an extra bridged call
             per session whose result a headless run never uses. Defaults to
-            `None` (opencode's normal title generation). Requires an opencode
-            that supports `run --title`; leave unset for older versions.
+            `None`, which preserves opencode's normal title-generation
+            behavior for existing callers.
     """
     # resolve centaur
     if centaur is True:
@@ -233,7 +233,11 @@ def opencode(
                 # `ensureTitle` returns early). That avoids an extra bridged
                 # model call per session whose result a headless run never uses.
                 if session_title is not None:
-                    cmd.extend(["--title", session_title])
+                    # A single `--title=<value>` argument (rather than two
+                    # separate argv entries) keeps a dash-prefixed title
+                    # (e.g. "--continue") from being parsed by opencode's CLI
+                    # parser as another option instead of a literal value.
+                    cmd.append(f"--title={session_title}")
 
             # setup agent env (add dependencies to PATH so opencode can find them)
             path = ":".join(

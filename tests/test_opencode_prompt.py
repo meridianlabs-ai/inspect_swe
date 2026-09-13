@@ -144,15 +144,15 @@ def test_no_session_title_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_session_title_is_passed_through(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A supplied title is passed as `--title <value>`, which makes opencode's
-    # session title non-default and skips its automatic title-generation call.
+    # A supplied title is passed as a single `--title=<value>` argument, which
+    # makes opencode's session title non-default and skips its automatic
+    # title-generation call.
     sbox = run_opencode(
         monkeypatch, [ChatMessageUser(content=PROMPT)], session_title="my run"
     )
 
     (call,) = sbox.exec_remote_calls
-    cmd = call["cmd"]
-    assert cmd[cmd.index("--title") + 1] == "my run"
+    assert "--title=my run" in call["cmd"]
 
 
 def test_session_title_is_passed_on_continuation_turns(
@@ -172,7 +172,41 @@ def test_session_title_is_passed_on_continuation_turns(
     (call,) = sbox.exec_remote_calls
     cmd = call["cmd"]
     assert "--continue" in cmd
-    assert cmd[cmd.index("--title") + 1] == "my run"
+    assert "--title=my run" in cmd
+
+
+def test_dash_prefixed_session_title_is_not_parsed_as_a_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `["--title", "-draft"]` as two argv entries would make opencode's yargs
+    # parser treat "-draft" as an unknown option rather than a literal title.
+    # A single `--title=-draft` argument is unambiguous.
+    sbox = run_opencode(
+        monkeypatch, [ChatMessageUser(content=PROMPT)], session_title="-draft"
+    )
+
+    (call,) = sbox.exec_remote_calls
+    cmd = call["cmd"]
+    assert "--title=-draft" in cmd
+    # never appears as its own argv entry that a parser could misread as a flag
+    assert "-draft" not in cmd
+
+
+def test_continue_prefixed_session_title_does_not_trigger_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `["--title", "--continue"]` as two argv entries would let opencode's
+    # parser read "--continue" as its own flag, silently dropping the title
+    # and making a fresh run resume an unrelated prior session. Encoding the
+    # title as one `--title=<value>` argument keeps it a literal value.
+    sbox = run_opencode(
+        monkeypatch, [ChatMessageUser(content=PROMPT)], session_title="--continue"
+    )
+
+    (call,) = sbox.exec_remote_calls
+    cmd = call["cmd"]
+    assert "--title=--continue" in cmd
+    assert cmd.count("--continue") == 0
 
 
 def test_continuation_turn_uses_stdin_too(monkeypatch: pytest.MonkeyPatch) -> None:
