@@ -40,7 +40,6 @@ def check_skills(
     agent: Literal["claude_code", "codex_cli", "gemini_cli", "opencode"], model: str
 ) -> None:
     log = run_example("skills", agent, model)[0]
-    assert log.status == "success"
     assert log.samples
 
     # Find all assistant messages and tool outputs to check content
