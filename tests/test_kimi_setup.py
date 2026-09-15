@@ -2,11 +2,16 @@
 
 import json
 import re
+from contextlib import asynccontextmanager
 from importlib import import_module
+from types import SimpleNamespace
+from typing import AsyncIterator
 from unittest.mock import AsyncMock, Mock, patch
 
 import anyio
 import pytest
+from inspect_ai.agent import AgentState
+from inspect_ai.agent._human.commands.command import HumanAgentCommand
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageAssistant,
@@ -32,8 +37,11 @@ from inspect_swe._kimi_code.kimi_code import (
     _mcp_json,
     _resolve_max_context_size,
     _resolve_model,
+    _run_kimi_code_centaur,
     _strip_repeat_reminders,
+    kimi_code,
 )
+from inspect_swe._util.centaur import CentaurOptions
 
 from tests.conftest import skip_if_github_action
 
@@ -417,6 +425,112 @@ def test_is_legacy_str_filter_dispatch() -> None:
 
     assert _is_legacy_str_filter(legacy) is True
     assert _is_legacy_str_filter(modern) is False
+
+
+def test_run_kimi_code_centaur_forwards_user_and_commands_filter() -> None:
+    captured: dict[str, object] = {}
+
+    def _commands_filter(
+        commands: list[HumanAgentCommand],
+    ) -> list[HumanAgentCommand]:
+        return commands
+
+    async def fake_run_centaur(
+        options: CentaurOptions,
+        instructions: str,
+        bashrc: str,
+        state: AgentState,
+        user: str | None = None,
+        commands_filter: object = None,
+    ) -> None:
+        captured["user"] = user
+        captured["commands_filter"] = commands_filter
+
+    with patch.object(_KIMI_CODE_MODULE, "run_centaur", fake_run_centaur):
+        anyio.run(
+            _run_kimi_code_centaur,
+            CentaurOptions(),
+            ["kimi"],
+            {},
+            AgentState(messages=[]),
+            "agent",
+            _commands_filter,
+        )
+
+    assert captured["user"] == "agent"
+    assert captured["commands_filter"] is _commands_filter
+
+
+def test_kimi_code_factory_forwards_user_and_commands_filter_to_centaur_dispatch() -> (
+    None
+):
+    """Coverage gap in the dispatch call site.
+
+    The test above exercises `_run_kimi_code_centaur` directly, so it would
+    still pass even if the public `kimi_code()` factory stopped passing
+    `user=`/`commands_filter=` at its `_run_kimi_code_centaur(...)` call site
+    -- the line the original bug lived on. Drive the actual factory through
+    to that dispatch with every sandbox/bridge dependency mocked.
+    """
+    captured: dict[str, object] = {}
+
+    def _commands_filter(
+        commands: list[HumanAgentCommand],
+    ) -> list[HumanAgentCommand]:
+        return commands
+
+    async def fake_run_kimi_code_centaur(
+        *,
+        options: CentaurOptions,
+        kimi_cmd: list[str],
+        agent_env: dict[str, str],
+        state: AgentState,
+        user: str | None = None,
+        commands_filter: object = None,
+    ) -> None:
+        captured["user"] = user
+        captured["commands_filter"] = commands_filter
+
+    sbox = Mock()
+    sbox.exec = AsyncMock(return_value=SimpleNamespace(stdout="/root\n"))
+    sbox.write_file = AsyncMock()
+
+    @asynccontextmanager
+    async def fake_bridge(
+        state: AgentState, **kwargs: object
+    ) -> AsyncIterator[SimpleNamespace]:
+        yield SimpleNamespace(port=3100, mcp_server_configs=[], state=state)
+
+    with (
+        patch.object(
+            _KIMI_CODE_MODULE, "_run_kimi_code_centaur", fake_run_kimi_code_centaur
+        ),
+        patch.object(_KIMI_CODE_MODULE, "sandbox_agent_bridge", fake_bridge),
+        patch.object(_KIMI_CODE_MODULE, "sandbox_env", Mock(return_value=sbox)),
+        patch.object(
+            _KIMI_CODE_MODULE, "resolve_agent_cwd", AsyncMock(return_value="/work")
+        ),
+        patch.object(
+            _KIMI_CODE_MODULE,
+            "ensure_agent_binary_installed",
+            AsyncMock(return_value="/usr/local/bin/kimi"),
+        ),
+        patch.object(
+            _KIMI_CODE_MODULE,
+            "resolve_inspect_model",
+            Mock(return_value=Mock(spec=Model)),
+        ),
+    ):
+        agent_fn = kimi_code(
+            centaur=True,
+            user="agent",
+            commands_filter=_commands_filter,
+            max_context_size=100_000,
+        )
+        anyio.run(agent_fn, AgentState(messages=[]))
+
+    assert captured["user"] == "agent"
+    assert captured["commands_filter"] is _commands_filter
 
 
 @skip_if_github_action
