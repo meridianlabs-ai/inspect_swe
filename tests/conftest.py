@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from inspect_ai import eval
-from inspect_ai.log import EvalLog
+from inspect_ai.log import EvalLog, EvalSample
 from inspect_swe._util import appdirs
 
 
@@ -188,6 +188,8 @@ def run_example(
     ],
     model: str,
     sandbox: str | None = None,
+    *,
+    assert_completed: bool = True,
 ) -> list[EvalLog]:
     example_file = os.path.join("examples", example)
     task_args: dict[str, str] = {
@@ -235,13 +237,39 @@ def run_example(
     # scoring gets a further time_limit / 2. That scoring grant is moot today
     # (no example defines a scorer), but adding one would put the worst case
     # at exactly 900s -- revisit the limits if that happens.
-    return eval(
+    logs = eval(
         example_file,
         model=model,
         limit=1,
         task_args=task_args,
         time_limit=600 if agent in ("gemini_cli", "mini_swe_agent") else 300,
         token_limit=500_000,
+    )
+
+    # Every caller gets the completion check, because a sample cut short by a
+    # limit or an error is never a result worth asserting on. Left to the
+    # individual tests it either surfaces as a misleading downstream assertion
+    # (the multi_call solver only copies the agent's messages back after all
+    # four turns, so a truncated sample reports a bare "assert 1 >= 4") or as a
+    # vacuous pass. On 2026-09-15 test_gemini_cli_web_search ran 604.81s
+    # against its 600s time limit and still reported green, because the one
+    # search call it asserts on had already happened before the limit hit.
+    # A test that legitimately expects a limit passes assert_completed=False.
+    if assert_completed:
+        for log in logs:
+            for sample in log.samples or []:
+                _assert_sample_completed(sample)
+
+    return logs
+
+
+def _assert_sample_completed(sample: EvalSample) -> None:
+    """Fail loudly if the sample was cut short by a limit or an error."""
+    assert sample.limit is None, (
+        f"sample hit a {sample.limit.type} limit ({sample.limit.limit})"
+    )
+    assert sample.error is None, (
+        f"sample errored: {sample.error.message}\n{sample.error.traceback}"
     )
 
 
