@@ -292,9 +292,9 @@ def assert_eval_completed(log: EvalLog) -> list[EvalSample]:
 
     - `log.status` is the *task* verdict. It is "error" when the task itself
       raised or when enough samples errored to trip `fail_on_error`
-      (`_should_eval_fail` in `inspect_ai/_eval/task/error.py:5`, applied at
-      `_eval/task/run.py:1651-1658`); these tests never pass `fail_on_error`,
-      so the default applies and a single errored sample is enough. A task
+      (`_should_eval_fail` in `inspect_ai/_eval/task/error.py`, applied in
+      `_eval/task/run.py`); these tests never pass `fail_on_error`, so the
+      default applies and a single errored sample is enough. A task
       failure that happens before the log is opened (unresolvable model, a
       sandbox that will not build) raises out of `eval()` instead, so it
       already fails loudly.

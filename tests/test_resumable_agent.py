@@ -127,12 +127,16 @@ def test_resumable_agent_bad_trajectory(
 def test_resumable_agent_valid_trajectory() -> None:
     """Agent should load a valid trajectory and resume without trajectory errors.
 
-    The valid trajectory ends in an ``exit`` message, so the agent resumes,
-    sees the recorded submission and returns without ever calling the model
-    (the sample records no model event). A load failure instead raises inside
-    the agent, which errors the sample and turns the task status to "error" --
+    On a valid trajectory the run completes with status "success" and the
+    sample records no model event. A load failure instead raises inside the
+    agent, which errors the sample and turns the task status to "error" --
     the same signal the bad-trajectory cases above assert on. So a completed
     run *is* the assertion.
+
+    The solver returns the state untouched, so the sample carries only the
+    user message; that is why this test calls ``assert_eval_completed``
+    directly rather than ``run_example``, whose agent-turn check would fail
+    it.
     """
     task = Task(
         dataset=[Sample(input="test", target="pass")],
@@ -142,9 +146,4 @@ def test_resumable_agent_valid_trajectory() -> None:
     logs = eval(task, model="mockllm/model", limit=1)
 
     assert len(logs) == 1
-    # This used to be `if log.status == "error": assert <three strings> not in
-    # log.error`, which asserted nothing at all on the run it was meant to
-    # check (the run succeeds, so the body never executed) and passed on any
-    # failure whose message happened not to contain one of those strings --
-    # docker dying, the install failing, the solver never reaching the agent.
     assert_eval_completed(logs[0])
