@@ -57,4 +57,13 @@ def check_system_explorer_example(
     sandbox: str | None = None,
 ) -> None:
     log = run_example("system_explorer", agent, model, sandbox=sandbox)[0]
-    assert log.status == "success"
+    # run_example already fails the test on a task-level failure, an errored
+    # sample, a sample cut short by a limit, or a sample with no agent turn --
+    # which is everything the old `assert log.status == "success"` here covered
+    # and more. What it cannot know is that this example, unlike the others,
+    # defines a scorer (model_graded_qa), so a run that got all the way through
+    # must carry a score. Assert that, and not the grade itself: the examples
+    # exist to exercise the agents, not to measure how well they explore.
+    assert log.samples and log.samples[0].scores, (
+        "sample completed but was never scored"
+    )

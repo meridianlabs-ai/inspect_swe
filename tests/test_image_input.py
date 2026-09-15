@@ -12,6 +12,7 @@ from inspect_swe._codex_cli import codex_cli as codex_cli_module
 from inspect_swe._util.centaur import CentaurOptions
 
 from tests.conftest import (
+    assert_eval_completed,
     get_available_sandboxes,
     skip_if_no_docker,
     skip_if_no_openai,
@@ -41,7 +42,11 @@ def test_codex_cli_image_input(sandbox: str) -> None:
         time_limit=600,
         token_limit=500_000,
     )[0]
-    assert log.status == "success", f"eval failed: {log.error}"
+    # this test drives eval() itself rather than run_example, so it needs the
+    # same completion check: both answers can be in place while the sample was
+    # still cut short by its time or token limit, which inspect_ai records as a
+    # plain "success".
+    assert_eval_completed(log)
     assert log.samples
     sample = log.samples[0]
 
