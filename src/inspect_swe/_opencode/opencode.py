@@ -60,7 +60,7 @@ def opencode(
     sandbox: str | None = None,
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
     debug: bool | None = None,
-    session_title: str | None = None,
+    session_title: str | None = "Inspect eval",
 ) -> Agent:
     """OpenCode agent.
 
@@ -104,13 +104,14 @@ def opencode(
             earlier versions prepend a newline to piped input (only reachable
             with an older opencode pre-installed in the sandbox).
         debug: Trace all debug output.
-        session_title: Optional fixed session title passed to
-            `opencode run --title` (non-centaur runs only). Supplying a title
-            makes opencode's session title non-default, so it skips its
-            automatic title-generation model call -- an extra bridged call
-            per session whose result a headless run never uses. Defaults to
-            `None`, which preserves opencode's normal title-generation
-            behavior for existing callers.
+        session_title: Session title passed to `opencode run --title`. Any
+            non-default title makes opencode skip its automatic
+            title-generation model call -- an extra bridged request per
+            session whose result a headless run never uses -- so the default
+            fixed title suppresses that call. Pass `None` to restore
+            opencode's title generation. An empty string makes opencode use
+            the first 50 characters of the prompt as the title (also without
+            a model call).
     """
     # resolve centaur
     if centaur is True:
@@ -225,19 +226,21 @@ def opencode(
                 "json",
             ]
 
+            # A non-default session title makes opencode skip its automatic
+            # title-generation step (`ensureTitle` returns early). That avoids
+            # an extra bridged model call per session whose result a headless
+            # run never uses. Applied in both centaur and non-centaur modes;
+            # `session_title=None` restores opencode's title generation.
+            if session_title is not None:
+                # A single `--title=<value>` argument (rather than two separate
+                # argv entries) keeps a dash-prefixed title (e.g. "--continue")
+                # from being parsed by opencode's CLI parser as another option
+                # instead of a literal value.
+                cmd.append(f"--title={session_title}")
+
             # add auto-approve flag only for non-centaur mode
             if centaur is False:
                 cmd.append("--dangerously-skip-permissions")
-                # A supplied session title makes opencode's title non-default,
-                # so its automatic title-generation step is skipped (opencode's
-                # `ensureTitle` returns early). That avoids an extra bridged
-                # model call per session whose result a headless run never uses.
-                if session_title is not None:
-                    # A single `--title=<value>` argument (rather than two
-                    # separate argv entries) keeps a dash-prefixed title
-                    # (e.g. "--continue") from being parsed by opencode's CLI
-                    # parser as another option instead of a literal value.
-                    cmd.append(f"--title={session_title}")
 
             # setup agent env (add dependencies to PATH so opencode can find them)
             path = ":".join(

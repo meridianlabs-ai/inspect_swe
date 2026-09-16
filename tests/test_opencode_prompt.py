@@ -135,24 +135,42 @@ def test_system_prompt_is_prepended_within_stdin(
     assert "--continue" not in call["cmd"]
 
 
-def test_no_session_title_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Default is opt-in: opencode's normal title generation is untouched.
+def _title_args(cmd: list[str]) -> list[str]:
+    return [arg for arg in cmd if arg.startswith("--title")]
+
+
+def test_default_session_title_skips_title_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # By default a fixed title is passed as a single `--title=<value>`
+    # argument, which makes opencode's session title non-default and skips
+    # its automatic title-generation model call.
     sbox = run_opencode(monkeypatch, [ChatMessageUser(content=PROMPT)])
 
     (call,) = sbox.exec_remote_calls
-    assert "--title" not in call["cmd"]
+    assert _title_args(call["cmd"]) == ["--title=Inspect eval"]
+
+
+def test_session_title_none_restores_title_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `None` opts back in to opencode's normal title generation: no `--title`
+    # argument of any form is emitted.
+    sbox = run_opencode(
+        monkeypatch, [ChatMessageUser(content=PROMPT)], session_title=None
+    )
+
+    (call,) = sbox.exec_remote_calls
+    assert _title_args(call["cmd"]) == []
 
 
 def test_session_title_is_passed_through(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A supplied title is passed as a single `--title=<value>` argument, which
-    # makes opencode's session title non-default and skips its automatic
-    # title-generation call.
     sbox = run_opencode(
         monkeypatch, [ChatMessageUser(content=PROMPT)], session_title="my run"
     )
 
     (call,) = sbox.exec_remote_calls
-    assert "--title=my run" in call["cmd"]
+    assert _title_args(call["cmd"]) == ["--title=my run"]
 
 
 def test_session_title_is_passed_on_continuation_turns(
@@ -172,7 +190,7 @@ def test_session_title_is_passed_on_continuation_turns(
     (call,) = sbox.exec_remote_calls
     cmd = call["cmd"]
     assert "--continue" in cmd
-    assert "--title=my run" in cmd
+    assert _title_args(cmd) == ["--title=my run"]
 
 
 def test_dash_prefixed_session_title_is_not_parsed_as_a_flag(
@@ -187,26 +205,47 @@ def test_dash_prefixed_session_title_is_not_parsed_as_a_flag(
 
     (call,) = sbox.exec_remote_calls
     cmd = call["cmd"]
-    assert "--title=-draft" in cmd
-    # never appears as its own argv entry that a parser could misread as a flag
-    assert "-draft" not in cmd
+    # the value appears exactly once, fused to the flag -- never as its own
+    # argv entry that a parser could misread as an option
+    assert [arg for arg in cmd if "draft" in arg] == ["--title=-draft"]
 
 
 def test_continue_prefixed_session_title_does_not_trigger_continuation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # `["--title", "--continue"]` as two argv entries would let opencode's
-    # parser read "--continue" as its own flag, silently dropping the title
-    # and making a fresh run resume an unrelated prior session. Encoding the
-    # title as one `--title=<value>` argument keeps it a literal value.
+    # parser read "--continue" as its own flag (leaving the title empty) and
+    # make a fresh run resume an unrelated prior session. Encoding the title
+    # as one `--title=<value>` argument keeps it a literal value.
     sbox = run_opencode(
         monkeypatch, [ChatMessageUser(content=PROMPT)], session_title="--continue"
     )
 
     (call,) = sbox.exec_remote_calls
     cmd = call["cmd"]
-    assert "--title=--continue" in cmd
+    assert _title_args(cmd) == ["--title=--continue"]
     assert cmd.count("--continue") == 0
+
+
+def test_session_title_applies_in_centaur_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Centaur mode aliases the same opencode command for the human operator;
+    # the title travels with it so the option means the same thing everywhere.
+    captured: dict[str, str] = {}
+
+    async def fake_run_centaur(
+        options: Any, instructions: str, bashrc: str, state: AgentState
+    ) -> None:
+        captured["bashrc"] = bashrc
+
+    monkeypatch.setattr(opencode_module, "run_centaur", fake_run_centaur)
+    sbox = run_opencode(monkeypatch, [ChatMessageUser(content=PROMPT)], centaur=True)
+
+    assert sbox.exec_remote_calls == []
+    assert "alias opencode=" in captured["bashrc"]
+    assert "--title=Inspect eval" in captured["bashrc"]
+    assert "--dangerously-skip-permissions" not in captured["bashrc"]
 
 
 def test_continuation_turn_uses_stdin_too(monkeypatch: pytest.MonkeyPatch) -> None:
