@@ -10,7 +10,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from inspect_ai import eval
-from inspect_ai.log import EvalLog
+from inspect_ai.log import EvalLog, EvalSample
+from inspect_ai.model import ChatMessageAssistant
 from inspect_swe._util import appdirs
 
 
@@ -188,6 +189,8 @@ def run_example(
     ],
     model: str,
     sandbox: str | None = None,
+    *,
+    assert_completed: bool = True,
 ) -> list[EvalLog]:
     example_file = os.path.join("examples", example)
     task_args: dict[str, str] = {
@@ -235,7 +238,7 @@ def run_example(
     # scoring gets a further time_limit / 2. That scoring grant is moot today
     # (no example defines a scorer), but adding one would put the worst case
     # at exactly 900s -- revisit the limits if that happens.
-    return eval(
+    logs = eval(
         example_file,
         model=model,
         limit=1,
@@ -243,6 +246,78 @@ def run_example(
         time_limit=600 if agent in ("gemini_cli", "mini_swe_agent") else 300,
         token_limit=500_000,
     )
+
+    # Every caller gets the completion check, because a run that did not
+    # actually finish is never a result worth asserting on: a sample cut short
+    # by a limit or an error, a task that failed outright, a sample the agent
+    # never answered (the two helpers below say what each check is for). Left
+    # to the individual tests it either surfaces as a misleading downstream
+    # assertion (the multi_call solver only copies the agent's messages back
+    # after all four turns, so a truncated sample reports a bare
+    # "assert 1 >= 4") or as a vacuous pass. On 2026-09-15
+    # test_gemini_cli_web_search ran 604.81s against its 600s time limit and
+    # still reported green, because the one search call it asserts on had
+    # already happened before the limit hit.
+    # A test that legitimately expects a limit passes assert_completed=False.
+    if assert_completed:
+        for log in logs:
+            for sample in assert_eval_completed(log):
+                _assert_agent_turn(sample)
+
+    return logs
+
+
+def _assert_agent_turn(sample: EvalSample) -> None:
+    """Fail loudly if the agent never answered.
+
+    Every example is an agent turn -- the solver is the CLI agent itself, or
+    (multi_call, image_input) a solver that runs it -- so a sample with no
+    assistant message is a run where the agent never took one. None of them
+    expects zero turns. Inspect records such a sample as a plain success, with
+    no limit and no error, so a test that checks only `log.samples` passes on
+    it.
+    """
+    assert any(
+        isinstance(message, ChatMessageAssistant) for message in sample.messages
+    ), "sample has no assistant message: the agent never took a turn"
+
+
+def assert_eval_completed(log: EvalLog) -> list[EvalSample]:
+    """Fail loudly unless the eval and every sample in it ran to completion.
+
+    Returns the samples, so callers can keep asserting on them.
+
+    The three checks catch three different failures, and none of them covers
+    another:
+
+    - `log.status` is the *task* verdict. It is "error" when the task itself
+      raised or when enough samples errored to trip `fail_on_error`
+      (`_should_eval_fail` in `inspect_ai/_eval/task/error.py`, applied in
+      `_eval/task/run.py`); these tests never pass `fail_on_error`, so the
+      default applies and a single errored sample is enough. A task
+      failure that happens before the log is opened (unresolvable model, a
+      sandbox that will not build) raises out of `eval()` instead, so it
+      already fails loudly.
+    - `log.samples` can be empty on a non-success log, which used to reach the
+      caller as a bare `assert log.samples` with no explanation of what broke.
+    - Neither status check sees a *limit*. A sample cut short by its time or
+      token limit is recorded with `sample.limit` set, no error, and a task
+      status of "success" -- that is the false pass this suite kept hitting.
+    """
+    # `log.error` carries the traceback and an ANSI-rendered copy of it as
+    # well; only the message belongs in an assertion, the rest is in the log.
+    assert log.status == "success", f"eval did not complete: status={log.status}" + (
+        f", error={log.error.message}" if log.error is not None else ""
+    )
+    assert log.samples, f"eval reported {log.status} with no samples"
+    for sample in log.samples:
+        assert sample.limit is None, (
+            f"sample hit a {sample.limit.type} limit ({sample.limit.limit})"
+        )
+        assert sample.error is None, (
+            f"sample errored: {sample.error.message}\n{sample.error.traceback}"
+        )
+    return log.samples
 
 
 # --- Wheels cache utilities ---
