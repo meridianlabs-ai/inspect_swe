@@ -33,6 +33,7 @@ from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
 
 from .agentbinary import ensure_gemini_cli_setup
+from .naming import GeminiCliToolNaming
 
 
 @agent
@@ -130,6 +131,7 @@ def gemini_cli(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
+            tool_naming=GeminiCliToolNaming(),
             web_search=web_search,
         ) as bridge:
             # resolve sandbox

@@ -82,6 +82,7 @@ from .model_catalog import (
     openai_service_model_name,
     resolve_codex_model_slug,
 )
+from .naming import CodexCliToolNaming
 
 logger = getLogger(__file__)
 
@@ -382,6 +383,7 @@ def codex_cli(
                 retry_refusals=retry_refusals,
                 port=port,
                 bridged_tools=bridged_tools,
+                tool_naming=CodexCliToolNaming(),
                 web_search=effective_web_search != "disabled",
                 model_event_sink=consumer,
                 checkpointer=cp,

@@ -32,6 +32,7 @@ from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
 
 from .agentbinary import ensure_opencode_setup
+from .naming import OpenCodeToolNaming
 
 
 @agent
@@ -148,6 +149,7 @@ def opencode(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
+            tool_naming=OpenCodeToolNaming(),
             # granted unconditionally to preserve today's behaviour; a grant is
             # inert unless the CLI declares a native web tool
             web_search=True,

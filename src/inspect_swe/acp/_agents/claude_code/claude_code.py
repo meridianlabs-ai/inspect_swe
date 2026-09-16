@@ -13,6 +13,7 @@ from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
 from inspect_swe._claude_code.env import DISABLE_AUTO_MEMORY_ENV
+from inspect_swe._claude_code.naming import ClaudeCodeToolNaming
 from inspect_swe._util.path import join_path
 from inspect_swe._util.websearch import web_search_tool_disallowed
 from inspect_swe.acp import ACPAgent
@@ -124,6 +125,7 @@ class ClaudeCode(ACPAgent):
             filter=self.filter,
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
+            tool_naming=ClaudeCodeToolNaming(),
             web_search=not web_search_tool_disallowed(
                 self._disallowed_tools, "WebSearch"
             ),

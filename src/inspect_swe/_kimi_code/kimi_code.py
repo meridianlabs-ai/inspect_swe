@@ -58,6 +58,7 @@ from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.sandbox import resolve_agent_cwd
 from .._util.toml import _format_value
 from .agentbinary import kimi_code_binary_source
+from .naming import KimiCodeToolNaming
 
 # GenerateFilter is a union of Model-first and (deprecated) str-first callables;
 # the bridge dispatches on the user filter's first-parameter annotation. Our
@@ -239,6 +240,7 @@ def kimi_code(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
+            tool_naming=KimiCodeToolNaming(),
             # granted unconditionally to preserve today's behaviour; a grant is
             # inert unless the CLI declares a native web tool
             web_search=True,

@@ -39,6 +39,7 @@ from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
 
 from .agentbinary import ensure_antigravity_sdk
+from .naming import AntigravityToolNaming
 
 logger = getLogger(__file__)
 
@@ -326,6 +327,7 @@ def antigravity(
             retry_refusals=retry_refusals,
             port=bridge_port,
             bridged_tools=bridged_tools,
+            tool_naming=AntigravityToolNaming(),
             # granted unconditionally to preserve today's behaviour; a grant is
             # inert unless the CLI declares a native web tool
             web_search=True,

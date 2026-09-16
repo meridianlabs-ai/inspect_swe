@@ -28,6 +28,7 @@ from inspect_swe._codex_cli.config import (
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
 )
+from inspect_swe._codex_cli.naming import CodexCliToolNaming
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import sandbox_exec
 from inspect_swe._util.toml import to_toml
@@ -100,6 +101,7 @@ class CodexCli(ACPAgent):
             filter=self.filter,
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
+            tool_naming=CodexCliToolNaming(),
             web_search=self._web_search != "disabled",
             port=port,
         ) as bridge:

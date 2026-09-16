@@ -60,6 +60,7 @@ from .._util.trace import trace
 from .agentbinary import claude_code_binary_source
 from .env import claude_code_agent_env
 from .model import ClaudeCodeEffort, resolve_claude_code_models
+from .naming import ClaudeCodeToolNaming
 from .systemprompt import pin_system_prompt_filter
 
 ClaudeCodePermissionMode = Literal[
@@ -349,6 +350,7 @@ def claude_code(
                 retry_refusals=retry_refusals,
                 port=port,
                 bridged_tools=bridged_tools,
+                tool_naming=ClaudeCodeToolNaming(),
                 web_search=not web_search_tool_disallowed(
                     disallowed_tools, "WebSearch"
                 ),
