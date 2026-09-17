@@ -1,0 +1,80 @@
+# Copy to .github/workflows/claude-auto.yml in a Meridian repo to enable the
+# @auto autonomous loop (design/auto-agent.md). Independent of the dev agent
+# (claude.yml) and reviewer (claude-review.yml).
+#
+# Requires the machine account's org secrets scoped to this repo (same as
+# claude.yml): MARVIN_APP_CLIENT_ID and MARVIN_APP_PRIVATE_KEY.
+#
+# REQUIRED EDIT: under `workflows:` list THIS repo's CI workflow name(s) — the
+# `name:` field of each CI workflow (not its filename). workflow_run is the only
+# event that reliably fires for GitHub-Actions CI completing (check_suite is
+# suppressed for Actions-created suites), and it must name what it reacts to.
+# Find names with: gh workflow list.
+
+name: Claude Auto
+
+on:
+  # Phase 1: react to CI completing (so we can fix failures).
+  workflow_run:
+    # This repo's CI workflow is `Build` (.github/workflows/build.yaml).
+    workflows: ["Build"]
+    types: [completed]
+  # Phase 2/3: react to the reviewer's marked summary comment. issue_comment
+  # fires from the default branch, so this works on pristine-base forks too
+  # (unlike pull_request_review).
+  issue_comment:
+    types: [created]
+
+jobs:
+  # CI-failure -> fix. Only a *failed* CI run for a *same-repo* PR (same-repo
+  # excludes untrusted fork PRs). The reusable workflow does the authoritative
+  # gate (open PR + `auto` label + attempt cap).
+  ci-fix:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    uses: meridianlabs-ai/agents/.github/workflows/claude-auto.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    secrets:
+      MARVIN_APP_CLIENT_ID: ${{ secrets.MARVIN_APP_CLIENT_ID }}
+      MARVIN_APP_PRIVATE_KEY: ${{ secrets.MARVIN_APP_PRIVATE_KEY }}
+      # codex engine (design/codex-engine.md in the agents repo):
+      # consumed only on items labeled engine:codex; optional.
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    with:
+      head_branch: ${{ github.event.workflow_run.head_branch }}
+      pr_number: ${{ github.event.workflow_run.pull_requests[0].number }}
+      ci_run_id: ${{ github.event.workflow_run.id }}
+
+  # Review -> fix / handoff. The marker is a cheap router (it's forgeable — only
+  # the reviewer posts it in practice); the reusable workflow does the authoritative
+  # gating (comment author == reviewer, same-repo, `auto` label, round cap), so
+  # the security boundary is there, not here.
+  review-fix:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != '' &&
+      contains(github.event.comment.body, '<!-- claude-review-summary -->')
+    uses: meridianlabs-ai/agents/.github/workflows/claude-auto-review.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    secrets:
+      MARVIN_APP_CLIENT_ID: ${{ secrets.MARVIN_APP_CLIENT_ID }}
+      MARVIN_APP_PRIVATE_KEY: ${{ secrets.MARVIN_APP_PRIVATE_KEY }}
+      # codex engine (design/codex-engine.md in the agents repo):
+      # consumed only on items labeled engine:codex; optional.
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    with:
+      pr_number: ${{ github.event.issue.number }}
+      comment_author: ${{ github.event.comment.user.login }}
