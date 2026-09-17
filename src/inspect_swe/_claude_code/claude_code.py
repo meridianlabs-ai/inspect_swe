@@ -36,6 +36,7 @@ from pydantic import Field
 from pydantic_core import to_json
 from typing_extensions import TypedDict, Unpack
 
+from inspect_swe._claude_code._events.diagnostics import ClaudeCodeDiagnostics
 from inspect_swe._claude_code._events.live_consumer import LiveConsumer
 from inspect_swe._claude_code._events.stream import (
     ExitEvent,
@@ -476,6 +477,8 @@ def claude_code(
                 uncaught_error_count = 0
                 try:
                     while True:
+                        diagnostics = store_as(ClaudeCodeDiagnostics)
+                        diagnostics.reset()
                         is_resume = (
                             has_assistant_response
                             or attempt_count > 0
@@ -562,10 +565,13 @@ def claude_code(
 
                         async for cc_event in claude_code_event_stream(proc):
                             if isinstance(cc_event, JsonlEvent):
-                                consumer.process_jsonl_line(cc_event.raw)
+                                diagnostics.observe(cc_event.raw)
+                                if isinstance(cc_event.raw, dict):
+                                    consumer.process_jsonl_line(cc_event.raw)
                                 if cc_debug is not None:
                                     cc_debug.stdout.append(cc_event.line)
                             elif isinstance(cc_event, JsonlParseError):
+                                diagnostics.malformed()
                                 if debug:
                                     debug_output.append(
                                         f"JSONL parse error: {cc_event.line}"
@@ -607,6 +613,7 @@ def claude_code(
                                 # otherwise this is a hard failure
                                 raise RuntimeError(
                                     f"Error executing claude code agent {exit_code}: {stderr_data}"
+                                    f"\nClaude Code diagnostics: {diagnostics.model_dump_json()}"
                                 )
 
                         # reset uncaught error counter
