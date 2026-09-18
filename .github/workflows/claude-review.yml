@@ -130,7 +130,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: read     # the review is posted by the land job as the machine account (agents#114)
       issues: read
       id-token: write
       actions: read
