@@ -155,6 +155,8 @@ By default, the agent will download the current stable version of {{< meta agent
 
 {{< include _snippets/agent_installation.md >}}
 
+{{< include _snippets/agent_binary_provenance.md >}}
+
 {{< include _snippets/agent_centaur.md >}}
 
 {{< include _snippets/agent_troubleshooting.md >}}
