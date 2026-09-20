@@ -5,6 +5,7 @@ from ._codex_cli.config import CodexAutoReview
 from ._gemini_cli.gemini_cli import gemini_cli
 from ._kimi_code.kimi_code import kimi_code
 from ._mini_swe_agent.mini_swe_agent import mini_swe_agent
+from ._minimax_code.minimax_code import minimax_code
 from ._opencode.opencode import opencode
 from ._tools.download import (
     AgentBinary,
@@ -36,6 +37,7 @@ __all__ = [
     "codex_cli",
     "gemini_cli",
     "kimi_code",
+    "minimax_code",
     "mini_swe_agent",
     "opencode",
     "interactive_claude_code",
