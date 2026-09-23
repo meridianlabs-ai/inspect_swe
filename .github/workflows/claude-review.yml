@@ -1,28 +1,26 @@
 # Copy to .github/workflows/claude-review.yml in any Meridian repo to add the
 # read-only reviewer, on demand: comment @review on a PR (or on an
-# External-labeled issue) to run it. Release-please PRs are skipped, gated in
-# the reusable workflow.
+# External-labeled issue) to run it.
 # Independent of the dev agent (claude.yml) — different trigger, different
-# (lower) permissions.
+# (lower) permissions. Requires the machine account's two org secrets
+# scoped to this repo, MARVIN_APP_CLIENT_ID and MARVIN_APP_PRIVATE_KEY:
+# the review is posted by the GitHub App they name, and a run without them
+# fails at the gate.
 #
-# Auto-review on PR open / ready_for_review is OFF by default (decision:
-# Ransom, 2026-09-16: no unasked CI reviews in any Meridian repo; reviews are
-# driven from Orca workspaces — first for meridianlabs-ai/actions on
-# 2026-09-14 after actions#110 was reviewed unasked, then everywhere after
-# inspect_ai#501 was). The `pull_request` trigger and its `if` clause are
-# kept below as commented-out blocks; a repo that wants auto-review copies
-# both back in, and should know the caveats that come with them:
-#
-# - auto-review-on-open (the pull_request trigger) only fires where this
-#   file exists in the PR's merge ref (base or head branch) — GitHub resolves
-#   pull_request-family workflows from the PR's branches, not the default
-#   branch; a PR that adds or edits the file fires from its own copy, which
-#   the token exchange's workflow validation then stops.
-# - PRs from forks are skipped by auto-review. GitHub issues no OIDC token
-#   and only a read-only GITHUB_TOKEN to pull_request runs from forks, so the
-#   job — which requests id-token: write for WIF auth — fails at startup; the
-#   same-repo gate in the commented clause is an ergonomic skip, not the
-#   security boundary.
+# issue_comment is the ONLY trigger the reusable workflow admits — the
+# comment-only contract. Auto-review on PR open / ready_for_review was
+# switched off as policy on 2026-09-16 (decision: Ransom: no unasked CI
+# reviews; reviews are driven from Orca workspaces — first for
+# meridianlabs-ai/actions on 2026-09-14 after actions#110 was reviewed
+# unasked, then after inspect_ai#501 was) and the reusable's pull_request /
+# pull_request_target path was removed on 2026-09-22, when eight of the ten
+# deployed stubs were already comment-only (inspect_harbor and inspect_vscode
+# still carried PR triggers; see the agents repo's design/architecture.md →
+# The reviewer: auto-review tradeoffs). A stub that still fires a PR event
+# gets a red run with an error naming the fix, not a review. A repo that
+# wants a review from CI posts a top-level @review comment as a write-access
+# identity (the machine account, for example) and lets this trigger pick it
+# up.
 #
 # Caveat: PRs from forks — a maintainer can review a fork PR with an @review
 # comment, the same trust decision made explicitly — the reusable's trig
@@ -36,16 +34,6 @@
 name: Review
 
 on:
-  # To turn auto-review on, uncomment this trigger AND the first clause of
-  # the job's `if` below (see the header for the decision and caveats).
-  # pull_request, NOT pull_request_target — attempted 2026-08-26, reverted:
-  # Anthropic's token exchange rejects prt-shaped OIDC subjects, "Invalid
-  # OIDC token"; see design/architecture.md → auto-review tradeoffs.
-  # Consequence: PRs that EDIT the reviewer's own files skip auto-review
-  # (server-side workflow validation) and need a manual top-level @review
-  # comment, which resolves the workflow from the default branch.
-  # pull_request:
-  #   types: [opened, reopened, ready_for_review]
   issue_comment:
     types: [created]
 
@@ -55,11 +43,6 @@ jobs:
     # PR when the commenter has write access — see the header, sandboxed
     # path), or on an @review comment on an External-labeled issue. `@review`
     # does not collide with the dev agent's `@claude` trigger.
-    # With auto-review on, the commented first clause also runs on PR events,
-    # skipping drafts (they get reviewed via ready_for_review when marked
-    # ready) and fork PRs (no OIDC token, so the run would die at startup on
-    # id-token: write; the full_name check, not head.repo.fork, keeps
-    # same-repo PRs working on repos that are themselves forks).
     # The two comment gates exclude the reviewer's own comments: reviewing
     # files that contain the trigger token makes it routine for the review
     # summary's prose to mention that token, which passes this cheap
@@ -113,21 +96,41 @@ jobs:
        contains(github.event.comment.body, '@review') &&
        !contains(github.event.comment.body, '`@review`') &&
        !contains(github.event.comment.body, '<!-- claude-review-comment -->'))
-    # Auto-review clause — prepend to the `if` above when the trigger is on:
-    #   (github.event_name == 'pull_request' &&
-    #    github.event.pull_request.draft != true &&
-    #    github.event.pull_request.head.repo.full_name == github.repository) ||
+    # provision (optional; agents#136): the repository's provisioning recipe
+    # — bash run as the unprivileged agent user in the checkout, in place of
+    # the generic `uv venv && uv pip install -e .[dev]`. Codex runs use it
+    # today; Claude runs keep this repository's claude-setup action until
+    # they move to an agent user too, and then use this recipe instead
+    # (design/executed-paths-residual.md in the agents repo). The codex job
+    # never runs claude-setup (a composite runs as the runner; nothing from
+    # the checkout may run as the runner there), so put here what
+    # claude-setup does that the generic recipe does not. uv is on PATH,
+    # HOME is the agent user's (/home/codex), no sudo, network on; create
+    # .venv so the agent's tools are found. A stub that still sets the
+    # earlier `codex_provision` keeps working: it is used when `provision`
+    # is empty. Examples —
+    # a Python pin:          uv venv --python 3.11 && uv pip install -e ".[dev]"
+    # a lockfile sync:       uv venv --python 3.11 && uv sync --dev
+    # Node tooling:          corepack enable --install-directory ~/.local/bin && pnpm install --frozen-lockfile
+    # with:
+    #   provision: |
+    #     uv venv --python 3.11
+    #     uv sync --dev
     uses: meridianlabs-ai/agents/.github/workflows/claude-review.yml@main
     # The machine account's secrets, for the gate's deterministic ack/stage
-    # steps (eyes reaction + board stage) and the land job's posts; never
-    # handed to the review agent, which stays read-only. Absent -> the gate
-    # steps no-op and the land job posts with the job token.
+    # steps (eyes reaction + board stage) and the land job's posts (the
+    # review itself lands there — agents#114); never handed to the review
+    # agent, which stays read-only. REQUIRED for the review to reach the PR:
+    # absent, the run fails at the gate's mint step, before any review runs
+    # (the job token below holds no write permission).
     secrets:
       MARVIN_APP_CLIENT_ID: ${{ secrets.MARVIN_APP_CLIENT_ID }}
       MARVIN_APP_PRIVATE_KEY: ${{ secrets.MARVIN_APP_PRIVATE_KEY }}
       # codex engine (design/codex-engine.md in the agents repo):
       # consumed only on items labeled engine:codex; optional.
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    # Agent runs restore caches, never save them (agents repo: design/agent-cache-scope.md).
+    cache-mode: read
     permissions:
       contents: read
       pull-requests: read     # the review is posted by the land job as the machine account (agents#114)
