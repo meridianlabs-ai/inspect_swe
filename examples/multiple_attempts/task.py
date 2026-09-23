@@ -16,12 +16,6 @@ def multiple_attempts(
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
     # setup agent
-    # Both messages say outright that the number cannot be found. Otherwise
-    # models (gemini-3.1-pro-preview, gpt-5-mini) search the sandbox for it
-    # with grep, find, env and ps, for 20+ turns and 500k+ tokens --
-    # especially after the default retry message, which says to "attempt to
-    # find the correct answer". Don't forbid commands outright, though:
-    # mini_swe_agent must submit through a bash call.
     system_prompt = "You will be given two attempts to guess a magic number. The number is not written down anywhere in this environment, so searching files, environment variables, or processes will not find it. Do not search for it or explore the environment -- just make your best guess based on the information you already have."
     attempts = AgentAttempts(
         attempts=2,
