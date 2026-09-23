@@ -3,7 +3,8 @@
 # (claude.yml) and reviewer (claude-review.yml).
 #
 # Requires the machine account's org secrets scoped to this repo (same as
-# claude.yml): MARVIN_APP_CLIENT_ID and MARVIN_APP_PRIVATE_KEY.
+# claude.yml): MARVIN_APP_CLIENT_ID and MARVIN_APP_PRIVATE_KEY; without them
+# both gates fail at their mint step.
 #
 # REQUIRED EDIT: under `workflows:` list THIS repo's CI workflow name(s) — the
 # `name:` field of each CI workflow (not its filename). workflow_run is the only
@@ -27,8 +28,24 @@ on:
 
 jobs:
   # CI-failure -> fix. Only a *failed* CI run for a *same-repo* PR (same-repo
-  # excludes untrusted fork PRs). The reusable workflow does the authoritative
-  # gate (open PR + `auto` label + attempt cap).
+  # excludes fork heads; it does NOT mean writer-authored — any account that
+  # may open a PR here can produce such a run). The reusable workflow does
+  # the authoritative gate: it first binds the run to its PR from trusted
+  # context (design/auto-agent.md in the agents repo → Binding the failed
+  # run to its PR), then checks the `auto` label, who applied it, and the
+  # attempt cap. The three `with:` values below are the event's own fields,
+  # forwarded as-is so the reusable can compare like with like:
+  # `pull_requests[0].number` is an ASSOCIATION, not the triggering PR —
+  # GitHub's schema says the list "do[es] not necessarily indicate pull
+  # requests that triggered the run" (two PRs from one branch into different
+  # bases both appear, in no specified order) — so the reusable derives the
+  # PR itself (the one same-repo PR from `head_branch` open when the run was
+  # created, at the run's head SHA, not retargeted since) and skips unless
+  # this number agrees; it also requires the run's actors (who started and
+  # who re-ran it) to be the machine account or write-access accounts before
+  # any counter, stage, merge or model work. What it cannot establish, and
+  # does not claim: which PR GitHub considered the trigger when two share
+  # the branch, or the merge commit the run built.
   ci-fix:
     if: >-
       github.event_name == 'workflow_run' &&
@@ -36,6 +53,8 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     uses: meridianlabs-ai/agents/.github/workflows/claude-auto.yml@main
+    # Agent runs restore caches, never save them (agents repo: design/agent-cache-scope.md).
+    cache-mode: read
     permissions:
       contents: write
       pull-requests: write
@@ -49,6 +68,25 @@ jobs:
       # consumed only on items labeled engine:codex; optional.
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     with:
+      # provision (optional; agents#136): the repository's provisioning recipe
+      # — bash run as the unprivileged agent user in the checkout, in place of
+      # the generic `uv venv && uv pip install -e .[dev]`. Codex runs use it
+      # today; Claude runs keep this repository's claude-setup action until
+      # they move to an agent user too, and then use this recipe instead
+      # (design/executed-paths-residual.md in the agents repo). The codex job
+      # never runs claude-setup (a composite runs as the runner; nothing from
+      # the checkout may run as the runner there), so put here what
+      # claude-setup does that the generic recipe does not. uv is on PATH,
+      # HOME is the agent user's (/home/codex), no sudo, network on; create
+      # .venv so the agent's tools are found. A stub that still sets the
+      # earlier `codex_provision` keeps working: it is used when `provision`
+      # is empty. Examples —
+      # a Python pin:          uv venv --python 3.11 && uv pip install -e ".[dev]"
+      # a lockfile sync:       uv venv --python 3.11 && uv sync --dev
+      # Node tooling:          corepack enable --install-directory ~/.local/bin && pnpm install --frozen-lockfile
+      # provision: |
+      #   uv venv --python 3.11
+      #   uv sync --dev
       head_branch: ${{ github.event.workflow_run.head_branch }}
       pr_number: ${{ github.event.workflow_run.pull_requests[0].number }}
       ci_run_id: ${{ github.event.workflow_run.id }}
@@ -63,6 +101,8 @@ jobs:
       github.event.issue.pull_request != '' &&
       contains(github.event.comment.body, '<!-- claude-review-summary -->')
     uses: meridianlabs-ai/agents/.github/workflows/claude-auto-review.yml@main
+    # Agent runs restore caches, never save them (agents repo: design/agent-cache-scope.md).
+    cache-mode: read
     permissions:
       contents: write
       pull-requests: write
@@ -76,5 +116,24 @@ jobs:
       # consumed only on items labeled engine:codex; optional.
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     with:
+      # provision (optional; agents#136): the repository's provisioning recipe
+      # — bash run as the unprivileged agent user in the checkout, in place of
+      # the generic `uv venv && uv pip install -e .[dev]`. Codex runs use it
+      # today; Claude runs keep this repository's claude-setup action until
+      # they move to an agent user too, and then use this recipe instead
+      # (design/executed-paths-residual.md in the agents repo). The codex job
+      # never runs claude-setup (a composite runs as the runner; nothing from
+      # the checkout may run as the runner there), so put here what
+      # claude-setup does that the generic recipe does not. uv is on PATH,
+      # HOME is the agent user's (/home/codex), no sudo, network on; create
+      # .venv so the agent's tools are found. A stub that still sets the
+      # earlier `codex_provision` keeps working: it is used when `provision`
+      # is empty. Examples —
+      # a Python pin:          uv venv --python 3.11 && uv pip install -e ".[dev]"
+      # a lockfile sync:       uv venv --python 3.11 && uv sync --dev
+      # Node tooling:          corepack enable --install-directory ~/.local/bin && pnpm install --frozen-lockfile
+      # provision: |
+      #   uv venv --python 3.11
+      #   uv sync --dev
       pr_number: ${{ github.event.issue.number }}
       comment_author: ${{ github.event.comment.user.login }}
