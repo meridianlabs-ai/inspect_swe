@@ -1,8 +1,8 @@
 """End-to-end tests that the inner agent presents the genuine served-model identity.
 
 Runs Claude Code in a real sandbox and captures its first bridged request via a
-``GenerateFilter``. The bridge hands the filter Claude Code's system prompt (which
-contains the "# Environment ... You are powered by the model X" block) plus the
+``GenerateFilter``. The bridge hands the filter the request's messages (which
+contain the "# Environment ... You are powered by the model X" block) plus the
 resolved Inspect ``Model`` — so we can assert what the *underlying model* sees,
 the eval-awareness surface this change targets.
 
@@ -31,7 +31,6 @@ from inspect_ai import Task, eval
 from inspect_ai.dataset import Sample
 from inspect_ai.model import (
     ChatMessage,
-    ChatMessageSystem,
     Model,
     ModelOutput,
 )
@@ -50,7 +49,7 @@ class _CaptureDisplay:
     """Record the first bridged request's prompt + resolved model, then stop."""
 
     def __init__(self) -> None:
-        self.system_prompt: str | None = None
+        self.prompt: str | None = None
         self.resolved_model: str | None = None
 
     async def __call__(
@@ -59,14 +58,12 @@ class _CaptureDisplay:
         messages: list[ChatMessage],
         *_: object,  # bridge also passes tools, tool_choice, config
     ) -> ModelOutput:
-        if self.system_prompt is None:
-            # Claude Code sends its system prompt as several blocks (one of which
-            # is just an `x-anthropic-billing-header:` line) and the bridge keeps one
-            # ChatMessageSystem per block, so join them rather than taking the
-            # first.
-            self.system_prompt = "\n\n".join(
-                m.text for m in messages if isinstance(m, ChatMessageSystem)
-            )
+        if self.prompt is None:
+            # Claude Code (>= 2.1.273) no longer puts the environment block in the
+            # system prompt: it arrives as <system-reminder>s in the first user
+            # message or as a system message after it, varying by model. Join every
+            # message of the first request so the assertions see all of it.
+            self.prompt = "\n\n".join(m.text for m in messages)
             self.resolved_model = model.canonical_name()
         return ModelOutput.from_content(
             model=str(model), content="DONE", stop_reason="stop"
@@ -81,7 +78,7 @@ def _run_claude(model: str, model_config: str | None = None) -> _CaptureDisplay:
         sandbox=("docker", _DOCKERFILE),
     )
     eval(task, model=model, limit=1)
-    assert capture.system_prompt is not None, "Claude Code made no bridged request"
+    assert capture.prompt is not None, "Claude Code made no bridged request"
     return capture
 
 
@@ -89,7 +86,7 @@ def _run_claude(model: str, model_config: str | None = None) -> _CaptureDisplay:
 @skip_if_no_docker
 def test_claude_code_presents_genuine_model_native() -> None:
     capture = _run_claude("anthropic/claude-sonnet-4-5")
-    sp = capture.system_prompt or ""
+    sp = capture.prompt or ""
     # Recognized model → genuine catalog identity (friendly name + exact id),
     # NOT the bridge sentinel and NOT a degraded raw echo.
     assert "powered by the model named Sonnet 4.5" in sp, sp
@@ -106,7 +103,7 @@ def test_claude_code_normalizes_dated_anthropic_id() -> None:
     # match), so the genuine friendly name still appears with no normalization on
     # our side; the exact-id line echoes the real dated snapshot.
     capture = _run_claude("anthropic/claude-sonnet-4-5-20250929")
-    sp = capture.system_prompt or ""
+    sp = capture.prompt or ""
     assert "powered by the model named Sonnet 4.5" in sp, sp
     assert "exact model ID is claude-sonnet-4-5-20250929" in sp, sp
     assert capture.resolved_model == "anthropic/claude-sonnet-4-5-20250929"
@@ -119,7 +116,7 @@ def test_claude_code_cross_provider_honest_degrade() -> None:
     # degrades to the raw-id block (no fabricated Claude identity) and still routes
     # to the served model via the bridge.
     capture = _run_claude("openai/gpt-5")
-    sp = capture.system_prompt or ""
+    sp = capture.prompt or ""
     assert "powered by the model gpt-5" in sp, sp
     assert capture.resolved_model == "openai/gpt-5"
 
@@ -130,7 +127,7 @@ def test_claude_code_model_config_override() -> None:
     # model_config overrides the presented identity without changing routing:
     # serve gpt-5 but present (genuinely) as Claude Sonnet 4.5.
     capture = _run_claude("openai/gpt-5", model_config="claude-sonnet-4-5")
-    sp = capture.system_prompt or ""
+    sp = capture.prompt or ""
     assert "powered by the model named Sonnet 4.5" in sp, sp
     # routing still goes to the real served model, not the presented identity
     assert capture.resolved_model == "openai/gpt-5"
