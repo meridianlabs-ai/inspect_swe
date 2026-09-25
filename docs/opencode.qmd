@@ -64,6 +64,8 @@ The task prompt is delivered to `opencode run` on stdin, which requires {{< meta
 
 {{< include _snippets/agent_installation.md >}}
 
+{{< include _snippets/agent_binary_provenance.md >}}
+
 {{< include _snippets/agent_centaur.md >}}
 
 {{< include _snippets/agent_troubleshooting.md >}}
