@@ -15,7 +15,7 @@ requires-python = ">=3.10"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect_ai>=0.3.255",
+    "inspect_ai>=0.3.261",
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.13.0",
@@ -40,8 +40,12 @@ dev = [
     "ruff",
     "mypy",
     "pytest",
-    "anthropic",
-    "openai",
+    # Floors required by inspect_ai's sandbox agent bridge (see
+    # inspect_ai/model/_providers/providers.py). Without explicit floors a lock
+    # regeneration can resolve below them, and bridge-backed tests then fail
+    # with an opaque "Model proxy process exited unexpectedly".
+    "anthropic>=1.0.0",
+    "openai>=3.1.0",
     "pytest-dotenv",
     "types-PyYAML",
     "IPython",

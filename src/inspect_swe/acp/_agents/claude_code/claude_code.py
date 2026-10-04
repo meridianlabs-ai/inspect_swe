@@ -12,6 +12,7 @@ from inspect_ai.util import ExecRemoteProcess, ExecRemoteStreamingOptions, store
 from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
+from inspect_swe._claude_code.env import DISABLE_AUTO_MEMORY_ENV
 from inspect_swe._util.path import join_path
 from inspect_swe._util.websearch import web_search_tool_disallowed
 from inspect_swe.acp import ACPAgent
@@ -56,6 +57,9 @@ _BRIDGE_SAFE_ENV: dict[str, str] = {
     # No telemetry or update checks from inside the sandbox
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "DISABLE_AUTOUPDATER": "1",
+    # Auto-memory targets future conversations a sandbox never has, and its
+    # system-prompt section diverts the model from task-provided memory tools
+    **DISABLE_AUTO_MEMORY_ENV,
 }
 
 

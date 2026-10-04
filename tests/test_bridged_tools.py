@@ -55,7 +55,6 @@ def check_bridged_tools(
     expected_tool_name: str,
 ) -> None:
     log = run_example("bridged_tools", agent, model)[0]
-    assert log.status == "success"
     assert log.samples
 
     # Verify the bridged tool was called

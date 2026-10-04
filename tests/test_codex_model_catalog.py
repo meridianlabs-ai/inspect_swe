@@ -286,3 +286,36 @@ def test_openai_service_model_name_falls_back_when_not_openai() -> None:
 def test_openai_service_model_name_falls_back_when_method_absent() -> None:
     # OpenAI-derived but without service_model_name() (defensive) -> fallback
     assert openai_service_model_name(OpenAIAPI(), "gpt-5") == "gpt-5"
+
+
+def test_latest_openai_slug_skips_hidden_entries() -> None:
+    """A hidden higher-priority entry (staged rollout, codename) is not "latest".
+
+    Mirrors Codex's picker, which filters ``visibility: "hide"`` entries out
+    before marking a default; e.g. rust-v0.153.2 lists ``gpt-6-astra`` at
+    priority 1 but hidden, with ``gpt-5.6-sol`` the first visible entry.
+    """
+    catalog = {
+        "models": [
+            {"slug": "gpt-6-astra", "priority": 1, "visibility": "hide"},
+            {"slug": "gpt-5.6-sol", "priority": 6, "visibility": "list"},
+            {"slug": "gpt-daybreak-blue-latest", "priority": 10, "visibility": "hide"},
+        ]
+    }
+    assert latest_openai_slug(catalog) == "gpt-5.6-sol"
+
+
+def test_latest_openai_slug_falls_back_to_hidden_when_nothing_is_visible() -> None:
+    catalog = {"models": [{"slug": "gpt-6-astra", "priority": 1, "visibility": "hide"}]}
+    assert latest_openai_slug(catalog) == "gpt-6-astra"
+
+
+def test_latest_openai_slug_treats_missing_visibility_as_visible() -> None:
+    """Older snapshots/catalogs without the field keep their previous behaviour."""
+    catalog = {
+        "models": [
+            {"slug": "gpt-5.6-sol", "priority": 1},
+            {"slug": "gpt-5.5", "priority": 12, "visibility": "list"},
+        ]
+    }
+    assert latest_openai_slug(catalog) == "gpt-5.6-sol"
