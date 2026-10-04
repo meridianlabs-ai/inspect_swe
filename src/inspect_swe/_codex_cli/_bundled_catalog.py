@@ -11,7 +11,7 @@ valid ``--model`` slugs for prefix matching, they just never count as "latest"
 (see ``latest_openai_slug``).
 
 Snapshot source: ``openai/codex`` ``codex-rs/models-manager/models.json``
-(``rust-v0.153.4``, September 2026). Refresh when bumping the default Codex
+(``rust-v0.154.0``, 2026-09-09). Refresh when bumping the default Codex
 version; the live fetch keeps this exact when ``raw.githubusercontent.com`` is
 reachable, and ``tests/test_codex_agentbinary.py::test_bundled_catalog_tracks_live_latest``
 flags drift.
