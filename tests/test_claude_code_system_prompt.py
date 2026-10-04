@@ -132,10 +132,15 @@ def test_centaur_alias_adds_no_prompt_flags_when_there_is_no_prompt() -> None:
     ]
 
 
-def test_centaur_claude_resume_omits_appended_messages_but_reapplies_replacement_prompt(
+def test_centaur_claude_resume_resends_the_appended_and_replacement_prompts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`claude --resume` must not append prompts already in the session."""
+    """`claude --resume` in the Centaur shell re-sends both prompt arguments.
+
+    Regression: routing `--resume` to a command without
+    `--append-system-prompt` left resumed sessions with only Claude Code's own
+    prompt on releases that do not keep appended text across a resume.
+    """
     captured: dict[str, str] = {}
 
     async def fake_run_centaur(
@@ -158,13 +163,6 @@ def test_centaur_claude_resume_omits_appended_messages_but_reapplies_replacement
                 ["--model", "sonnet"],
                 ["Task prompt"],
                 "Replacement prompt",
-            ),
-            resume_claude_cmd=_centaur_claude_cmd(
-                str(claude_binary),
-                ["--model", "sonnet"],
-                ["Task prompt"],
-                "Replacement prompt",
-                is_resume=True,
             ),
             agent_env={},
             state=AgentState(messages=[]),
@@ -192,6 +190,8 @@ def test_centaur_claude_resume_omits_appended_messages_but_reapplies_replacement
         "sonnet",
         "--system-prompt",
         "Replacement prompt",
+        "--append-system-prompt",
+        "Task prompt",
         "--resume",
         "session-123",
     ]

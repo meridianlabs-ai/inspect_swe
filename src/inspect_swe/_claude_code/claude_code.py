@@ -456,21 +456,13 @@ def claude_code(
 
             # centaur mode uses human_cli with custom instructions and bash rc
             if centaur:
-                centaur_system_texts = _system_texts(state.messages, system_prompt)
                 await run_claude_code_centaur(
                     options=centaur,
                     claude_cmd=_centaur_claude_cmd(
                         claude_binary,
                         cmd,
-                        centaur_system_texts,
+                        _system_texts(state.messages, system_prompt),
                         replace_system_prompt,
-                    ),
-                    resume_claude_cmd=_centaur_claude_cmd(
-                        claude_binary,
-                        cmd,
-                        centaur_system_texts,
-                        replace_system_prompt,
-                        is_resume=True,
                     ),
                     agent_env=agent_env,
                     state=state,
@@ -679,13 +671,14 @@ def _centaur_claude_cmd(
     cmd: Sequence[str],
     system_texts: Sequence[str],
     replace_system_prompt: str | None,
-    *,
-    is_resume: bool = False,
 ) -> list[str]:
-    """Build a Claude invocation for the operator's Centaur shell.
+    """Build the `claude` invocation aliased into the operator's Centaur shell.
 
-    A resumed Claude session already contains appended task and caller prompts,
-    so it retains a replacement prompt but omits appended system prompt args.
+    The operator's `claude --resume` runs through the same alias, so the prompt
+    arguments are sent again on resume. Claude Code releases differ on whether
+    a resumed session keeps `--append-system-prompt` text that is not passed
+    again (2.1.258 drops it, 2.1.285 keeps it), and neither duplicates it when
+    it is passed again, so sending it on every invocation is correct for both.
     """
     return (
         [claude_binary]
@@ -693,7 +686,7 @@ def _centaur_claude_cmd(
         + _system_prompt_args(
             system_texts,
             replace_system_prompt,
-            is_resume=is_resume,
+            is_resume=False,
         )
     )
 
@@ -800,7 +793,6 @@ def resolve_mcp_server_allowed_tools(
 async def run_claude_code_centaur(
     options: CentaurOptions,
     claude_cmd: list[str],
-    resume_claude_cmd: list[str],
     agent_env: dict[str, str],
     state: AgentState,
 ) -> None:
@@ -814,30 +806,10 @@ async def run_claude_code_centaur(
         'export PATH="$HOME/.local/bin:$PATH"',
         f'ln -sf {claude_cmd[0]} "$HOME/.local/bin/claude"',
     ]
-    if claude_cmd == resume_claude_cmd:
-        alias_cmd = shlex.join(claude_cmd)
-        claude_cmd_def = "alias claude='" + alias_cmd.replace("'", "'\\''") + "'"
-    else:
-        fresh_cmd = shlex.join(claude_cmd)
-        resume_cmd = shlex.join(resume_claude_cmd)
-        claude_cmd_def = dedent(f"""
-            claude() {{
-              for arg in "$@"; do
-                case "$arg" in
-                  --resume|--resume=*)
-                    command {resume_cmd} "$@"
-                    return
-                    ;;
-                  --)
-                    break
-                    ;;
-                esac
-              done
-              command {fresh_cmd} "$@"
-            }}
-        """).strip()
+    alias_cmd = shlex.join(claude_cmd)
+    alias_cmd = "alias claude='" + alias_cmd.replace("'", "'\\''") + "'"
     bashrc = "\n".join(
-        agent_env_vars + path_config + ["", claude_config, "", claude_cmd_def]
+        agent_env_vars + path_config + ["", claude_config, "", alias_cmd]
     )
 
     # run the human cli
