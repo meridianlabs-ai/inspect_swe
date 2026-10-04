@@ -26,7 +26,7 @@ from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from .._util._async import is_callable_coroutine
 from .._util.agentwheel import AgentWheelSource, ensure_agent_wheel_installed
-from .._util.centaur import CentaurOptions, run_centaur
+from .._util.centaur import CentaurOptions, CommandsFilter, run_centaur
 from .._util.messages import build_user_prompt
 from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
@@ -67,6 +67,8 @@ def mini_swe_agent(
     sandbox: str | None = None,
     version: Literal["stable", "sandbox", "latest"] | str = "stable",
     debug: bool | None = None,
+    *,
+    commands_filter: CommandsFilter | None = None,
 ) -> Agent:
     """mini-swe-agent agent.
 
@@ -88,6 +90,8 @@ def mini_swe_agent(
         system_prompt: Additional system prompt to include (appended to any system messages from the task).
         centaur: Run in 'centaur' mode, which makes mini-swe-agent available
             to an Inspect `human_cli()` agent rather than running it unattended.
+        commands_filter: In centaur mode only, filter or augment the human agent's
+            command list (e.g. to add task-specific commands). Ignored outside centaur mode.
         attempts: Configure agent to make multiple attempts.
         model: Model name to use (defaults to main model for task).
         model_aliases: Optional mapping of model names to Model instances or model name
@@ -175,6 +179,8 @@ def mini_swe_agent(
                     mini_cmd=[mini_binary],
                     agent_env=agent_env,
                     state=state,
+                    user=user,
+                    commands_filter=commands_filter,
                 )
             else:
                 # install resumable agent to sandbox
@@ -287,6 +293,8 @@ async def _run_mini_swe_centaur(
     mini_cmd: list[str],
     agent_env: dict[str, str],
     state: AgentState,
+    user: str | None = None,
+    commands_filter: CommandsFilter | None = None,
 ) -> None:
     instructions = (
         "mini-swe-agent:\n\n - You may use mini-swe-agent via the 'mini' command."
@@ -299,7 +307,9 @@ async def _run_mini_swe_centaur(
     bashrc = "\n".join(agent_env_vars + ["", alias_cmd])
 
     # run the human cli
-    await run_centaur(options, instructions, bashrc, state)
+    await run_centaur(
+        options, instructions, bashrc, state, user=user, commands_filter=commands_filter
+    )
 
 
 def _model_without_responses_api(model: str | Model | None) -> Model:
