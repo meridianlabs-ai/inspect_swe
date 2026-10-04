@@ -663,6 +663,13 @@ def _completed_onboarding() -> str:
 # into an authority for these, so a credential can hide behind the shorter spelling.
 _SPECIAL_URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ws", "wss", "ftp"})
 
+# What a WHATWG parser discards before reading a URL: every ASCII tab or newline,
+# and C0 control or space characters at either end.
+_WHATWG_TAB_OR_NEWLINE = re.compile(r"[\t\n\r]")
+_C0_CONTROL_OR_SPACE = "".join(chr(code) for code in range(0x21))
+# Where a special URL's authority ends once its leading slashes are skipped.
+_SPECIAL_AUTHORITY_END = re.compile(r"[/\\?#]")
+
 
 def _url_carries_credentials(url: str) -> bool:
     """Whether an HTTP/SSE MCP URL embeds Basic credentials in its userinfo.
@@ -680,16 +687,28 @@ def _url_carries_credentials(url: str) -> bool:
     `https://user:pw@host/mcp` and sends the Basic credential. Refusing rather
     than guessing which parser the CLI reaches for: either way the secret would
     already be sitting in the sandbox-readable registry.
+
+    The same parser also skips every slash and backslash after a special
+    scheme's `//` before it reads the authority, and drops tabs and newlines
+    anywhere, so `https:///user:pw@host/mcp` is Basic auth to it while
+    `urlsplit` sees an empty authority. The userinfo is therefore also read the
+    WHATWG way.
     """
+    normalized = _WHATWG_TAB_OR_NEWLINE.sub("", url).strip(_C0_CONTROL_OR_SPACE)
     try:
-        parts = urlsplit(url)
+        parts = urlsplit(normalized)
     except ValueError:
         return True
-    if parts.scheme in _SPECIAL_URL_SCHEMES and not url[
-        len(parts.scheme) + 1 :
-    ].startswith("//"):
+    if parts.username or parts.password:
         return True
-    return bool(parts.username or parts.password)
+    if parts.scheme not in _SPECIAL_URL_SCHEMES:
+        return False
+    after_scheme = normalized[len(parts.scheme) + 1 :]
+    if not after_scheme.startswith("//"):
+        return True
+    authority = _SPECIAL_AUTHORITY_END.split(after_scheme.lstrip("/\\"), maxsplit=1)[0]
+    userinfo, at, _host = authority.rpartition("@")
+    return bool(at) and userinfo not in ("", ":")
 
 
 def build_antigravity_mcp_config(

@@ -353,6 +353,18 @@ def test_authenticated_http_server_is_rejected() -> None:
             "https:/user:sentinel-password@mcp.example.test/mcp", id="one-slash"
         ),
         pytest.param(
+            "https:///user:sentinel-password@mcp.example.test/mcp",
+            id="three-slashes",
+        ),
+        pytest.param(
+            "https://\\/user:sentinel-password@mcp.example.test/mcp",
+            id="backslash-after-slashes",
+        ),
+        pytest.param(
+            "https://\t/user:sentinel-password@mcp.example.test/mcp",
+            id="tab-between-slashes",
+        ),
+        pytest.param(
             "https://user:p%40ss%2Fword@mcp.example.test/mcp", id="encoded-password"
         ),
     ],
