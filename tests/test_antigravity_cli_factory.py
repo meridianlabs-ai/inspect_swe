@@ -24,7 +24,7 @@ from inspect_ai.util._sandbox import (
     ExecRemoteStreamingOptions,
     SandboxEnvironmentConfigType,
 )
-from inspect_swe._util.centaur import CentaurOptions, CentaurSession, CommandsFilter
+from inspect_swe._util.centaur import CentaurOptions
 
 _CID = "eccac0fd-d2b5-4b39-9888-175170faece0"
 _OTHER_CID = "16fd2706-8baf-433b-82eb-8c7fada847da"
@@ -64,8 +64,8 @@ class _Sandbox(SandboxEnvironment):
             "-p",
             "/home/agent/.gemini/antigravity-cli",
             # The onboarding cache. Provisioning creates it up front because the CLI
-            # writes onboarding.json into it on first launch, and a missing parent is
-            # what stalled a real hosted Drive session at the onboarding prompt.
+            # writes onboarding.json into it on first launch, and with the parent
+            # missing a fresh sandbox stalled at the onboarding prompt.
             "/home/agent/.gemini/antigravity-cli/cache",
             "/home/agent/.gemini/config",
         ]
@@ -155,12 +155,11 @@ class _Store:
         assert value == 3001
 
 
-def test_unattended_factory_passes_all_bridge_contracts_and_verifies_result() -> None:
+def test_unattended_factory_passes_bridge_contracts_and_verifies_result() -> None:
     module = importlib.import_module("inspect_swe._antigravity_cli.antigravity_cli")
     state = AgentState(messages=[])
     sbox = _Sandbox()
     bridge_options: dict[str, object] = {}
-    resolver = MagicMock()
     request_filter = MagicMock()
 
     @asynccontextmanager
@@ -190,19 +189,12 @@ def test_unattended_factory_passes_all_bridge_contracts_and_verifies_result() ->
     ):
         assert (
             asyncio.run(
-                module.antigravity_cli(
-                    version="1.1.27",
-                    model_resolver=resolver,
-                    filter=request_filter,
-                    accumulate_conversations=True,
-                )(state)
+                module.antigravity_cli(version="1.1.27", filter=request_filter)(state)
             )
             is state
         )
 
-    assert bridge_options["model_resolver"] is resolver
     assert bridge_options["filter"] is request_filter
-    assert bridge_options["accumulate_conversations"] is True
     state_filter = cast(
         Callable[[Sequence[ChatMessage]], bool], bridge_options["state_filter"]
     )
@@ -236,13 +228,12 @@ def test_unattended_factory_passes_all_bridge_contracts_and_verifies_result() ->
     assert stream is False
 
 
-def test_centaur_factory_preserves_session_and_scopes_the_named_sandbox() -> None:
+def test_centaur_factory_hands_over_the_session_in_the_named_sandbox() -> None:
     module = importlib.import_module("inspect_swe._antigravity_cli.antigravity_cli")
     state = AgentState(messages=[*_primary(), *_primary(_OTHER_CID)])
     sbox = _Sandbox()
     bridge_options: dict[str, object] = {}
     handed: dict[str, object] = {}
-    commands_filter = MagicMock()
     endpoint = MCPServerConfigHTTP(
         type="http", name="inspect-tools", url="http://localhost:3001/mcp"
     )
@@ -264,15 +255,20 @@ def test_centaur_factory_preserves_session_and_scopes_the_named_sandbox() -> Non
         options: CentaurOptions,
         agy_cmd: list[str],
         agent_env: dict[str, str],
-        session: CentaurSession,
-        commands_filter: CommandsFilter | None = None,
-    ) -> AgentState:
+        state: AgentState,
+        *,
+        user: str | None,
+        sandbox: str | None,
+        cwd: str,
+    ) -> None:
         handed.update(
             options=options,
             command=agy_cmd,
             environment=agent_env,
-            session=session,
-            commands_filter=commands_filter,
+            state=state,
+            user=user,
+            sandbox=sandbox,
+            cwd=cwd,
         )
         state_filter = cast(
             Callable[[Sequence[ChatMessage]], bool], bridge_options["state_filter"]
@@ -280,7 +276,6 @@ def test_centaur_factory_preserves_session_and_scopes_the_named_sandbox() -> Non
         assert state_filter(_primary()) is True
         assert state_filter(_primary(_OTHER_CID)) is True
         assert state_filter(_auxiliary()) is False
-        return session.state
 
     wait_for_mcp_endpoints = AsyncMock()
     options = CentaurOptions()
@@ -304,7 +299,6 @@ def test_centaur_factory_preserves_session_and_scopes_the_named_sandbox() -> Non
                     sandbox="target",
                     cwd="/workspace",
                     user="agent",
-                    commands_filter=commands_filter,
                 )(state)
             )
             is state
@@ -318,13 +312,11 @@ def test_centaur_factory_preserves_session_and_scopes_the_named_sandbox() -> Non
         timeout=module.DEFAULT_MCP_READY_TIMEOUT,
         required=True,
     )
-    session = cast(CentaurSession, handed["session"])
-    assert session.state is state
-    assert session.sandbox is sbox
-    assert session.sandbox_name == "target"
-    assert session.user == "agent"
-    assert session.cwd == "/workspace"
-    assert handed["commands_filter"] is commands_filter
+    assert handed["options"] is options
+    assert handed["state"] is state
+    assert handed["sandbox"] == "target"
+    assert handed["user"] == "agent"
+    assert handed["cwd"] == "/workspace"
     assert handed["command"] == [
         "/opt/agy",
         "--model",
