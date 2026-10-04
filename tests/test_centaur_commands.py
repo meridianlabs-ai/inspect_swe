@@ -13,6 +13,7 @@ from collections.abc import Callable
 import pytest
 from inspect_ai.agent import AgentState
 from inspect_ai.agent._human.commands.command import HumanAgentCommand
+from inspect_swe._claude_code.claude_code import claude_code
 from inspect_swe._codex_cli.codex_cli import codex_cli
 from inspect_swe._gemini_cli.gemini_cli import gemini_cli
 from inspect_swe._kimi_code.kimi_code import kimi_code
@@ -135,7 +136,7 @@ def test_run_centaur_requires_human_cli_command_filter_support(
 
 @pytest.mark.parametrize(
     "factory",
-    [codex_cli, gemini_cli, kimi_code, opencode],
+    [claude_code, codex_cli, gemini_cli, kimi_code, opencode],
 )
 def test_centaur_commands_filter_is_keyword_only(
     factory: Callable[..., object],

@@ -137,7 +137,6 @@ def claude_code(
     haiku_model: str | None = None,
     subagent_model: str | None = None,
     filter: GenerateFilter | None = None,
-    commands_filter: CommandsFilter | None = None,
     permission_mode: ClaudeCodePermissionMode | None = None,
     retry_refusals: int | None = 3,
     retry_uncaught_errors: int | None = 3,
@@ -150,6 +149,8 @@ def claude_code(
     replace_system_prompt: str | None = None,
     allowlist_mcp_tools: bool = True,
     allowlist_bridged_tools: bool = True,
+    *,
+    commands_filter: CommandsFilter | None = None,
     **deprecated_args: Unpack[ClaudeCodeDeprecatedArgs],
 ) -> Agent:
     """Claude Code agent.
@@ -180,6 +181,9 @@ def claude_code(
         disallowed_tools: List of tool names to disallow entirely (disallowing
             `"WebSearch"` also disables web search for the agent).
         centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
+        commands_filter: In centaur mode only, filter or augment the human agent's
+            task commands (for example to install project-specific submit/score
+            commands). Ignored outside centaur mode.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
         model_config: Model id used to select the identity Claude Code presents
@@ -216,9 +220,6 @@ def claude_code(
         haiku_model: The model to use for haiku, or [background functionality](https://code.claude.com/docs/en/costs#background-token-usage). Defaults to `model`.
         subagent_model: The model to use for [subagents](https://code.claude.com/docs/en/sub-agents). Defaults to `model`.
         filter: Filter for intercepting bridged model requests.
-        commands_filter: In centaur mode only, filter or augment the human agent's
-            task commands (for example to install project-specific submit/score
-            commands). Ignored outside centaur mode.
         permission_mode: Claude Code `--permission-mode`. The complete CLI set is
             `"acceptEdits"`, `"auto"`, `"bypassPermissions"`, `"default"`,
             `"dontAsk"`, and `"plan"`. `"bypassPermissions"` is near-equivalent
