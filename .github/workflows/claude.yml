@@ -174,10 +174,13 @@ jobs:
       # (pyproject.toml, setup.py, uv.lock, requirements*.txt, package.json,
       # the npm, pnpm and yarn lockfiles, …), which the land job otherwise
       # refuses. Set it in the dev-agent and @auto stubs alike, and only when
-      # no other automation in this repository checks out and runs code from
-      # agent-landed branches as the runner (a scheduled agent job that
-      # continues an earlier agent branch, say; CI on agent PRs does not
-      # count). .github/ and agent instructions stay refused either way.
+      # no other agent automation in this repository checks out and runs
+      # code from agent-landed branches as the runner (a scheduled agent job
+      # that continues an earlier agent branch, say), no CI or other workflow
+      # that runs agent-branch code holds secrets or non-read permissions
+      # (read-only, secret-free CI is fine), and credentialed dispatch or tag
+      # workflows run only from trusted refs. .github/ and agent
+      # instructions stay refused either way.
       allow_build_config: true
 
   # @auto kickoff (distinct from the one-shot `claude` above). An `auto` label or
@@ -284,8 +287,11 @@ jobs:
       # (pyproject.toml, setup.py, uv.lock, requirements*.txt, package.json,
       # the npm, pnpm and yarn lockfiles, …), which the land job otherwise
       # refuses. Set it in the dev-agent and @auto stubs alike, and only when
-      # no other automation in this repository checks out and runs code from
-      # agent-landed branches as the runner (a scheduled agent job that
-      # continues an earlier agent branch, say; CI on agent PRs does not
-      # count). .github/ and agent instructions stay refused either way.
+      # no other agent automation in this repository checks out and runs
+      # code from agent-landed branches as the runner (a scheduled agent job
+      # that continues an earlier agent branch, say), no CI or other workflow
+      # that runs agent-branch code holds secrets or non-read permissions
+      # (read-only, secret-free CI is fine), and credentialed dispatch or tag
+      # workflows run only from trusted refs. .github/ and agent
+      # instructions stay refused either way.
       allow_build_config: true
