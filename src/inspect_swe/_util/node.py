@@ -26,24 +26,51 @@ async def ensure_node_available(
     sandbox: SandboxEnvironment,
     platform: SandboxPlatform,
     user: str | None = None,
+    node_version: str | None = None,
 ) -> str:
     """Ensure Node.js is available in the sandbox.
 
-    Returns the path to the node binary.
+    Returns the path to the node binary. When ``node_version`` is specified,
+    require that exact version so native npm modules use the expected ABI.
     """
-    node_path = f"{SANDBOX_INSTALL_DIR}/node/bin/node"
+    requested_version = node_version or NODE_VERSION
+    node_dir = (
+        f"{SANDBOX_INSTALL_DIR}/node"
+        if node_version is None or node_version == NODE_VERSION
+        else f"{SANDBOX_INSTALL_DIR}/node-{requested_version}"
+    )
+    node_path = f"{node_dir}/bin/node"
 
     result = await sandbox.exec(bash_command(f"test -x {node_path}"), user=user)
     if result.success:
-        return node_path
+        if node_version is None or await _node_version_matches(
+            sandbox, node_path, requested_version, user
+        ):
+            return node_path
 
     # Check if node is available system-wide
     result = await sandbox.exec(bash_command("which node"), user=user)
     if result.success:
-        return result.stdout.strip()
+        system_node = result.stdout.strip()
+        if node_version is None or await _node_version_matches(
+            sandbox, system_node, requested_version, user
+        ):
+            return system_node
 
     async with concurrency("node-npm-install", 1, visible=False):
-        return await _download_and_install_node(sandbox, platform)
+        return await _download_and_install_node(
+            sandbox, platform, requested_version, node_dir
+        )
+
+
+async def _node_version_matches(
+    sandbox: SandboxEnvironment,
+    node_path: str,
+    version: str,
+    user: str | None,
+) -> bool:
+    result = await sandbox.exec([node_path, "--version"], user=user)
+    return result.success and result.stdout.strip() == f"v{version}"
 
 
 def _platform_to_node_arch(platform: SandboxPlatform) -> str:
@@ -66,14 +93,16 @@ def _platform_to_node_arch(platform: SandboxPlatform) -> str:
 async def _download_and_install_node(
     sandbox: SandboxEnvironment,
     platform: SandboxPlatform,
+    node_version: str = NODE_VERSION,
+    node_dir: str | None = None,
 ) -> str:
     """Download Node.js and install the node binary to the sandbox."""
     node_arch = _platform_to_node_arch(platform)
-    archive_name = f"node-v{NODE_VERSION}-{node_arch}.tar.xz"
-    download_url = f"https://nodejs.org/dist/v{NODE_VERSION}/{archive_name}"
+    archive_name = f"node-v{node_version}-{node_arch}.tar.xz"
+    download_url = f"https://nodejs.org/dist/v{node_version}/{archive_name}"
 
     cache_dir = package_cache_dir("node-binary-downloads")
-    cache_path = cache_dir / f"node-v{NODE_VERSION}-{node_arch}"
+    cache_path = cache_dir / f"node-v{node_version}-{node_arch}"
 
     if cache_path.exists():
         with open(cache_path, "rb") as f:
@@ -83,7 +112,7 @@ async def _download_and_install_node(
         tar_data = lzma.decompress(archive_data)
 
         with tarfile.open(fileobj=BytesIO(tar_data)) as tar:
-            member = tar.getmember(f"node-v{NODE_VERSION}-{node_arch}/bin/node")
+            member = tar.getmember(f"node-v{node_version}-{node_arch}/bin/node")
             extracted = tar.extractfile(member)
             assert extracted is not None
             node_binary_data = extracted.read()
@@ -92,9 +121,10 @@ async def _download_and_install_node(
         with open(cache_path, "wb") as cache_file:
             cache_file.write(node_binary_data)
 
-    node_path = f"{SANDBOX_INSTALL_DIR}/node/bin/node"
+    node_dir = node_dir or f"{SANDBOX_INSTALL_DIR}/node"
+    node_path = f"{node_dir}/bin/node"
 
-    await sandbox_exec(sandbox, f"mkdir -p {SANDBOX_INSTALL_DIR}/node/bin", user="root")
+    await sandbox_exec(sandbox, f"mkdir -p {node_dir}/bin", user="root")
     await sandbox.write_file(node_path, node_binary_data)
     await sandbox_exec(sandbox, f"chmod +x {node_path}", user="root")
 
@@ -129,6 +159,7 @@ def create_npm_bundle(
     platform: SandboxPlatform,
     cache_name: str,
     ignore_scripts: bool = False,
+    include_optional: bool = False,
 ) -> bytes:
     """Create an npm package bundle with dependencies for the target platform.
 
@@ -146,11 +177,15 @@ def create_npm_bundle(
             lifecycle scripts (notably ``postinstall``) do not run on the
             host. Useful when the postinstall is host-platform-specific
             and must instead run inside the sandbox after extraction.
+        include_optional: Explicitly include optional dependencies even when
+            the host npm configuration omits them.
     """
     cpu = platform.split("-")[1]
 
     cache_dir = package_cache_dir(cache_name)
     suffix = "-noscripts" if ignore_scripts else ""
+    if include_optional:
+        suffix += "-optional"
     cache_path = cache_dir / f"{cache_name}-{version}-{platform}{suffix}.tar.gz"
 
     if cache_path.exists():
@@ -189,6 +224,8 @@ def create_npm_bundle(
         ]
         if ignore_scripts:
             npm_cmd.append("--ignore-scripts")
+        if include_optional:
+            npm_cmd.append("--include=optional")
 
         result = subprocess.run(
             npm_cmd,

@@ -10,6 +10,7 @@ from inspect_swe import (
     gemini_cli,
     kimi_code,
     mini_swe_agent,
+    minimax_code,
     opencode,
 )
 
@@ -22,6 +23,7 @@ def system_explorer(
         "gemini_cli",
         "kimi_code",
         "mini_swe_agent",
+        "minimax_code",
         "opencode",
     ] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
@@ -37,6 +39,8 @@ def system_explorer(
             solver = kimi_code()
         case "mini_swe_agent":
             solver = mini_swe_agent()
+        case "minimax_code":
+            solver = minimax_code()
         case "opencode":
             solver = opencode()
 
