@@ -40,6 +40,9 @@ jobs:
     steps:
       - name: Allow only main or a release tag
         if: ${{ github.event_name == 'workflow_dispatch' }}
+        # An explicit bash shell adds pipefail, so a failed release lookup
+        # refuses the ref even if its output looks like a release.
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
