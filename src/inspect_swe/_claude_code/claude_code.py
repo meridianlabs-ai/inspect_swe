@@ -13,7 +13,13 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, StopReason
+from inspect_ai.model import (
+    ChatMessage,
+    ChatMessageSystem,
+    GenerateFilter,
+    Model,
+    StopReason,
+)
 from inspect_ai.scorer import score
 from inspect_ai.tool import (
     MCPServerConfig,
@@ -462,7 +468,12 @@ def claude_code(
             if centaur:
                 await run_claude_code_centaur(
                     options=centaur,
-                    claude_cmd=[claude_binary] + cmd,
+                    claude_cmd=_centaur_claude_cmd(
+                        claude_binary,
+                        cmd,
+                        _system_texts(state.messages, system_prompt),
+                        replace_system_prompt,
+                    ),
                     agent_env=agent_env,
                     state=state,
                 )
@@ -487,15 +498,8 @@ def claude_code(
                         # resume. Appended messages are not re-sent because the bridge
                         # round-trips them into state.messages and appending them again
                         # would duplicate the effective prompt.
-                        system_texts = [
-                            m.text
-                            for m in state.messages
-                            if isinstance(m, ChatMessageSystem)
-                        ]
-                        if system_prompt is not None:
-                            system_texts.append(system_prompt)
                         system_args = _system_prompt_args(
-                            system_texts,
+                            _system_texts(state.messages, system_prompt),
                             replace_system_prompt,
                             is_resume=is_resume,
                         )
@@ -656,6 +660,45 @@ def claude_code(
 
     # return agent with specified name and descritpion
     return agent_with(execute, name=name, description=description)
+
+
+def _system_texts(
+    messages: Sequence[ChatMessage], system_prompt: str | None
+) -> list[str]:
+    """System texts to append: the task's own, then the caller's.
+
+    Shared by the centaur and unattended launches so the operator's `claude`
+    alias and the unattended agent cannot disagree about the effective prompt.
+    """
+    texts = [m.text for m in messages if isinstance(m, ChatMessageSystem)]
+    if system_prompt is not None:
+        texts.append(system_prompt)
+    return texts
+
+
+def _centaur_claude_cmd(
+    claude_binary: str,
+    cmd: Sequence[str],
+    system_texts: Sequence[str],
+    replace_system_prompt: str | None,
+) -> list[str]:
+    """Build the `claude` invocation aliased into the operator's Centaur shell.
+
+    The operator's `claude --resume` runs through the same alias, so the prompt
+    arguments are sent again on resume. Claude Code releases differ on whether
+    a resumed session keeps `--append-system-prompt` text that is not passed
+    again (2.1.258 drops it, 2.1.285 keeps it), and neither duplicates it when
+    it is passed again, so sending it on every invocation is correct for both.
+    """
+    return (
+        [claude_binary]
+        + list(cmd)
+        + _system_prompt_args(
+            system_texts,
+            replace_system_prompt,
+            is_resume=False,
+        )
+    )
 
 
 def _system_prompt_args(
