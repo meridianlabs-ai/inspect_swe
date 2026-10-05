@@ -11,6 +11,10 @@ class ChecksumMismatchError(ValueError):
     """
 
 
+def sha256_checksum(data: bytes) -> str:
+    """SHA-256 hex digest of ``data``."""
+    return hashlib.sha256(data).hexdigest()
+
+
 def verify_checksum(data: bytes, expected_checksum: str) -> bool:
-    actual_checksum = hashlib.sha256(data).hexdigest()
-    return actual_checksum == expected_checksum
+    return sha256_checksum(data) == expected_checksum
