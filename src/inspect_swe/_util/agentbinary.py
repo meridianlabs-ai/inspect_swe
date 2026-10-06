@@ -54,7 +54,7 @@ class AgentBinaryInstall(BaseModel):
     """`version=` as the caller passed it: `"auto"`, `"sandbox"`, `"stable"`, `"latest"`, or an explicit version."""
 
     version: str | None
-    """Concrete version installed. `None` when `origin="sandbox"`: the binary was already in the image, and its version is not knowable without running it."""
+    """Concrete version installed. When `origin="sandbox"` the binary was already in the image, so this is the version `codex_cli` reads from `codex --version`, and `None` for the other agents, which do not run the binary to ask."""
 
     platform: SandboxPlatform | None
     """Platform the artifact was resolved for. `None` when `origin="sandbox"`, where no platform-specific artifact is chosen and detection would add three sandbox execs to the default path."""
@@ -73,7 +73,7 @@ class AgentBinaryInstall(BaseModel):
     - `"download"`: fetched over the network and verified against the resolved digest.
     - `"cache"`: served from the local cache. This is not a claim of verification. A pinned version read on the fast path is not checked against a digest because none is resolved for it, and neither is a cached artifact for an agent with a `post_download` transform, whose installed bytes cannot be compared against the download digest.
     - `"sandbox"`: already present in the image; nothing was installed.
-    - `"cache_unverified"`: the offline fallback. Resolution failed, so no digest could be obtained to check the cached bytes against, and they were installed anyway.
+    - `"cache_unverified"`: resolution or download failed; the cached fallback was installed without checksum verification.
     """
 
 
@@ -212,7 +212,13 @@ async def ensure_agent_binary_installed(
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
     user: str | None = None,
     sandbox: SandboxEnvironment | None = None,
+    *,
+    sandbox_version: Callable[[str], Awaitable[str | None]] | None = None,
 ) -> str:
+    # `sandbox_version` probes the version of a binary found in the sandbox
+    # (given its path) for the provenance record. only an agent that runs that
+    # probe anyway passes it, so the default path gains no sandbox exec.
+
     # resolve sandbox
     sandbox = sandbox or sandbox_env()
 
@@ -227,13 +233,18 @@ async def ensure_agent_binary_installed(
         if result.success:
             binary_path = result.stdout.strip()
             trace(f"Using {source.agent} installed in sandbox: {binary_path}")
-            # no version/checksum: the binary predates us and the host never
-            # reads it. platform is left undetected because that costs three
-            # sandbox execs and this is the default path.
+            # no checksum: the binary predates us and the host never reads
+            # it. no version unless the agent probes it anyway, and platform
+            # is left undetected because that costs three sandbox execs and
+            # this is the default path.
             record_agent_binary_install(
                 source,
                 requested=requested,
-                version=None,
+                version=(
+                    await sandbox_version(binary_path)
+                    if sandbox_version is not None
+                    else None
+                ),
                 platform=None,
                 checksum=None,
                 origin="sandbox",

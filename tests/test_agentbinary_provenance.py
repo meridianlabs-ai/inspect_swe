@@ -1,7 +1,9 @@
 """Unit tests for the per-sample agent binary provenance event."""
 
 import hashlib
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -9,8 +11,12 @@ from unittest.mock import AsyncMock, patch
 
 import anyio
 import pytest
-from inspect_ai.event import InfoEvent
-from inspect_ai.log import transcript
+from inspect_ai import Task, eval
+from inspect_ai.agent import Agent, AgentState, agent, as_solver
+from inspect_ai.dataset import Sample
+from inspect_ai.event import InfoEvent, SpanBeginEvent
+from inspect_ai.log import read_eval_log, transcript
+from inspect_ai.solver import chain
 from inspect_ai.util import SandboxEnvironment
 from inspect_swe._util import agentbinary
 from inspect_swe._util.agentbinary import (
@@ -69,6 +75,23 @@ def _source(
     )
 
 
+def _patched_installer() -> ExitStack:
+    """Stub the installer's sandbox platform probe, trace and exec helpers."""
+    stack = ExitStack()
+    stack.enter_context(
+        patch.object(
+            agentbinary,
+            "detect_sandbox_platform",
+            AsyncMock(return_value="linux-arm64"),
+        )
+    )
+    stack.enter_context(patch.object(agentbinary, "trace", lambda msg: None))
+    stack.enter_context(
+        patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value=""))
+    )
+    return stack
+
+
 class _FakeSandbox:
     """exec() answers `which` per `which_success`; everything else succeeds."""
 
@@ -99,25 +122,23 @@ class _FakeSandbox:
 
 
 def _install(
-    source: AgentBinarySource, version: str, sandbox: _FakeSandbox
+    source: AgentBinarySource,
+    version: str,
+    sandbox: _FakeSandbox,
+    sandbox_version: Callable[[str], Awaitable[str | None]] | None = None,
 ) -> tuple[str, list[AgentBinaryInstall]]:
     """Run an install and return its path plus the provenance events it wrote."""
     before = len(transcript().events)
-    with (
-        patch.object(
-            agentbinary,
-            "detect_sandbox_platform",
-            AsyncMock(return_value="linux-arm64"),
-        ),
-        patch.object(agentbinary, "trace", lambda msg: None),
-        patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value="")),
-    ):
+    with _patched_installer():
         binary_path = anyio.run(
-            ensure_agent_binary_installed,
-            source,
-            version,
-            None,
-            cast(SandboxEnvironment, sandbox),
+            partial(
+                ensure_agent_binary_installed,
+                source,
+                version,
+                None,
+                cast(SandboxEnvironment, sandbox),
+                sandbox_version=sandbox_version,
+            )
         )
     events = [
         AgentBinaryInstall.model_validate(event.data)
@@ -356,3 +377,115 @@ def test_already_extracted_package_still_records_what_the_sample_runs(
     assert install.origin == "cache"
     assert install.version == "9.9.4"
     assert install.checksum == hashlib.sha256(archive).hexdigest()
+
+
+def test_sandbox_version_probe_is_recorded(tmp_path: Path) -> None:
+    # codex_cli probes `codex --version` anyway, so it hands that probe to the
+    # installer and a binary found in the image is recorded with its version
+    source = _source(tmp_path, "codex-prov-sandbox-probe")
+    sandbox = _FakeSandbox(which_success=True, which_path="/usr/local/bin/codex\n")
+    probe = AsyncMock(return_value="0.140.0")
+
+    _, events = _install(source, "auto", sandbox, sandbox_version=probe)
+
+    probe.assert_awaited_once_with("/usr/local/bin/codex")
+    assert len(events) == 1
+    assert events[0].origin == "sandbox"
+    assert events[0].version == "0.140.0"
+    assert events[0].checksum is None
+
+
+def test_sandbox_version_probe_is_not_run_for_an_installed_binary(
+    tmp_path: Path,
+) -> None:
+    # an installed binary's version is already known from resolution
+    source = _source(tmp_path, "codex-prov-cache-probe")
+    source.cached_binary_path("9.9.2", "linux-arm64").write_bytes(b"cached")
+    probe = AsyncMock(return_value="0.140.0")
+
+    _, events = _install(source, "9.9.2", _FakeSandbox(), sandbox_version=probe)
+
+    probe.assert_not_awaited()
+    assert len(events) == 1
+    assert events[0].version == "9.9.2"
+
+
+def test_saved_log_has_one_record_per_agent_span_per_sample(tmp_path: Path) -> None:
+    # the per-sample contract end to end: concurrent samples each pin their own
+    # version and run the agent twice. after a save and reload, every record
+    # sits in its own agent span and carries only its own sample's version.
+    source = _source(tmp_path, "codex-prov-eval")
+    versions = ["9.8.1", "9.8.2", "9.8.3", "9.8.4"]
+    for version in versions:
+        source.cached_binary_path(version, "linux-arm64").write_bytes(
+            f"binary-{version}".encode()
+        )
+
+    @agent
+    def installing_agent() -> Agent:
+        async def execute(state: AgentState) -> AgentState:
+            await ensure_agent_binary_installed(
+                source,
+                state.messages[0].text,
+                None,
+                cast(SandboxEnvironment, _FakeSandbox()),
+            )
+            return state
+
+        return execute
+
+    task = Task(
+        dataset=[Sample(input=version) for version in versions],
+        solver=chain(as_solver(installing_agent()), as_solver(installing_agent())),
+    )
+    with _patched_installer():
+        [log] = eval(
+            task,
+            model="mockllm/model",
+            max_samples=len(versions),
+            log_dir=str(tmp_path / "logs"),
+            display="none",
+        )
+    assert log.status == "success"
+
+    saved = read_eval_log(log.location)
+    assert saved.samples is not None
+    assert len(saved.samples) == len(versions)
+    for sample in saved.samples:
+        spans = {
+            event.id: event
+            for event in sample.events
+            if isinstance(event, SpanBeginEvent)
+        }
+        records = [
+            event
+            for event in sample.events
+            if isinstance(event, InfoEvent) and event.source == "inspect_swe"
+        ]
+        assert len(records) == 2
+        assert len({event.span_id for event in records}) == 2
+        for event in records:
+            assert event.span_id is not None
+            assert spans[event.span_id].type == "agent"
+            install = AgentBinaryInstall.model_validate(event.data)
+            assert install.version == sample.input
+            assert install.checksum == (
+                hashlib.sha256(f"binary-{sample.input}".encode()).hexdigest()
+            )
+
+    # the events_df recipe from the docs extracts the same records
+    pytest.importorskip("pandas")
+    from inspect_ai.analysis import EventColumn, EventInfo, events_df
+
+    events = events_df(
+        str(tmp_path / "logs"),
+        columns=EventInfo
+        + [
+            EventColumn("source", path="source"),
+            EventColumn("version", path="data.version"),
+            EventColumn("origin", path="data.origin"),
+        ],
+    )
+    installs = events[events["source"] == "inspect_swe"]
+    assert sorted(installs["version"]) == sorted(versions * 2)
+    assert set(installs["origin"]) == {"cache"}

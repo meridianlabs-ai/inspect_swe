@@ -22,8 +22,8 @@ One record is written per agent invocation, so a sample that runs two agents car
 |------------------------------------|------------------------------------|
 | `"download"` | Fetched over the network and verified against the resolved digest. |
 | `"cache"` | Served from the local cache, either for a pinned version or because the resolved version was already downloaded. Not a claim of verification: a pinned version has no resolved digest to check against, and neither does a cached artifact for an agent that transforms its download. |
-| `"sandbox"` | Already present in the image; nothing was installed, so no version or checksum is reported (neither is knowable without running it). |
-| `"cache_unverified"` | The offline fallback: resolution failed, so no digest could be obtained to check the cached bytes against. |
+| `"sandbox"` | Already present in the image; nothing was installed, so no checksum is reported. Codex CLI reports the version from `codex --version`; the other agents report none. |
+| `"cache_unverified"` | Resolution or download failed; the cached fallback was installed without checksum verification. |
 
 : {tbl-colwidths=\[25,75\]}
 
