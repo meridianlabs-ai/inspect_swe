@@ -29,6 +29,7 @@ The following options are supported for customizing the behavior of the agent:
 | `cwd` | Working directory for {{< meta agent_name >}} session. |
 | `env` | Environment variables to set for {{< meta agent_name >}}. |
 | `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |
+| `session_title` | Fixed title for the {{< meta agent_name >}} session (default `"Inspect eval"`). A fixed title makes {{< meta agent_name >}} skip its automatic title-generation model call; pass `None` to restore it. |
 
 : {tbl-colwidths=\[25,75\]}
 
