@@ -57,8 +57,9 @@ from .agentbinary import (
 )
 from .code_mode import (
     check_codex_code_mode_bridged_tools,
-    codex_effective_catalog,
+    codex_model_catalog_json,
     codex_specs_requiring_proposal,
+    read_codex_model_catalog,
 )
 from .config import (
     MCP_STARTUP_TIMEOUT_SEC,
@@ -147,8 +148,10 @@ def codex_cli(
         system_prompt: Additional system prompt to append to default system prompt.
         model_config: Codex model slug used to select the system prompt and tool
             set. Defaults to `None`, which derives the slug from the real model so
-            Codex's prompt/tooling aligns with what's actually running. Pass an
-            explicit slug to override.
+            Codex's prompt/tooling aligns with what's actually running. The
+            slug comes from the `model_catalog_json` file in `config_overrides`
+            when set (an absolute path in the sandbox), else from the installed
+            release's catalog. Pass an explicit slug to override.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
@@ -861,15 +864,40 @@ async def _resolve_codex_model_checked(
     """Resolve the `--model` slug, then run the code-mode check on bridged tools.
 
     The release catalog is fetched once and shared by both, so an offline run
-    pays for one failed fetch, not two. The check reads catalogs only when a
-    bridged spec requires a proposal.
+    pays for one failed fetch, not two. A caller's `model_catalog_json` is read
+    once, and only when alignment or the check needs it: alignment chooses
+    from it instead of the release catalog, and the check reads it as the
+    catalog Codex uses. If it cannot be read, alignment uses the release
+    catalog and the check is skipped.
     """
     version_catalog = await codex_version_models_catalog(codex_version)
-    codex_model = await resolve_codex_model(model, model_config, version_catalog)
-    if codex_specs_requiring_proposal(bridged_tools):
+    check = bool(codex_specs_requiring_proposal(bridged_tools))
+    custom_path = codex_model_catalog_json(config_overrides)
+    custom_catalog = None
+    if custom_path is not None and (model_config is None or check):
+        custom_catalog = await read_codex_model_catalog(sandbox, custom_path)
+        if custom_catalog is None:
+            effects = []
+            if model_config is None:
+                effects.append("chooses --model from the release catalog")
+            if check:
+                effects.append("skips the code-mode check on bridged tools")
+            logger.warning(
+                f"codex_cli could not read model_catalog_json {custom_path!r} in "
+                "the sandbox (it reads only an absolute path to a JSON object), "
+                f"so it {' and '.join(effects)}."
+            )
+    codex_model = await resolve_codex_model(
+        model,
+        model_config,
+        custom_catalog
+        if custom_catalog is not None
+        else codex_alignment_catalog(version_catalog),
+    )
+    if check:
         check_codex_code_mode_bridged_tools(
             codex_model,
-            await codex_effective_catalog(sandbox, config_overrides, version_catalog),
+            version_catalog if custom_path is None else custom_catalog,
             config_overrides,
             bridged_tools,
             [server.name for server in mcp_servers or []],
@@ -880,7 +908,7 @@ async def _resolve_codex_model_checked(
 async def resolve_codex_model(
     model: str | None,
     model_config: str | None,
-    version_catalog: dict[str, Any] | None,
+    catalog: dict[str, Any],
 ) -> str:
     """Resolve the Codex `--model` slug aligned to the real bridged model.
 
@@ -891,9 +919,9 @@ async def resolve_codex_model(
     `service_model_name()` rather than the registry name — so a custom `otter`
     provider reporting `gpt-5.5` aligns to that catalog entry. "latest"/codename
     models (per the provider's `is_latest()`) align to the latest catalog profile
-    rather than Codex's generic fallback. `version_catalog` is the installed
-    release's `models.json` (`None` when unknown, which aligns against the
-    bundled snapshot).
+    rather than Codex's generic fallback. `catalog` is the one alignment
+    chooses from: the caller's `model_catalog_json`, else the installed
+    release's `models.json`, else the bundled snapshot.
     """
     resolved_model = get_model(model)
     real_model = ModelName(resolved_model)
@@ -906,7 +934,7 @@ async def resolve_codex_model(
     resolution = resolve_codex_model_slug(
         model_name,
         api=real_api,
-        catalog=codex_alignment_catalog(version_catalog),
+        catalog=catalog,
         override=model_config,
         is_latest=is_latest_openai_model(api),
     )

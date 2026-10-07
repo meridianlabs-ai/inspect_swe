@@ -55,8 +55,9 @@ def check_codex_code_mode_bridged_tools(
 
     Args:
         codex_model: The `--model` slug Codex runs with.
-        catalog: The model catalog the installed Codex reads (see
-            `codex_effective_catalog`), or `None` when it is unknown.
+        catalog: The model catalog the installed Codex reads (the
+            `model_catalog_json` file when set, else its release's), or `None`
+            when it is unknown.
         config_overrides: The agent's `config_overrides`, which Codex
             receives as `-c key=value` pairs.
         bridged_tools: The agent's bridged tool specs.
@@ -121,20 +122,22 @@ def codex_specs_requiring_proposal(
     return [s for s in bridged_tools or [] if getattr(s, "require_proposal", False)]
 
 
-async def codex_effective_catalog(
-    sandbox: SandboxEnvironment,
-    config_overrides: Mapping[str, str] | None,
-    version_catalog: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    """The model catalog the installed Codex consults, or `None` if unknown.
+def codex_model_catalog_json(config_overrides: Mapping[str, str] | None) -> Any:
+    """The `model_catalog_json` Codex is given, or `None` when it is unset.
 
-    Codex replaces its own catalog with the file named by `model_catalog_json`
-    when that is set; otherwise it uses the `models.json` of its own release
-    (`version_catalog`, `None` when that could not be fetched).
+    When it is set, Codex replaces its own catalog with that file.
     """
-    path = codex_config_overrides_tree(config_overrides).get("model_catalog_json")
-    if path is None:
-        return version_catalog
+    return codex_config_overrides_tree(config_overrides).get("model_catalog_json")
+
+
+async def read_codex_model_catalog(
+    sandbox: SandboxEnvironment, path: Any
+) -> dict[str, Any] | None:
+    """The catalog file at `path` in the sandbox, or `None` if it is unknown.
+
+    Only an absolute path is read, since Codex resolves a relative one itself.
+    A missing file or one that is not a JSON object is also unknown.
+    """
     if not isinstance(path, str) or not PurePosixPath(path).is_absolute():
         return None
     try:
