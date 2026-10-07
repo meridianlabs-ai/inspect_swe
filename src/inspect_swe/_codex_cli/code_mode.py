@@ -63,8 +63,7 @@ def check_codex_code_mode_bridged_tools(
         other_mcp_servers: Names of the static MCP servers Codex is given,
             whose namespaces can collide with a bridged server's.
     """
-    # inspect_ai releases before require_proposal have no proposal check
-    specs = [s for s in bridged_tools or [] if getattr(s, "require_proposal", False)]
+    specs = codex_specs_requiring_proposal(bridged_tools)
     if not specs or catalog is None:
         return
 
@@ -112,6 +111,14 @@ def check_codex_code_mode_bridged_tools(
         "only the exec call that runs the code, not the tool calls made "
         "from it."
     )
+
+
+def codex_specs_requiring_proposal(
+    bridged_tools: Sequence[BridgedToolsSpec] | None,
+) -> list[BridgedToolsSpec]:
+    """The bridged specs whose tools run only for a proposed call."""
+    # inspect_ai releases before require_proposal have no proposal check
+    return [s for s in bridged_tools or [] if getattr(s, "require_proposal", False)]
 
 
 async def codex_effective_catalog(

@@ -50,12 +50,16 @@ from inspect_swe._util.trace import trace
 from .._util.agentbinary import ensure_agent_binary_installed
 from ._events.consumer import CodexConsumer
 from .agentbinary import (
+    codex_alignment_catalog,
     codex_binary_version,
     codex_cli_binary_source,
-    codex_models_catalog,
     codex_version_models_catalog,
 )
-from .code_mode import check_codex_code_mode_bridged_tools, codex_effective_catalog
+from .code_mode import (
+    check_codex_code_mode_bridged_tools,
+    codex_effective_catalog,
+    codex_specs_requiring_proposal,
+)
 from .config import (
     MCP_STARTUP_TIMEOUT_SEC,
     CodexApprovalPolicy,
@@ -486,20 +490,16 @@ def codex_cli(
             # resolve working directory (home dir if sandbox default is '/')
             agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
 
-            # align Codex's `--model` slug to the real bridged model
-            codex_model = await resolve_codex_model(model, model_config, codex_version)
-
-            # fail before launch if code mode would deny every bridged tool call
-            check_codex_code_mode_bridged_tools(
-                codex_model,
-                await codex_effective_catalog(
-                    sbox,
-                    config_overrides,
-                    await codex_version_models_catalog(codex_version),
-                ),
+            # align Codex's `--model` slug to the real bridged model, and fail
+            # before launch if code mode would deny every bridged tool call
+            codex_model = await _resolve_codex_model_checked(
+                sbox,
+                model,
+                model_config,
+                codex_version,
                 config_overrides,
                 bridged_tools,
-                [server.name for server in mcp_servers or []],
+                mcp_servers,
             )
 
             # determine CODEX_HOME (default to agent working dir)
@@ -849,10 +849,38 @@ async def _stage_prompt_images(
     return files
 
 
-async def resolve_codex_model(
+async def _resolve_codex_model_checked(
+    sandbox: SandboxEnvironment,
     model: str | None,
     model_config: str | None,
     codex_version: str | None,
+    config_overrides: dict[str, str] | None,
+    bridged_tools: Sequence[BridgedToolsSpec] | None,
+    mcp_servers: Sequence[MCPServerConfig] | None,
+) -> str:
+    """Resolve the `--model` slug, then run the code-mode check on bridged tools.
+
+    The release catalog is fetched once and shared by both, so an offline run
+    pays for one failed fetch, not two. The check reads catalogs only when a
+    bridged spec requires a proposal.
+    """
+    version_catalog = await codex_version_models_catalog(codex_version)
+    codex_model = await resolve_codex_model(model, model_config, version_catalog)
+    if codex_specs_requiring_proposal(bridged_tools):
+        check_codex_code_mode_bridged_tools(
+            codex_model,
+            await codex_effective_catalog(sandbox, config_overrides, version_catalog),
+            config_overrides,
+            bridged_tools,
+            [server.name for server in mcp_servers or []],
+        )
+    return codex_model
+
+
+async def resolve_codex_model(
+    model: str | None,
+    model_config: str | None,
+    version_catalog: dict[str, Any] | None,
 ) -> str:
     """Resolve the Codex `--model` slug aligned to the real bridged model.
 
@@ -863,7 +891,9 @@ async def resolve_codex_model(
     `service_model_name()` rather than the registry name — so a custom `otter`
     provider reporting `gpt-5.5` aligns to that catalog entry. "latest"/codename
     models (per the provider's `is_latest()`) align to the latest catalog profile
-    rather than Codex's generic fallback.
+    rather than Codex's generic fallback. `version_catalog` is the installed
+    release's `models.json` (`None` when unknown, which aligns against the
+    bundled snapshot).
     """
     resolved_model = get_model(model)
     real_model = ModelName(resolved_model)
@@ -873,11 +903,10 @@ async def resolve_codex_model(
     # service_model_name() (e.g. a custom 'otter' provider -> 'gpt-5.5'); align to
     # that, not the registry name ('otter'), which Codex wouldn't recognize.
     model_name = openai_service_model_name(api, real_model.name)
-    codex_catalog = await codex_models_catalog(codex_version)
     resolution = resolve_codex_model_slug(
         model_name,
         api=real_api,
-        catalog=codex_catalog,
+        catalog=codex_alignment_catalog(version_catalog),
         override=model_config,
         is_latest=is_latest_openai_model(api),
     )

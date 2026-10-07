@@ -2,12 +2,15 @@
 
 from dataclasses import dataclass
 from typing import Any, cast
+from unittest.mock import AsyncMock, patch
 
 import anyio
 import pytest
 from inspect_ai.agent import BridgedToolsSpec
 from inspect_ai.tool import Tool, ToolDef
 from inspect_ai.util import SandboxEnvironment
+from inspect_swe._codex_cli import agentbinary
+from inspect_swe._codex_cli import codex_cli as codex_cli_module
 from inspect_swe._codex_cli.code_mode import (
     check_codex_code_mode_bridged_tools,
     codex_config_overrides_tree,
@@ -258,8 +261,10 @@ def test_config_overrides_tree_follows_codex() -> None:
 class _Sandbox:
     def __init__(self, files: dict[str, str]) -> None:
         self.files = files
+        self.reads = 0
 
     async def read_file(self, file: str) -> str:
+        self.reads += 1
         if file not in self.files:
             raise FileNotFoundError(file)
         return self.files[file]
@@ -297,3 +302,70 @@ def test_effective_catalog_unknown_when_custom_file_unreadable(
     path: str, files: dict[str, str]
 ) -> None:
     assert _effective_catalog({"model_catalog_json": path}, files) is None
+
+
+@pytest.mark.parametrize(
+    "specs",
+    [None, [_spec("host_tools", False)], [_spec("host_tools")]],
+    ids=["no-bridge", "opted-out", "proposal-required"],
+)
+@pytest.mark.parametrize(
+    "fetched", [None, CATALOG], ids=["fetch-fails", "cache-unwritable"]
+)
+def test_launch_fetches_the_release_catalog_once(
+    specs: list[BridgedToolsSpec] | None, fetched: dict[str, Any] | None
+) -> None:
+    """Alignment and the check share one fetch; nothing is cached in between."""
+    fetch = AsyncMock(return_value=fetched)
+    sandbox = _Sandbox({})
+    with (
+        patch.object(agentbinary, "_read_cached_catalog", return_value=None),
+        patch.object(agentbinary, "_fetch_models_catalog", fetch),
+        patch.object(codex_cli_module, "trace"),
+    ):
+
+        async def launch() -> str:
+            return await codex_cli_module._resolve_codex_model_checked(
+                cast(SandboxEnvironment, sandbox),
+                "mockllm/model",
+                "gpt-5.6-sol",
+                "0.160.1",
+                None,
+                specs,
+                None,
+            )
+
+        if fetched is not None and specs and specs[0].require_proposal:
+            with pytest.raises(ValueError, match="in code mode"):
+                anyio.run(launch)
+        else:
+            assert anyio.run(launch) == "gpt-5.6-sol"
+    fetch.assert_awaited_once_with("0.160.1")
+    assert sandbox.reads == 0
+
+
+@pytest.mark.parametrize(
+    "specs,reads",
+    [(None, 0), ([_spec("host_tools", False)], 0), ([_spec("host_tools")], 1)],
+)
+def test_launch_reads_a_custom_catalog_only_when_checking(
+    specs: list[BridgedToolsSpec] | None, reads: int
+) -> None:
+    custom = '{"models": [{"slug": "gpt-5.6-sol", "tool_mode": "direct"}]}'
+    sandbox = _Sandbox({"/tmp/catalog.json": custom})
+    with (
+        patch.object(agentbinary, "_read_cached_catalog", return_value=CATALOG),
+        patch.object(codex_cli_module, "trace"),
+    ):
+        slug = anyio.run(
+            codex_cli_module._resolve_codex_model_checked,
+            cast(SandboxEnvironment, sandbox),
+            "mockllm/model",
+            "gpt-5.6-sol",
+            "0.160.1",
+            {"model_catalog_json": '"/tmp/catalog.json"'},
+            specs,
+            None,
+        )
+    assert slug == "gpt-5.6-sol"
+    assert sandbox.reads == reads

@@ -170,8 +170,12 @@ async def codex_models_catalog(version: str | None) -> dict[str, Any]:
     samples don't stampede ``raw.githubusercontent.com`` (the first writes the
     cache; the rest read it).
     """
-    catalog = await codex_version_models_catalog(version)
-    return catalog if catalog is not None else BUNDLED_CODEX_CATALOG
+    return codex_alignment_catalog(await codex_version_models_catalog(version))
+
+
+def codex_alignment_catalog(version_catalog: dict[str, Any] | None) -> dict[str, Any]:
+    """The catalog model alignment uses: the release's own, else the snapshot."""
+    return version_catalog if version_catalog is not None else BUNDLED_CODEX_CATALOG
 
 
 async def codex_version_models_catalog(version: str | None) -> dict[str, Any] | None:
