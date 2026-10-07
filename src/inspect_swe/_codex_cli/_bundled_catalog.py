@@ -1,8 +1,8 @@
 """Fallback Codex model catalog snapshot.
 
-Used by ``codex_models_catalog`` when the version-matched ``models.json`` can't be
-fetched (offline, rate-limited ``raw.githubusercontent.com``, or a pre-
-``models-manager`` Codex). We only consult the catalog to *decide* the ``--model``
+Used by ``codex_alignment_catalog`` when the version-matched ``models.json``
+can't be fetched (offline, rate-limited ``raw.githubusercontent.com``, or a
+pre-``models-manager`` Codex). We only consult the catalog to *decide* the ``--model``
 slug — Codex supplies the actual prompt/tools from its own bundled catalog — so a
 trimmed snapshot of the fields the resolver reads
 (``slug``/``priority``/``visibility``/``apply_patch_tool_type``/

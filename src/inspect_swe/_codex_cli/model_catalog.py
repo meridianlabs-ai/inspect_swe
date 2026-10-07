@@ -151,6 +151,17 @@ def _matched_entry(
     return max(matches, key=lambda m: len(m["slug"]))
 
 
+def codex_catalog_tool_mode(slug: str, catalog: dict[str, Any] | None) -> Any:
+    """The ``tool_mode`` of the catalog entry Codex resolves ``slug`` to.
+
+    Codex runs a model whose entry sets ``tool_mode = "code_mode_only"`` in code
+    mode: the model gets an ``exec`` tool and calls MCP tools from the
+    JavaScript it writes. ``None`` when no entry matches or it sets no mode.
+    """
+    entry = _matched_entry(slug, _catalog_models(catalog))
+    return entry.get("tool_mode") if entry is not None else None
+
+
 def _gpt_version(name: str) -> tuple[int, int] | None:
     """``(major, minor)`` for a ``gpt-N[.M]`` name, else ``None``.
 
