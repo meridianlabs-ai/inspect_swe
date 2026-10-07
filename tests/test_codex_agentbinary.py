@@ -16,12 +16,14 @@ from tests.conftest import skip_if_github_action
 _CATALOG_JSON = json.dumps({"models": [{"slug": "gpt-5.5", "priority": 0}]})
 
 
-def test_codex_models_catalog_none_version_uses_bundled() -> None:
-    # no version to fetch against -> fall back to the bundled snapshot
-    assert anyio.run(agentbinary.codex_models_catalog, None) is BUNDLED_CODEX_CATALOG
+def test_codex_version_models_catalog_none_version() -> None:
+    # no version to fetch against: unknown, and alignment uses the snapshot
+    catalog = anyio.run(agentbinary.codex_version_models_catalog, None)
+    assert catalog is None
+    assert agentbinary.codex_alignment_catalog(catalog) is BUNDLED_CODEX_CATALOG
 
 
-def test_codex_models_catalog_fetches_and_caches(tmp_path: Path) -> None:
+def test_codex_version_models_catalog_fetches_and_caches(tmp_path: Path) -> None:
     cache_file = tmp_path / "codex-0.50.0-models.json"
     with (
         patch.object(agentbinary, "_cached_catalog_path", return_value=cache_file),
@@ -31,8 +33,9 @@ def test_codex_models_catalog_fetches_and_caches(tmp_path: Path) -> None:
             AsyncMock(return_value=_CATALOG_JSON),
         ) as mock_download,
     ):
-        catalog = anyio.run(agentbinary.codex_models_catalog, "0.50.0")
+        catalog = anyio.run(agentbinary.codex_version_models_catalog, "0.50.0")
         assert catalog == {"models": [{"slug": "gpt-5.5", "priority": 0}]}
+        assert agentbinary.codex_alignment_catalog(catalog) is catalog
         assert cache_file.exists()
         mock_download.assert_awaited_once()
 
@@ -42,15 +45,14 @@ def test_codex_models_catalog_fetches_and_caches(tmp_path: Path) -> None:
             "download_text_file",
             AsyncMock(side_effect=AssertionError("should not download")),
         ):
-            cached = anyio.run(agentbinary.codex_models_catalog, "0.50.0")
+            cached = anyio.run(agentbinary.codex_version_models_catalog, "0.50.0")
             assert cached == catalog
 
 
-def test_codex_models_catalog_falls_back_to_bundled_on_fetch_error(
-    tmp_path: Path,
-) -> None:
-    # a failed fetch (offline / rate-limited / pre-models-manager) degrades to the
-    # bundled snapshot rather than None, so alignment stays deterministic.
+def test_codex_version_models_catalog_fetch_error(tmp_path: Path) -> None:
+    # a failed fetch (offline / rate-limited / pre-models-manager) leaves the
+    # release catalog unknown, so the code-mode check never reads the bundled
+    # snapshot as the binary's; alignment still degrades to the snapshot.
     cache_file = tmp_path / "codex-9.9.9-models.json"
     with (
         patch.object(agentbinary, "_cached_catalog_path", return_value=cache_file),
@@ -60,30 +62,10 @@ def test_codex_models_catalog_falls_back_to_bundled_on_fetch_error(
             AsyncMock(side_effect=RuntimeError("404")),
         ),
     ):
-        catalog = anyio.run(agentbinary.codex_models_catalog, "9.9.9")
-        assert catalog is BUNDLED_CODEX_CATALOG
+        catalog = anyio.run(agentbinary.codex_version_models_catalog, "9.9.9")
+        assert catalog is None
+        assert agentbinary.codex_alignment_catalog(catalog) is BUNDLED_CODEX_CATALOG
         assert not cache_file.exists()
-
-
-def test_codex_version_models_catalog_has_no_fallback(tmp_path: Path) -> None:
-    """Code-mode detection must not read the bundled snapshot as the binary's."""
-    assert anyio.run(agentbinary.codex_version_models_catalog, None) is None
-
-    cache_file = tmp_path / "codex-0.137.0-models.json"
-    with (
-        patch.object(agentbinary, "_cached_catalog_path", return_value=cache_file),
-        patch.object(
-            agentbinary,
-            "download_text_file",
-            AsyncMock(side_effect=RuntimeError("offline")),
-        ),
-    ):
-        assert anyio.run(agentbinary.codex_version_models_catalog, "0.137.0") is None
-        # model alignment still falls back to the snapshot
-        assert (
-            anyio.run(agentbinary.codex_models_catalog, "0.137.0")
-            is BUNDLED_CODEX_CATALOG
-        )
 
 
 @skip_if_github_action

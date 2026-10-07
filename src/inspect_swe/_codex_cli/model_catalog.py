@@ -151,36 +151,15 @@ def _matched_entry(
     return max(matches, key=lambda m: len(m["slug"]))
 
 
-def _namespaced_entry(
-    model_name: str, models: list[dict[str, Any]]
-) -> dict[str, Any] | None:
-    """The catalog entry Codex resolves a ``provider/model`` name to, or ``None``.
-
-    Mirrors Codex's retry when the longest-prefix match misses: it strips one
-    leading segment made of ASCII letters, digits, ``_`` or ``-`` and matches the
-    rest (``openai/gpt-5.5`` resolves as ``gpt-5.5``).
-    """
-    namespace, sep, suffix = model_name.partition("/")
-    if not sep or not namespace or "/" in suffix:
-        return None
-    if not all(c.isascii() and (c.isalnum() or c in "_-") for c in namespace):
-        return None
-    return _matched_entry(suffix, models)
-
-
-def codex_catalog_tool_mode(slug: str, catalog: dict[str, Any] | None) -> str | None:
+def codex_catalog_tool_mode(slug: str, catalog: dict[str, Any] | None) -> Any:
     """The ``tool_mode`` of the catalog entry Codex resolves ``slug`` to.
 
     Codex runs a model whose entry sets ``tool_mode = "code_mode_only"`` in code
     mode: the model gets an ``exec`` tool and calls MCP tools from the
-    JavaScript it writes. Returns ``None`` when no entry matches or the entry
-    sets no known mode (Codex ignores an unknown value); Codex then takes the
-    mode from its ``features.code_mode*`` flags.
+    JavaScript it writes. ``None`` when no entry matches or it sets no mode.
     """
-    models = _catalog_models(catalog)
-    entry = _matched_entry(slug, models) or _namespaced_entry(slug, models)
-    tool_mode = entry.get("tool_mode") if entry is not None else None
-    return tool_mode if tool_mode in ("direct", "code_mode", "code_mode_only") else None
+    entry = _matched_entry(slug, _catalog_models(catalog))
+    return entry.get("tool_mode") if entry is not None else None
 
 
 def _gpt_version(name: str) -> tuple[int, int] | None:

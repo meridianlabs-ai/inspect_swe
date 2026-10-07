@@ -59,13 +59,19 @@ For example, here we specify a custom system prompt and  disable the web search 
 
 Codex runs some models in code mode: those whose Codex catalog entry sets `tool_mode = "code_mode_only"`, which includes most current GPT models. In code mode the model writes JavaScript for an `exec` tool, and that code calls the bridged tools. The bridge runs a bridged tool only for a call the model proposed, and here the model proposed only the `exec` call, so every bridged tool call would be denied.
 
-`codex_cli()` raises an error before launch in this case. To run the eval, set `require_proposal=False` on each `BridgedToolsSpec`:
+`codex_cli()` raises an error before launch when the catalog of the installed Codex release puts the model in code mode and a `BridgedToolsSpec` keeps `require_proposal=True`. To run the eval, set `require_proposal=False` on each `BridgedToolsSpec`:
 
 ``` python
 BridgedToolsSpec(name="host_tools", tools=[search_database()], require_proposal=False)
 ```
 
-Any code in the sandbox can then call that server's tools with any arguments. Approval policies review only the `exec` call, not the tool calls made from its code. `interactive_codex_cli()` does not run this check.
+Any code in the sandbox can then call that server's tools with any arguments. Approval policies review only the `exec` call, not the tool calls made from its code.
+
+The check is skipped, and the agent runs as it would without it, when:
+
+- `config_overrides` sets a key under `features`, or `model_catalog_json` or `profile`. These can change the tool mode or which tools are direct.
+- The catalog of the installed Codex release cannot be fetched.
+- The agent is `interactive_codex_cli()`.
 
 ## Auto Review
 

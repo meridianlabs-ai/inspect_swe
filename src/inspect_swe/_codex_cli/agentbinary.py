@@ -156,34 +156,18 @@ def _cached_catalog_path(version: str) -> Path:
     return package_cache_dir("codex-cli-downloads") / f"codex-{version}-models.json"
 
 
-async def codex_models_catalog(version: str | None) -> dict[str, Any]:
-    """Resolve the native Codex model catalog for a specific version.
+async def codex_version_models_catalog(version: str | None) -> dict[str, Any] | None:
+    """The ``models.json`` of exactly this Codex version, or ``None``.
 
-    Prefers the version-matched ``models.json`` from the corresponding
-    ``rust-v{version}`` release tag, cached alongside the binary so the offline
-    guarantee matches the binary's. When the version is unknown or the fetch
-    fails (offline, rate-limited, or a pre-``models-manager`` release), falls back
-    to the bundled snapshot (``BUNDLED_CODEX_CATALOG``) so model alignment stays
-    deterministic rather than degrading to Codex's generic fallback.
+    Fetched from the ``rust-v{version}`` release tag and cached alongside the
+    binary so the offline guarantee matches the binary's. ``None`` when the
+    version is unknown or the fetch fails (offline, rate-limited, or a
+    pre-``models-manager`` release); model alignment then uses the bundled
+    snapshot (``codex_alignment_catalog``), while the code-mode check is skipped.
 
     The fetch is serialized with a single-slot concurrency lock so parallel
     samples don't stampede ``raw.githubusercontent.com`` (the first writes the
     cache; the rest read it).
-    """
-    return codex_alignment_catalog(await codex_version_models_catalog(version))
-
-
-def codex_alignment_catalog(version_catalog: dict[str, Any] | None) -> dict[str, Any]:
-    """The catalog model alignment uses: the release's own, else the snapshot."""
-    return version_catalog if version_catalog is not None else BUNDLED_CODEX_CATALOG
-
-
-async def codex_version_models_catalog(version: str | None) -> dict[str, Any] | None:
-    """The ``models.json`` of exactly this Codex version, or ``None``.
-
-    Unlike ``codex_models_catalog`` this never falls back to the bundled
-    snapshot, so callers that need the installed binary's own metadata (not
-    just a reasonable slug) can tell when it is unknown.
     """
     cached = _read_cached_catalog(version)
     if cached is not None:
@@ -199,6 +183,15 @@ async def codex_version_models_catalog(version: str | None) -> dict[str, Any] | 
             return await _fetch_models_catalog(version)
 
     return None
+
+
+def codex_alignment_catalog(version_catalog: dict[str, Any] | None) -> dict[str, Any]:
+    """The catalog model alignment uses: the release's own, else the snapshot.
+
+    Falling back to the bundled snapshot (``BUNDLED_CODEX_CATALOG``) keeps
+    alignment deterministic rather than degrading to Codex's generic fallback.
+    """
+    return version_catalog if version_catalog is not None else BUNDLED_CODEX_CATALOG
 
 
 def _read_cached_catalog(version: str | None) -> dict[str, Any] | None:

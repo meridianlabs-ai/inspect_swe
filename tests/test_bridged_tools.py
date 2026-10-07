@@ -1,8 +1,5 @@
-import copy
-import json
 from typing import Literal
 
-import anyio
 import pytest
 from inspect_ai import Task, eval
 from inspect_ai.agent import BridgedToolsSpec
@@ -17,7 +14,6 @@ from inspect_ai.model import (
 )
 from inspect_ai.tool import Tool, ToolChoice, ToolInfo, tool
 from inspect_swe import codex_cli
-from inspect_swe._codex_cli.agentbinary import codex_version_models_catalog
 
 from tests.conftest import (
     run_example,
@@ -82,8 +78,6 @@ class _CaptureToolNames:
 def _run_codex_code_mode(
     model_config: str,
     require_proposal: bool,
-    config_overrides: dict[str, str] | None = None,
-    files: dict[str, str] | None = None,
 ) -> tuple[EvalLog, _CaptureToolNames]:
     """Run codex_cli on a mock model with one bridged server, in Docker.
 
@@ -93,7 +87,7 @@ def _run_codex_code_mode(
     """
     capture = _CaptureToolNames()
     task = Task(
-        dataset=[Sample(input="Look up the secret for the key 'alpha'.", files=files)],
+        dataset=[Sample(input="Look up the secret for the key 'alpha'.")],
         solver=codex_cli(
             model_config=model_config,
             version=_CODEX_VERSION,
@@ -104,7 +98,6 @@ def _run_codex_code_mode(
                     require_proposal=require_proposal,
                 )
             ],
-            config_overrides=config_overrides,
             filter=capture,
         ),
         sandbox="docker",
@@ -138,63 +131,6 @@ def test_codex_cli_code_mode_requires_proposal_opt_out() -> None:
     assert capture.tool_names is not None
     assert "exec" in capture.tool_names
     assert not any("secret_lookup" in name for name in capture.tool_names)
-
-
-@pytest.mark.slow
-@skip_if_no_docker
-def test_codex_cli_code_mode_direct_only_namespace() -> None:
-    """A server in direct_only_tool_namespaces is a direct tool and needs no opt-out."""
-    log, capture = _run_codex_code_mode(
-        "gpt-5.6-sol",
-        require_proposal=True,
-        config_overrides={
-            "features.code_mode.direct_only_tool_namespaces": '["mcp__secrets"]'
-        },
-    )
-    assert log.status == "success", log.error
-    assert capture.tool_names is not None
-    assert "exec" in capture.tool_names
-    assert any("secret_lookup" in name for name in capture.tool_names)
-
-
-@pytest.mark.slow
-@skip_if_no_docker
-def test_codex_cli_code_mode_custom_catalog() -> None:
-    """A caller's model_catalog_json, not the release catalog, decides the mode."""
-    catalog = anyio.run(codex_version_models_catalog, _CODEX_VERSION)
-    if catalog is None:
-        pytest.skip(f"Codex {_CODEX_VERSION} catalog unavailable")
-
-    def custom(slug: str, tool_mode: str) -> dict[str, str]:
-        models = copy.deepcopy(catalog["models"])
-        entry = next(m for m in models if m["slug"] == slug)
-        entry["tool_mode"] = tool_mode
-        return {_CATALOG_FILE: json.dumps({**catalog, "models": models})}
-
-    overrides = {"model_catalog_json": f'"{_CATALOG_FILE}"'}
-
-    # gpt-5.6-sol made direct: no exec, and no opt-out needed
-    log, capture = _run_codex_code_mode(
-        "gpt-5.6-sol",
-        require_proposal=True,
-        config_overrides=overrides,
-        files=custom("gpt-5.6-sol", "direct"),
-    )
-    assert log.status == "success", log.error
-    assert capture.tool_names is not None
-    assert "exec" not in capture.tool_names
-
-    # gpt-5.5 put in code mode: fails before launch
-    log, _ = _run_codex_code_mode(
-        "gpt-5.5",
-        require_proposal=True,
-        config_overrides=overrides,
-        files=custom("gpt-5.5", "code_mode_only"),
-    )
-    _assert_fails_before_launch(log)
-
-
-_CATALOG_FILE = "/tmp/codex-models.json"
 
 
 @skip_if_no_google

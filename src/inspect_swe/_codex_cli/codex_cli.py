@@ -55,11 +55,7 @@ from .agentbinary import (
     codex_cli_binary_source,
     codex_version_models_catalog,
 )
-from .code_mode import (
-    check_codex_code_mode_bridged_tools,
-    codex_effective_catalog,
-    codex_specs_requiring_proposal,
-)
+from .code_mode import check_codex_code_mode_bridged_tools
 from .config import (
     MCP_STARTUP_TIMEOUT_SEC,
     CodexApprovalPolicy,
@@ -157,7 +153,9 @@ def codex_cli(
             mode (models whose catalog entry sets `tool_mode = "code_mode_only"`)
             the model calls these tools from code it writes rather than
             proposing each call, so the agent raises before launch unless each
-            spec sets `require_proposal=False`.
+            spec sets `require_proposal=False`. The check is skipped when
+            `config_overrides` sets `features`, `model_catalog_json` or
+            `profile` keys.
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
         mcp_startup_timeout: Seconds Codex waits for bridged MCP server startup.
@@ -493,13 +491,7 @@ def codex_cli(
             # align Codex's `--model` slug to the real bridged model, and fail
             # before launch if code mode would deny every bridged tool call
             codex_model = await _resolve_codex_model_checked(
-                sbox,
-                model,
-                model_config,
-                codex_version,
-                config_overrides,
-                bridged_tools,
-                mcp_servers,
+                model, model_config, codex_version, config_overrides, bridged_tools
             )
 
             # determine CODEX_HOME (default to agent working dir)
@@ -850,30 +842,22 @@ async def _stage_prompt_images(
 
 
 async def _resolve_codex_model_checked(
-    sandbox: SandboxEnvironment,
     model: str | None,
     model_config: str | None,
     codex_version: str | None,
     config_overrides: dict[str, str] | None,
     bridged_tools: Sequence[BridgedToolsSpec] | None,
-    mcp_servers: Sequence[MCPServerConfig] | None,
 ) -> str:
     """Resolve the `--model` slug, then run the code-mode check on bridged tools.
 
     The release catalog is fetched once and shared by both, so an offline run
-    pays for one failed fetch, not two. The check reads catalogs only when a
-    bridged spec requires a proposal.
+    pays for one failed fetch, not two.
     """
     version_catalog = await codex_version_models_catalog(codex_version)
     codex_model = await resolve_codex_model(model, model_config, version_catalog)
-    if codex_specs_requiring_proposal(bridged_tools):
-        check_codex_code_mode_bridged_tools(
-            codex_model,
-            await codex_effective_catalog(sandbox, config_overrides, version_catalog),
-            config_overrides,
-            bridged_tools,
-            [server.name for server in mcp_servers or []],
-        )
+    check_codex_code_mode_bridged_tools(
+        codex_model, version_catalog, config_overrides, bridged_tools
+    )
     return codex_model
 
 

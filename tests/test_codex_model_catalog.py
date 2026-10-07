@@ -326,7 +326,6 @@ TOOL_MODE_CATALOG: dict[str, Any] = {
     "models": [
         {"slug": "gpt-5.6-sol", "tool_mode": "code_mode_only"},
         {"slug": "gpt-5.6-sol-direct", "tool_mode": "direct"},
-        {"slug": "gpt-5.6-future", "tool_mode": "future_tool_mode"},
         {"slug": "gpt-5.5"},
     ]
 }
@@ -342,19 +341,7 @@ def test_codex_catalog_tool_mode_reads_the_matched_entry() -> None:
     assert codex_catalog_tool_mode("gpt-5.6-sol-direct", TOOL_MODE_CATALOG) == "direct"
 
 
-def test_codex_catalog_tool_mode_none_without_a_known_mode() -> None:
+def test_codex_catalog_tool_mode_none_without_a_mode() -> None:
     assert codex_catalog_tool_mode("gpt-5.5", TOOL_MODE_CATALOG) is None
-    # Codex treats an unknown tool_mode as unset
-    assert codex_catalog_tool_mode("gpt-5.6-future", TOOL_MODE_CATALOG) is None
     assert codex_catalog_tool_mode("inspect-generic", TOOL_MODE_CATALOG) is None
     assert codex_catalog_tool_mode("gpt-5.6-sol", None) is None
-
-
-def test_codex_catalog_tool_mode_strips_one_provider_segment() -> None:
-    """Codex retries a missed lookup without one leading ``provider/`` segment."""
-    assert (
-        codex_catalog_tool_mode("openai/gpt-5.6-sol", TOOL_MODE_CATALOG)
-        == "code_mode_only"
-    )
-    assert codex_catalog_tool_mode("a/b/gpt-5.6-sol", TOOL_MODE_CATALOG) is None
-    assert codex_catalog_tool_mode("open ai/gpt-5.6-sol", TOOL_MODE_CATALOG) is None
