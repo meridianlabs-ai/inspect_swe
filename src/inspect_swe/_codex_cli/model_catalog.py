@@ -250,8 +250,9 @@ def resolve_codex_model_slug(
     Args:
         model_name: The real model's name without provider prefix (e.g. ``gpt-5``).
         api: The real model's provider/api (e.g. ``openai``).
-        catalog: The version-matched Codex model catalog, or ``None`` if
-            unavailable (in which case we defer to Codex's own bundled catalog).
+        catalog: The Codex model catalog (the caller's ``model_catalog_json``
+            or the version-matched one), or ``None`` if unavailable (in which
+            case we defer to Codex's own bundled catalog).
         override: Explicit ``model_config`` value, or ``None`` to derive.
         is_latest: Whether the provider flags this as a "latest"/codename model
             (see ``is_latest_openai_model``) — a pre-deployment frontier model, so

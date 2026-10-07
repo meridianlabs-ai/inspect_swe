@@ -14,7 +14,8 @@ from inspect_swe._codex_cli import codex_cli as codex_cli_module
 from inspect_swe._codex_cli.code_mode import (
     check_codex_code_mode_bridged_tools,
     codex_config_overrides_tree,
-    codex_effective_catalog,
+    codex_model_catalog_json,
+    read_codex_model_catalog,
 )
 
 CATALOG: dict[str, Any] = {
@@ -270,38 +271,39 @@ class _Sandbox:
         return self.files[file]
 
 
-def _effective_catalog(
-    overrides: dict[str, str] | None, files: dict[str, str]
-) -> dict[str, Any] | None:
+def _read_catalog(path: Any, files: dict[str, str]) -> dict[str, Any] | None:
     sandbox = cast(SandboxEnvironment, _Sandbox(files))
-    return anyio.run(codex_effective_catalog, sandbox, overrides, CATALOG)
+    return anyio.run(read_codex_model_catalog, sandbox, path)
 
 
-def test_effective_catalog_is_the_release_catalog_by_default() -> None:
-    assert _effective_catalog(None, {}) is CATALOG
-    assert _effective_catalog({"model": '"gpt-5.5"'}, {}) is CATALOG
+def test_model_catalog_json_from_config_overrides() -> None:
+    assert codex_model_catalog_json(None) is None
+    assert codex_model_catalog_json({"model": '"gpt-5.5"'}) is None
+    overrides = {"model_catalog_json": '"/tmp/catalog.json"'}
+    assert codex_model_catalog_json(overrides) == "/tmp/catalog.json"
 
 
-def test_effective_catalog_reads_model_catalog_json() -> None:
+def test_read_model_catalog() -> None:
     custom = '{"models": [{"slug": "gpt-5.6-sol", "tool_mode": "direct"}]}'
-    assert _effective_catalog(
-        {"model_catalog_json": '"/tmp/catalog.json"'}, {"/tmp/catalog.json": custom}
-    ) == {"models": [{"slug": "gpt-5.6-sol", "tool_mode": "direct"}]}
+    assert _read_catalog("/tmp/catalog.json", {"/tmp/catalog.json": custom}) == {
+        "models": [{"slug": "gpt-5.6-sol", "tool_mode": "direct"}]
+    }
 
 
 @pytest.mark.parametrize(
     "path,files",
     [
-        ('"catalog.json"', {"catalog.json": "{}"}),
-        ('"/tmp/missing.json"', {}),
-        ('"/tmp/catalog.json"', {"/tmp/catalog.json": "not json"}),
-        ('"/tmp/catalog.json"', {"/tmp/catalog.json": "[]"}),
+        ("catalog.json", {"catalog.json": "{}"}),
+        (1, {}),
+        ("/tmp/missing.json", {}),
+        ("/tmp/catalog.json", {"/tmp/catalog.json": "not json"}),
+        ("/tmp/catalog.json", {"/tmp/catalog.json": "[]"}),
     ],
 )
-def test_effective_catalog_unknown_when_custom_file_unreadable(
-    path: str, files: dict[str, str]
+def test_read_model_catalog_unknown_when_unreadable(
+    path: Any, files: dict[str, str]
 ) -> None:
-    assert _effective_catalog({"model_catalog_json": path}, files) is None
+    assert _read_catalog(path, files) is None
 
 
 @pytest.mark.parametrize(
@@ -369,3 +371,90 @@ def test_launch_reads_a_custom_catalog_only_when_checking(
         )
     assert slug == "gpt-5.6-sol"
     assert sandbox.reads == reads
+
+
+RELEASE_CATALOG: dict[str, Any] = {"models": [{"slug": "gpt-5.5", "priority": 0}]}
+CUSTOM_CATALOG = '{"models": [{"slug": "gpt-5.9", "priority": 0}]}'
+
+
+def _align(
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+    overrides: dict[str, str] | None,
+    sandbox: _Sandbox,
+    specs: list[BridgedToolsSpec] | None = None,
+) -> str:
+    """The `--model` slug a launch aligns an OpenAI model to."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    with (
+        patch.object(agentbinary, "_read_cached_catalog", return_value=RELEASE_CATALOG),
+        patch.object(codex_cli_module, "trace"),
+    ):
+        slug = anyio.run(
+            codex_cli_module._resolve_codex_model_checked,
+            cast(SandboxEnvironment, sandbox),
+            f"openai/{model}",
+            None,
+            "0.160.1",
+            overrides,
+            specs,
+            None,
+        )
+    return slug
+
+
+@pytest.mark.parametrize(
+    "model,slug",
+    [
+        # only the custom catalog has it: its own entry
+        ("gpt-5.9", "gpt-5.9"),
+        # only the release catalog has it: aliased to the custom catalog's latest
+        ("gpt-5.5", "gpt-5.9"),
+    ],
+)
+def test_alignment_uses_a_custom_catalog(
+    monkeypatch: pytest.MonkeyPatch, model: str, slug: str
+) -> None:
+    sandbox = _Sandbox({"/tmp/catalog.json": CUSTOM_CATALOG})
+    overrides = {"model_catalog_json": '"/tmp/catalog.json"'}
+    assert _align(monkeypatch, model, overrides, sandbox) == slug
+    assert sandbox.reads == 1
+
+
+@pytest.mark.parametrize("model,slug", [("gpt-5.9", "gpt-5.5"), ("gpt-5.5", "gpt-5.5")])
+def test_alignment_uses_the_release_catalog_without_a_custom_one(
+    monkeypatch: pytest.MonkeyPatch, model: str, slug: str
+) -> None:
+    sandbox = _Sandbox({})
+    assert _align(monkeypatch, model, None, sandbox) == slug
+    assert sandbox.reads == 0
+
+
+@pytest.mark.parametrize(
+    "path,files",
+    [
+        ('"catalog.json"', {"catalog.json": CUSTOM_CATALOG}),
+        ('"/tmp/missing.json"', {}),
+        ('"/tmp/catalog.json"', {"/tmp/catalog.json": "not json"}),
+    ],
+)
+def test_alignment_falls_back_to_the_release_catalog_when_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+    files: dict[str, str],
+) -> None:
+    overrides = {"model_catalog_json": path}
+    assert _align(monkeypatch, "gpt-5.9", overrides, _Sandbox(files)) == "gpt-5.5"
+    assert "could not read model_catalog_json" in caplog.text
+
+
+def test_alignment_and_check_share_one_custom_catalog_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    custom = '{"models": [{"slug": "gpt-5.9", "tool_mode": "code_mode_only"}]}'
+    sandbox = _Sandbox({"/tmp/catalog.json": custom})
+    overrides = {"model_catalog_json": '"/tmp/catalog.json"'}
+    with pytest.raises(ValueError, match="'gpt-5.9' in code mode"):
+        _align(monkeypatch, "gpt-5.9", overrides, sandbox, [_spec("host_tools")])
+    assert sandbox.reads == 1
