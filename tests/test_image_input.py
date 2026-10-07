@@ -80,7 +80,12 @@ def test_codex_cli_centaur_attaches_images_once(
     captured: dict[str, str] = {}
 
     async def fake_run_centaur(
-        options: CentaurOptions, instructions: str, bashrc: str, state: AgentState
+        options: CentaurOptions,
+        instructions: str,
+        bashrc: str,
+        state: AgentState,
+        user: str | None = None,
+        commands_filter: object = None,
     ) -> None:
         captured["instructions"] = instructions
         captured["bashrc"] = bashrc
@@ -131,7 +136,12 @@ def test_codex_cli_centaur_alias_without_images(
     captured: dict[str, str] = {}
 
     async def fake_run_centaur(
-        options: CentaurOptions, instructions: str, bashrc: str, state: AgentState
+        options: CentaurOptions,
+        instructions: str,
+        bashrc: str,
+        state: AgentState,
+        user: str | None = None,
+        commands_filter: object = None,
     ) -> None:
         captured["instructions"] = instructions
         captured["bashrc"] = bashrc

@@ -235,7 +235,12 @@ def test_session_title_applies_in_centaur_mode(
     captured: dict[str, str] = {}
 
     async def fake_run_centaur(
-        options: Any, instructions: str, bashrc: str, state: AgentState
+        options: Any,
+        instructions: str,
+        bashrc: str,
+        state: AgentState,
+        user: str | None = None,
+        commands_filter: object = None,
     ) -> None:
         captured["bashrc"] = bashrc
 
