@@ -1,7 +1,9 @@
-from collections.abc import Iterable
+import re
+from collections.abc import Iterable, Sequence
 from collections.abc import Set as AbstractSet
 from typing import Any, Literal, Mapping, cast
 
+from inspect_ai.agent import BridgedToolsSpec
 from inspect_ai.model import Model, get_model, model_roles
 from inspect_ai.tool import MCPServerConfig
 from pydantic import BaseModel, ConfigDict, Field
@@ -442,3 +444,87 @@ def codex_mcp_servers_toml(
         )
         for mcp_server in mcp_servers
     }
+
+
+def check_codex_code_mode_bridged_tools(
+    codex_model: str,
+    catalog_tool_mode: str | None,
+    config_overrides: Mapping[str, str] | None,
+    bridged_tools: Sequence[BridgedToolsSpec] | None,
+) -> None:
+    """Raise when Codex code mode would make every bridged tool call fail.
+
+    In code mode (`tool_mode = "code_mode_only"`) the model proposes only an
+    `exec` call, and the script it writes calls MCP tools itself. The bridge
+    runs a host tool only for a call the model proposed, so it denies every
+    call to a server whose `BridgedToolsSpec` keeps `require_proposal=True`
+    and the sample runs on without its tools. Servers listed in
+    `features.code_mode.direct_only_tool_namespaces` stay direct model tools
+    and are not affected. The opt-out is never set on the author's behalf.
+
+    Args:
+        codex_model: The `--model` slug Codex runs with (for the message).
+        catalog_tool_mode: `tool_mode` of the catalog entry for that slug (see
+            `codex_catalog_tool_mode`). Codex reads `features.code_mode_only`
+            only when the entry sets none.
+        config_overrides: The agent's `config_overrides` (`-c` pairs).
+        bridged_tools: The agent's bridged tool specs.
+    """
+    overrides = config_overrides or {}
+    if catalog_tool_mode is not None:
+        if catalog_tool_mode != "code_mode_only":
+            return
+        cause = 'its catalog entry sets tool_mode = "code_mode_only"'
+    elif overrides.get("features.code_mode_only", "").strip() == "true":
+        cause = "config_overrides sets features.code_mode_only"
+    else:
+        return
+
+    direct_only = set(
+        _codex_string_list(
+            overrides.get("features.code_mode.direct_only_tool_namespaces", "")
+        )
+    )
+    # inspect_ai releases before require_proposal have no proposal check
+    servers = [
+        spec.name
+        for spec in bridged_tools or []
+        if getattr(spec, "require_proposal", False)
+        and not direct_only & _codex_mcp_namespaces(spec.name)
+    ]
+    if not servers:
+        return
+
+    names = ", ".join(f"'{name}'" for name in servers)
+    raise ValueError(
+        f"Codex runs model '{codex_model}' in code mode ({cause}): the model "
+        "calls MCP tools from the code it writes instead of proposing each "
+        "call, so the bridge denies every call to bridged server(s) "
+        f"{names}. Set require_proposal=False on the existing "
+        "BridgedToolsSpec for each of them. Approval policies then review "
+        "only the exec call that runs the code, not the tool calls made "
+        "from it."
+    )
+
+
+def _codex_mcp_namespaces(server_name: str) -> set[str]:
+    """Tool namespaces Codex may give an MCP server named `server_name`.
+
+    Codex replaces characters outside `[A-Za-z0-9_]` with `_` and adds the
+    `mcp__` prefix unless the name already has it or the server is configured
+    without prefixes, so both spellings are accepted.
+    """
+    sanitized = re.sub(r"[^A-Za-z0-9_]", "_", server_name) or "_"
+    prefixed = sanitized if sanitized.startswith("mcp__") else f"mcp__{sanitized}"
+    return {sanitized, prefixed}
+
+
+def _codex_string_list(value: str) -> list[str]:
+    """Strings in a TOML array `-c` value such as `["mcp__a", 'mcp__b']`."""
+    value = value.strip()
+    if not (value.startswith("[") and value.endswith("]")):
+        return []
+    return [
+        double or single
+        for double, single in re.findall(r'"([^"]*)"|\'([^\']*)\'', value[1:-1])
+    ]

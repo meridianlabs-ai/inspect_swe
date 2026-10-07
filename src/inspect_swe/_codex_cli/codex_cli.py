@@ -62,6 +62,7 @@ from .config import (
     CodexSandboxMode,
     CodexWebSearch,
     check_codex_auto_review_version,
+    check_codex_code_mode_bridged_tools,
     codex_cli_config_overrides,
     codex_config_options,
     codex_mcp_servers_toml,
@@ -77,6 +78,7 @@ from .config import (
     validate_codex_bool_arg,
 )
 from .model_catalog import (
+    codex_catalog_tool_mode,
     is_latest_openai_model,
     is_openai_derived_api,
     openai_service_model_name,
@@ -147,7 +149,11 @@ def codex_cli(
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
-            tools available to the agent running in the sandbox.
+            tools available to the agent running in the sandbox. In Codex code
+            mode (models whose catalog entry sets `tool_mode = "code_mode_only"`)
+            the model calls these tools from code it writes rather than
+            proposing each call, so the agent raises before launch unless each
+            spec sets `require_proposal=False`.
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
         mcp_startup_timeout: Seconds Codex waits for bridged MCP server startup.
@@ -481,7 +487,16 @@ def codex_cli(
             agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
 
             # align Codex's `--model` slug to the real bridged model
-            codex_model = await resolve_codex_model(model, model_config, codex_version)
+            codex_catalog = await codex_models_catalog(codex_version)
+            codex_model = await resolve_codex_model(model, model_config, codex_catalog)
+
+            # fail before launch if code mode would deny every bridged tool call
+            check_codex_code_mode_bridged_tools(
+                codex_model,
+                codex_catalog_tool_mode(codex_model, codex_catalog),
+                config_overrides,
+                bridged_tools,
+            )
 
             # determine CODEX_HOME (default to agent working dir)
             if home_dir is None:
@@ -833,7 +848,7 @@ async def _stage_prompt_images(
 async def resolve_codex_model(
     model: str | None,
     model_config: str | None,
-    codex_version: str | None,
+    codex_catalog: dict[str, Any],
 ) -> str:
     """Resolve the Codex `--model` slug aligned to the real bridged model.
 
@@ -854,7 +869,6 @@ async def resolve_codex_model(
     # service_model_name() (e.g. a custom 'otter' provider -> 'gpt-5.5'); align to
     # that, not the registry name ('otter'), which Codex wouldn't recognize.
     model_name = openai_service_model_name(api, real_model.name)
-    codex_catalog = await codex_models_catalog(codex_version)
     resolution = resolve_codex_model_slug(
         model_name,
         api=real_api,

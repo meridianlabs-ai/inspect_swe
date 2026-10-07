@@ -55,6 +55,18 @@ For example, here we specify a custom system prompt and  disable the web search 
 
 {{< include _snippets/agent_bridged_tools.md >}}
 
+### Code mode
+
+Codex runs some models in code mode: those whose Codex catalog entry sets `tool_mode = "code_mode_only"`, which includes most current GPT models. In code mode the model writes JavaScript for an `exec` tool, and that code calls the bridged tools. The bridge runs a bridged tool only for a call the model proposed, and here the model proposed only the `exec` call, so every bridged tool call would be denied.
+
+`codex_cli()` raises an error before launch in this case. To run the eval, set `require_proposal=False` on each `BridgedToolsSpec`:
+
+``` python
+BridgedToolsSpec(name="host_tools", tools=[search_database()], require_proposal=False)
+```
+
+Any code in the sandbox can then call that server's tools with any arguments. Approval policies review only the `exec` call, not the tool calls made from its code. `interactive_codex_cli()` does not run this check.
+
 ## Auto Review
 
 By default, the agent runs Codex with `--dangerously-bypass-approvals-and-sandbox`: Codex's internal sandbox and approval prompts are disabled, since the agent already runs inside the Inspect sandbox. The `auto_review` option instead runs Codex the way its own "Approve for me" mode ships: Codex's `workspace-write` sandbox is active, `approval_policy` is `on-request`, and escalation requests (writes outside the workspace, MCP tool approvals, and network access when `network_access=False`) are adjudicated by an automated "guardian" reviewer model rather than a human:
