@@ -1,8 +1,6 @@
-from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import pytest
-from inspect_ai.agent import BridgedToolsSpec
 from inspect_ai.agent._bridge.util import resolve_inspect_model
 from inspect_ai.model import Model, get_model
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
@@ -14,7 +12,6 @@ from inspect_swe._codex_cli.config import (
     CodexAutoReview,
     CodexSandboxMode,
     check_codex_auto_review_version,
-    check_codex_code_mode_bridged_tools,
     codex_cli_config_overrides,
     codex_config_options,
     codex_mcp_server_config,
@@ -699,115 +696,3 @@ def test_codex_mcp_servers_toml_gates_on_force_approve() -> None:
         == "approve"
     )
     assert bridged_toml["mcp_servers.bridged-tools"]["required"] is True
-
-
-def _spec(name: str, require_proposal: bool = True) -> BridgedToolsSpec:
-    return BridgedToolsSpec(name=name, tools=[], require_proposal=require_proposal)
-
-
-def test_code_mode_raises_for_servers_that_require_proposal() -> None:
-    with pytest.raises(ValueError) as ex:
-        check_codex_code_mode_bridged_tools(
-            "gpt-5.6-sol",
-            "code_mode_only",
-            None,
-            [_spec("host_tools"), _spec("search"), _spec("open", False)],
-        )
-    message = str(ex.value)
-    assert "'gpt-5.6-sol'" in message
-    assert 'tool_mode = "code_mode_only"' in message
-    assert "'host_tools', 'search'" in message
-    assert "'open'" not in message
-    assert "require_proposal=False on the existing BridgedToolsSpec" in message
-
-
-def test_code_mode_passes_when_every_server_opts_out() -> None:
-    check_codex_code_mode_bridged_tools(
-        "gpt-5.6-sol",
-        "code_mode_only",
-        None,
-        [_spec("host_tools", False), _spec("search", False)],
-    )
-
-
-def test_code_mode_passes_without_bridged_tools() -> None:
-    check_codex_code_mode_bridged_tools("gpt-5.6-sol", "code_mode_only", None, None)
-    check_codex_code_mode_bridged_tools("gpt-5.6-sol", "code_mode_only", None, [])
-
-
-@pytest.mark.parametrize(
-    "namespaces",
-    [
-        '["mcp__host_tools"]',
-        "['mcp__host_tools']",
-        '["other", "mcp__host_tools",]',
-        # without the mcp__ prefix (features.non_prefixed_mcp_tool_names)
-        '["host_tools"]',
-    ],
-)
-def test_code_mode_skips_direct_only_namespaces(namespaces: str) -> None:
-    check_codex_code_mode_bridged_tools(
-        "gpt-5.6-sol",
-        "code_mode_only",
-        {"features.code_mode.direct_only_tool_namespaces": namespaces},
-        [_spec("host-tools")],
-    )
-
-
-def test_code_mode_raises_for_servers_not_listed_as_direct_only() -> None:
-    with pytest.raises(ValueError, match="'search'") as ex:
-        check_codex_code_mode_bridged_tools(
-            "gpt-5.6-sol",
-            "code_mode_only",
-            {"features.code_mode.direct_only_tool_namespaces": '["mcp__host_tools"]'},
-            [_spec("host_tools"), _spec("search")],
-        )
-    assert "host_tools" not in str(ex.value)
-
-
-@pytest.mark.parametrize("tool_mode", [None, "direct", "code_mode"])
-def test_non_code_mode_models_do_not_raise(tool_mode: str | None) -> None:
-    check_codex_code_mode_bridged_tools(
-        "gpt-5.5", tool_mode, None, [_spec("host_tools")]
-    )
-
-
-def test_code_mode_only_feature_override_raises() -> None:
-    with pytest.raises(ValueError, match="features.code_mode_only"):
-        check_codex_code_mode_bridged_tools(
-            "gpt-5.5",
-            None,
-            {"features.code_mode_only": "true"},
-            [_spec("host_tools")],
-        )
-    check_codex_code_mode_bridged_tools(
-        "gpt-5.5",
-        None,
-        {"features.code_mode_only": "false"},
-        [_spec("host_tools")],
-    )
-
-
-def test_catalog_tool_mode_wins_over_code_mode_only_feature() -> None:
-    """Codex reads the feature flag only when the catalog entry sets no mode."""
-    check_codex_code_mode_bridged_tools(
-        "gpt-5.5",
-        "direct",
-        {"features.code_mode_only": "true"},
-        [_spec("host_tools")],
-    )
-
-
-def test_code_mode_ignores_specs_without_require_proposal() -> None:
-    """inspect_ai releases before require_proposal have no proposal check."""
-
-    @dataclass
-    class LegacySpec:
-        name: str
-
-    check_codex_code_mode_bridged_tools(
-        "gpt-5.6-sol",
-        "code_mode_only",
-        None,
-        [cast(BridgedToolsSpec, LegacySpec(name="host_tools"))],
-    )

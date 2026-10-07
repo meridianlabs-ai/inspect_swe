@@ -1310,6 +1310,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "sniffio" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typing-extensions" },
 ]
 
@@ -1372,6 +1373,7 @@ requires-dist = [
     { name = "rich", marker = "extra == 'doc'" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "sniffio" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.1.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },
     { name = "typing-extensions", specifier = ">=4.9.0" },
 ]

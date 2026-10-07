@@ -65,6 +65,27 @@ def test_codex_models_catalog_falls_back_to_bundled_on_fetch_error(
         assert not cache_file.exists()
 
 
+def test_codex_version_models_catalog_has_no_fallback(tmp_path: Path) -> None:
+    """Code-mode detection must not read the bundled snapshot as the binary's."""
+    assert anyio.run(agentbinary.codex_version_models_catalog, None) is None
+
+    cache_file = tmp_path / "codex-0.137.0-models.json"
+    with (
+        patch.object(agentbinary, "_cached_catalog_path", return_value=cache_file),
+        patch.object(
+            agentbinary,
+            "download_text_file",
+            AsyncMock(side_effect=RuntimeError("offline")),
+        ),
+    ):
+        assert anyio.run(agentbinary.codex_version_models_catalog, "0.137.0") is None
+        # model alignment still falls back to the snapshot
+        assert (
+            anyio.run(agentbinary.codex_models_catalog, "0.137.0")
+            is BUNDLED_CODEX_CATALOG
+        )
+
+
 @skip_if_github_action
 def test_bundled_catalog_tracks_live_latest() -> None:
     """Drift check for the bundled fallback (``_bundled_catalog.py``).

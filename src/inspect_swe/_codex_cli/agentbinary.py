@@ -170,6 +170,17 @@ async def codex_models_catalog(version: str | None) -> dict[str, Any]:
     samples don't stampede ``raw.githubusercontent.com`` (the first writes the
     cache; the rest read it).
     """
+    catalog = await codex_version_models_catalog(version)
+    return catalog if catalog is not None else BUNDLED_CODEX_CATALOG
+
+
+async def codex_version_models_catalog(version: str | None) -> dict[str, Any] | None:
+    """The ``models.json`` of exactly this Codex version, or ``None``.
+
+    Unlike ``codex_models_catalog`` this never falls back to the bundled
+    snapshot, so callers that need the installed binary's own metadata (not
+    just a reasonable slug) can tell when it is unknown.
+    """
     cached = _read_cached_catalog(version)
     if cached is not None:
         return cached
@@ -181,11 +192,9 @@ async def codex_models_catalog(version: str | None) -> dict[str, Any]:
             cached = _read_cached_catalog(version)
             if cached is not None:
                 return cached
-            fetched = await _fetch_models_catalog(version)
-            if fetched is not None:
-                return fetched
+            return await _fetch_models_catalog(version)
 
-    return BUNDLED_CODEX_CATALOG
+    return None
 
 
 def _read_cached_catalog(version: str | None) -> dict[str, Any] | None:

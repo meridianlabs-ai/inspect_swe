@@ -6,7 +6,6 @@ in `inspect_swe._codex_cli.model_catalog`.
 
 from typing import Any
 
-from inspect_swe._codex_cli._bundled_catalog import BUNDLED_CODEX_CATALOG
 from inspect_swe._codex_cli.model_catalog import (
     _GENERIC_FALLBACK_SLUG,
     codex_catalog_tool_mode,
@@ -359,12 +358,3 @@ def test_codex_catalog_tool_mode_strips_one_provider_segment() -> None:
     )
     assert codex_catalog_tool_mode("a/b/gpt-5.6-sol", TOOL_MODE_CATALOG) is None
     assert codex_catalog_tool_mode("open ai/gpt-5.6-sol", TOOL_MODE_CATALOG) is None
-
-
-def test_bundled_catalog_records_code_mode_models() -> None:
-    """The offline fallback must detect code mode like the live catalog does."""
-    assert (
-        codex_catalog_tool_mode("gpt-5.6-sol", BUNDLED_CODEX_CATALOG)
-        == "code_mode_only"
-    )
-    assert codex_catalog_tool_mode("gpt-5.5", BUNDLED_CODEX_CATALOG) is None

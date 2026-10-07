@@ -6,8 +6,7 @@ fetched (offline, rate-limited ``raw.githubusercontent.com``, or a pre-
 slug — Codex supplies the actual prompt/tools from its own bundled catalog — so a
 trimmed snapshot of the fields the resolver reads
 (``slug``/``priority``/``visibility``/``apply_patch_tool_type``/
-``supports_search_tool``) is sufficient, plus ``tool_mode``, which
-``codex_cli`` reads to detect code mode. Hidden entries are kept: they are still
+``supports_search_tool``) is sufficient. Hidden entries are kept: they are still
 valid ``--model`` slugs for prefix matching, they just never count as "latest"
 (see ``latest_openai_slug``).
 
@@ -28,7 +27,6 @@ BUNDLED_CODEX_CATALOG: dict[str, Any] = {
             "visibility": "list",
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
-            "tool_mode": "code_mode_only",
         },
         {
             "slug": "gpt-5.6-sol",
@@ -36,7 +34,6 @@ BUNDLED_CODEX_CATALOG: dict[str, Any] = {
             "visibility": "list",
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
-            "tool_mode": "code_mode_only",
         },
         {
             "slug": "gpt-5.6-terra",
@@ -44,7 +41,6 @@ BUNDLED_CODEX_CATALOG: dict[str, Any] = {
             "visibility": "list",
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
-            "tool_mode": "code_mode_only",
         },
         {
             "slug": "gpt-5.6-luna",
@@ -52,7 +48,6 @@ BUNDLED_CODEX_CATALOG: dict[str, Any] = {
             "visibility": "list",
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
-            "tool_mode": "code_mode_only",
         },
         {
             "slug": "gpt-daybreak-blue-latest",
@@ -60,7 +55,6 @@ BUNDLED_CODEX_CATALOG: dict[str, Any] = {
             "visibility": "hide",
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
-            "tool_mode": "code_mode_only",
         },
         {
             "slug": "gpt-daybreak-red-latest",
@@ -68,7 +62,6 @@ BUNDLED_CODEX_CATALOG: dict[str, Any] = {
             "visibility": "hide",
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
-            "tool_mode": "code_mode_only",
         },
         {
             "slug": "gpt-5.5",
@@ -104,7 +97,6 @@ BUNDLED_CODEX_CATALOG: dict[str, Any] = {
             "visibility": "hide",
             "apply_patch_tool_type": "freeform",
             "supports_search_tool": True,
-            "tool_mode": "code_mode_only",
         },
     ]
 }
