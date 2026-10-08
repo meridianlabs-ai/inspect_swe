@@ -25,6 +25,7 @@ from inspect_swe._util.agentbinary import (
     AgentBinaryVersion,
     ensure_agent_binary_installed,
 )
+from inspect_swe._util.checksum import sha256_checksum
 from inspect_swe._util.sandbox import SANDBOX_INSTALL_DIR
 
 
@@ -495,7 +496,7 @@ def test_saved_log_has_one_record_per_agent_span_per_sample(tmp_path: Path) -> N
 
 def _hash_spy() -> MagicMock:
     """Spy on the provenance hash, separate from download/cache verification."""
-    return MagicMock(wraps=agentbinary.sha256_checksum)
+    return MagicMock(wraps=sha256_checksum)
 
 
 def test_verified_bytes_record_the_resolved_digest_without_hashing(
