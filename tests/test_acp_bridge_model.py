@@ -41,8 +41,11 @@ def _bridge_options(
     module: ModuleType,
     make_agent: Any,
     names: list[str],
+    eval_model: Model | None = None,
 ) -> tuple[dict[str, Any], dict[str, Model]]:
-    """Start the agent with the eval on EVAL_MODEL and stop at the bridge.
+    """Start the agent with the eval on `eval_model` and stop at the bridge.
+
+    `eval_model` defaults to EVAL_MODEL.
 
     Returns the options the agent passed to `sandbox_agent_bridge()` and the
     model the bridge serves for each of `names`.
@@ -63,7 +66,7 @@ def _bridge_options(
     monkeypatch.setattr(module, "sandbox_agent_bridge", fake_bridge)
 
     async def run() -> dict[str, Model]:
-        init_active_model(get_model(EVAL_MODEL), GenerateConfig())
+        init_active_model(eval_model or get_model(EVAL_MODEL), GenerateConfig())
         init_subtask_store(Store())
         agent: ACPAgent = make_agent()
         with pytest.raises(_BridgeReached):
@@ -146,3 +149,39 @@ def test_acp_codex_guardian_keeps_the_agent_model_instance(
     )
     assert served["agent"] is agent_model
     assert served[GUARDIAN_MODEL_SLUG] is agent_model
+
+
+def _config_bearing_eval_model() -> Model:
+    return get_model(EVAL_MODEL, config=GenerateConfig(temperature=0.25))
+
+
+def test_acp_claude_code_on_the_eval_model_serves_the_eval_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # with no model= the agent runs the eval's model; an unaliased name must
+    # reach the eval's own instance and its config, not a fresh get_model()
+    eval_model = _config_bearing_eval_model()
+    _, served = _bridge_options(
+        monkeypatch,
+        acp_claude_code,
+        lambda: ClaudeCode(),
+        ["eval", "claude-haiku-4-5"],
+        eval_model=eval_model,
+    )
+    assert served["eval"] is eval_model
+    assert served["claude-haiku-4-5"] is eval_model
+
+
+def test_acp_codex_on_the_eval_model_serves_the_eval_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    eval_model = _config_bearing_eval_model()
+    _, served = _bridge_options(
+        monkeypatch,
+        acp_codex_cli,
+        lambda: CodexCli(auto_review=True),
+        ["eval", "gpt-5.1-codex-mini", GUARDIAN_MODEL_SLUG],
+        eval_model=eval_model,
+    )
+    for name, model in served.items():
+        assert model is eval_model, name
