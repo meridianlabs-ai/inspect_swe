@@ -108,7 +108,8 @@ class ClaudeCode(ACPAgent):
         self, state: AgentState
     ) -> AsyncIterator[tuple[ExecRemoteProcess, SandboxAgentBridge]]:
         sbox = sandbox_env(self.sandbox)
-        default_model = get_model(self.model).canonical_name()
+        model = get_model(self.model)
+        default_model = model.canonical_name()
 
         # Use a unique port per agent invocation so re-running the agent in the
         # same sandbox doesn't collide with a stale model_proxy on 13131
@@ -119,7 +120,9 @@ class ClaudeCode(ACPAgent):
 
         async with sandbox_agent_bridge(
             state,
-            model=None,
+            # Serve any name outside model_aliases with this agent's model
+            # rather than the eval's, which may differ.
+            model=str(model),
             model_aliases=self.model_map,
             filter=self.filter,
             retry_refusals=self.retry_refusals,

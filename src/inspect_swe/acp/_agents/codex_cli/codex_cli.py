@@ -78,7 +78,8 @@ class CodexCli(ACPAgent):
         self, state: AgentState
     ) -> AsyncIterator[tuple[ExecRemoteProcess, SandboxAgentBridge]]:
         sbox = sandbox_env(self.sandbox)
-        default_model = get_model(self.model).canonical_name()
+        model = get_model(self.model)
+        default_model = model.canonical_name()
 
         # Use a unique port per sample to avoid conflicts with codex-core's
         # internal services (mirrors the non-ACP codex_cli approach).
@@ -88,14 +89,16 @@ class CodexCli(ACPAgent):
 
         async with sandbox_agent_bridge(
             state,
-            model=None,
+            # Serve any name outside model_aliases with this agent's model
+            # rather than the eval's, which may differ.
+            model=str(model),
             model_aliases=resolve_codex_auto_review_model_aliases(
                 self._auto_review,
                 self.model_map,
-                # the ACP bridge has no fallback model (model=None), so the
-                # guardian slug must be bound explicitly; default guardian
-                # requests to this agent's model
-                default=get_model(self.model),
+                # bind the guardian slug to this agent's Model instance so it
+                # keeps the instance's config, which the model= pin above
+                # (a name) does not carry
+                default=model,
             ),
             filter=self.filter,
             retry_refusals=self.retry_refusals,
