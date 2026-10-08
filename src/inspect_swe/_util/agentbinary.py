@@ -96,6 +96,9 @@ class AgentBinaryDownload(NamedTuple):
     # cannot infer this: resolution has to run before the cache path is known,
     # so a successful resolve says nothing about whether anything was fetched.
     from_cache: bool
+    # digest `data` was verified against (by the download or the cache read),
+    # or None when post_download transformed it after verification
+    verified_checksum: str | None
 
 
 @dataclass
@@ -158,6 +161,13 @@ _resolved_versions: dict[tuple[str, str, SandboxPlatform], AgentBinaryVersion] =
 # exception instead of each retrying in turn — mirrors
 # versioncache.cached_version_resolution's idiom for npm-installed agents.
 _failed_resolutions: dict[tuple[str, str, SandboxPlatform], tuple[int, Exception]] = {}
+
+# SHA-256 of installed host artifacts that have no verified digest (the output
+# of post_download, pinned-version cache reads, the offline fallback), keyed by
+# (binary, version, platform, package) and computed once per process: the
+# first install hashes and later ones reuse it. read and written only under the
+# per-binary install lock, which already serializes them. No expiry.
+_artifact_checksums: dict[tuple[str, str, SandboxPlatform, bool], str] = {}
 
 
 async def resolve_agent_binary_version(
@@ -273,6 +283,7 @@ async def ensure_agent_binary_installed(
         binary_bytes: bytes | None = None
         package = False
         origin: AgentBinaryOrigin = "download"
+        checksum: str | None = None
         if version not in ["stable", "latest"]:
             if source.cached_package_path is not None:
                 binary_bytes = read_cached_file(
@@ -297,6 +308,7 @@ async def ensure_agent_binary_installed(
                 # "stable" resolves to a concrete version that is usually
                 # already cached from an earlier eval on this host
                 origin = "cache" if downloaded.from_cache else "download"
+                checksum = downloaded.verified_checksum
             except ChecksumMismatchError:
                 # integrity failure: the freshly-downloaded (or shared,
                 # already-failed) bytes did not match the expected digest.
@@ -375,13 +387,20 @@ async def ensure_agent_binary_installed(
         # recorded only once the install has actually landed, and against the
         # bytes that landed rather than the upstream manifest digest: an agent
         # with a post_download transform installs something other than what it
-        # downloaded
+        # downloaded. bytes verified against the resolved digest reuse it;
+        # the rest are hashed once per artifact, not once per sample.
+        if checksum is None:
+            key = (source.binary, resolved_version, platform, package)
+            checksum = _artifact_checksums.get(key)
+            if checksum is None:
+                checksum = await anyio.to_thread.run_sync(sha256_checksum, binary_bytes)
+                _artifact_checksums[key] = checksum
         record_agent_binary_install(
             source,
             requested=requested,
             version=resolved_version,
             platform=platform,
-            checksum=await anyio.to_thread.run_sync(sha256_checksum, binary_bytes),
+            checksum=checksum,
             origin=origin,
         )
         return binary_path
@@ -448,8 +467,10 @@ async def download_agent_binary_async(
     else:
         logger(f"Used {source.agent} binary from cache: {version} ({platform})")
 
-    # return data, resolved version, and whether anything was actually fetched
-    return AgentBinaryDownload(binary_data, resolved, from_cache)
+    # return data, resolved version, whether anything was actually fetched, and
+    # the digest the data was verified against (cache_checksum is exactly the
+    # digest that still describes the returned bytes)
+    return AgentBinaryDownload(binary_data, resolved, from_cache, cache_checksum)
 
 
 def read_cached_binary(

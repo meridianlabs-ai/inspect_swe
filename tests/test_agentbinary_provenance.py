@@ -1,13 +1,13 @@
 """Unit tests for the per-sample agent binary provenance event."""
 
 import hashlib
-from collections.abc import Awaitable, Callable, Iterator
-from contextlib import ExitStack
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import ExitStack, asynccontextmanager
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
 import pytest
@@ -30,7 +30,7 @@ from inspect_swe._util.sandbox import SANDBOX_INSTALL_DIR
 
 @pytest.fixture(autouse=True)
 def _clear_resolution_caches() -> Iterator[None]:
-    """Isolate the module-level resolution caches, which are never evicted.
+    """Isolate the module-level resolution and checksum caches (never evicted).
 
     These tests otherwise rely on every one of them choosing a unique `binary`
     name, since the cache keys on it. Clearing on the way in as well as out
@@ -39,9 +39,11 @@ def _clear_resolution_caches() -> Iterator[None]:
     """
     agentbinary._resolved_versions.clear()
     agentbinary._failed_resolutions.clear()
+    agentbinary._artifact_checksums.clear()
     yield
     agentbinary._resolved_versions.clear()
     agentbinary._failed_resolutions.clear()
+    agentbinary._artifact_checksums.clear()
 
 
 def _source(
@@ -489,3 +491,148 @@ def test_saved_log_has_one_record_per_agent_span_per_sample(tmp_path: Path) -> N
     installs = events[events["source"] == "inspect_swe"]
     assert sorted(installs["version"]) == sorted(versions * 2)
     assert set(installs["origin"]) == {"cache"}
+
+
+def _hash_spy() -> MagicMock:
+    """Spy on the provenance hash, separate from download/cache verification."""
+    return MagicMock(wraps=agentbinary.sha256_checksum)
+
+
+def test_verified_bytes_record_the_resolved_digest_without_hashing(
+    tmp_path: Path,
+) -> None:
+    # a download, and later a warm-cache read, are both verified against the
+    # resolved digest already, so the record reuses it instead of hashing again
+    data = b"verified-single-binary"
+    resolved = AgentBinaryVersion(
+        "9.7.1", hashlib.sha256(data).hexdigest(), "https://example.com/bin"
+    )
+    source = _source(tmp_path, "codex-prov-verified", resolved)
+    spy = _hash_spy()
+
+    with (
+        patch.object(agentbinary, "sha256_checksum", spy),
+        patch.object(agentbinary, "download_file", AsyncMock(return_value=data)),
+    ):
+        _, first = _install(source, "stable", _FakeSandbox())
+        _, second = _install(source, "stable", _FakeSandbox())
+
+    assert [e.origin for e in first + second] == ["download", "cache"]
+    assert {e.checksum for e in first + second} == {resolved.expected_checksum}
+    spy.assert_not_called()
+
+
+def test_unverified_artifact_is_hashed_once_per_process(tmp_path: Path) -> None:
+    # a pinned cache read has no resolved digest, so it is hashed -- once, by
+    # the first install; later samples reuse the stored value
+    data = b"pinned-cached-binary"
+    source = _source(tmp_path, "codex-prov-memo")
+    source.cached_binary_path("9.7.2", "linux-arm64").write_bytes(data)
+    spy = _hash_spy()
+
+    with patch.object(agentbinary, "sha256_checksum", spy):
+        events = [
+            event
+            for _ in range(3)
+            for event in _install(source, "9.7.2", _FakeSandbox())[1]
+        ]
+
+    assert [e.checksum for e in events] == [hashlib.sha256(data).hexdigest()] * 3
+    spy.assert_called_once()
+
+
+def test_transformed_download_is_hashed_once_per_process(tmp_path: Path) -> None:
+    # post_download output has no verified digest either: the first install
+    # (download) hashes it and the next (served from cache) reuses the value
+    archive = b"archive-to-transform"
+    extracted = b"transformed-binary"
+    resolved = AgentBinaryVersion(
+        "9.7.3", hashlib.sha256(archive).hexdigest(), "https://example.com/c.tgz"
+    )
+    source = _source(
+        tmp_path,
+        "codex-prov-memo-transform",
+        resolved,
+        post_download=lambda _: extracted,
+    )
+    spy = _hash_spy()
+
+    with (
+        patch.object(agentbinary, "sha256_checksum", spy),
+        patch.object(agentbinary, "download_file", AsyncMock(return_value=archive)),
+    ):
+        _, first = _install(source, "stable", _FakeSandbox())
+        _, second = _install(source, "stable", _FakeSandbox())
+
+    assert [e.origin for e in first + second] == ["download", "cache"]
+    assert {e.checksum for e in first + second} == {
+        hashlib.sha256(extracted).hexdigest()
+    }
+    spy.assert_called_once()
+
+
+@pytest.mark.parametrize("version", ["auto", "9.6.1"])
+def test_codex_cli_probes_its_version_once(tmp_path: Path, version: str) -> None:
+    # codex_cli hands its `codex --version` probe to the installer for a binary
+    # found in the sandbox, and reuses that one result for its own version
+    # checks: on both the sandbox and the installed path, exactly one probe
+    # runs, the record carries the sandbox version, and auto_review's version
+    # gate gets the probed value
+    from inspect_swe import codex_cli
+    from inspect_swe._codex_cli import agentbinary as codex_agentbinary
+    from inspect_swe._codex_cli import codex_cli as codex_cli_module
+
+    source = _source(tmp_path, "codex")
+    source.cached_binary_path("9.6.1", "linux-arm64").write_bytes(b"codex-binary")
+    sandbox = _FakeSandbox(
+        which_success=version == "auto", which_path="/usr/local/bin/codex\n"
+    )
+    probe = AsyncMock(return_value="codex-cli 0.150.0")
+    gate = MagicMock(side_effect=_StopAfterVersionGate)
+
+    @asynccontextmanager
+    async def fake_checkpointer() -> AsyncIterator[SimpleNamespace]:
+        yield SimpleNamespace(attempt="first")
+
+    @asynccontextmanager
+    async def fake_bridge(
+        state: AgentState, **kwargs: object
+    ) -> AsyncIterator[SimpleNamespace]:
+        yield SimpleNamespace(state=state)
+
+    task = Task(
+        dataset=[Sample(input="hello")],
+        solver=codex_cli(version=version, auto_review=True),
+    )
+    with (
+        _patched_installer(),
+        patch.object(codex_cli_module, "codex_cli_binary_source", lambda: source),
+        patch.object(codex_cli_module, "sandbox_env", lambda *_: sandbox),
+        patch.object(codex_cli_module, "checkpointer", fake_checkpointer),
+        patch.object(codex_cli_module, "sandbox_agent_bridge", fake_bridge),
+        patch.object(codex_cli_module, "check_codex_auto_review_version", gate),
+        patch.object(codex_agentbinary, "sandbox_exec", probe),
+    ):
+        [log] = eval(task, model="mockllm/model", display="none", log_dir=str(tmp_path))
+
+    assert log.samples is not None
+    assert "_StopAfterVersionGate" in str(log.samples[0].error)
+    expected_binary = (
+        "/usr/local/bin/codex"
+        if version == "auto"
+        else f"{SANDBOX_INSTALL_DIR}/codex-9.6.1-linux-arm64"
+    )
+    probe.assert_awaited_once()
+    assert probe.await_args is not None
+    assert probe.await_args.args[1] == f"{expected_binary} --version"
+    gate.assert_called_once_with("0.150.0")
+    [install] = [
+        AgentBinaryInstall.model_validate(event.data)
+        for event in log.samples[0].events
+        if isinstance(event, InfoEvent) and event.source == "inspect_swe"
+    ]
+    assert install.version == ("0.150.0" if version == "auto" else "9.6.1")
+
+
+class _StopAfterVersionGate(Exception):
+    """Ends a codex_cli run once its version gate has been reached."""
