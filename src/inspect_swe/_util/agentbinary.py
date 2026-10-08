@@ -2,14 +2,17 @@ import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable, Literal, NamedTuple
+from typing import Awaitable, Callable, Literal, NamedTuple, TypeAlias
 
+import anyio
+from inspect_ai.log import transcript
 from inspect_ai.util import SandboxEnvironment, concurrency
 from inspect_ai.util import sandbox as sandbox_env
+from pydantic import BaseModel
 
 from inspect_swe._util.trace import trace
 
-from .checksum import ChecksumMismatchError, verify_checksum
+from .checksum import ChecksumMismatchError, sha256_checksum, verify_checksum
 from .download import download_file
 from .sandbox import (
     SANDBOX_INSTALL_DIR,
@@ -21,6 +24,58 @@ from .sandbox import (
 
 logger = logging.getLogger(__name__)
 
+# source identifier for the InfoEvents this module writes to the transcript
+AGENT_BINARY_EVENT_SOURCE = "inspect_swe"
+
+AgentBinaryOrigin: TypeAlias = Literal[
+    "download", "cache", "sandbox", "cache_unverified"
+]
+"""Where the agent binary a sample ran came from."""
+
+
+class AgentBinaryInstall(BaseModel):
+    """Provenance of the agent binary a sample actually ran.
+
+    Recorded as the `data` of an `InfoEvent` (`source="inspect_swe"`) each time
+    an agent resolves its binary, so a sample that invokes two agents (or the
+    same agent twice) carries one record per invocation. The event exists
+    because the installed version can differ from the one the task appears to
+    request, and can differ between samples of a single eval:
+    `"stable"`/`"latest"` resolve through a per-process cache with no expiry,
+    so a resumed run, an `eval_set` retry, or a multi-process run can install a
+    newer release for the remaining samples, and `"auto"` takes whatever the
+    sandbox image happens to contain.
+    """
+
+    agent: str
+    """Agent the binary belongs to (e.g. `"claude_code"`)."""
+
+    requested: str
+    """`version=` as the caller passed it: `"auto"`, `"sandbox"`, `"stable"`, `"latest"`, or an explicit version."""
+
+    version: str | None
+    """Concrete version installed. When `origin="sandbox"` the binary was already in the image, so this is the version `codex_cli` reads from `codex --version`, and `None` for the other agents, which do not run the binary to ask."""
+
+    platform: SandboxPlatform | None
+    """Platform the artifact was resolved for. `None` when `origin="sandbox"`, where no platform-specific artifact is chosen and detection would add three sandbox execs to the default path."""
+
+    checksum: str | None
+    """SHA-256 of the host-side artifact this install resolved: the binary itself, or the package archive extracted into the sandbox. `None` when `origin="sandbox"`, where the host never reads the binary.
+
+    Two caveats. It is not always the digest published upstream: an agent that transforms its download (`codex_cli` extracting a single binary from a tarball on pre-`rust-v0.133.0` releases) installs bytes the manifest never described, while a package archive is cached and extracted verbatim and so does match when a manifest was resolved at all.
+
+    And it describes the artifact on the host, not a re-read of the sandbox. When a package for this version is already extracted in the sandbox the write and extract are skipped, so the digest is of the cached archive that install came from rather than of bytes this call placed there.
+    """
+
+    origin: AgentBinaryOrigin
+    """How the binary got into the sandbox.
+
+    - `"download"`: fetched over the network and verified against the resolved digest.
+    - `"cache"`: served from the local cache. This is not a claim of verification. A pinned version read on the fast path is not checked against a digest because none is resolved for it, and neither is a cached artifact for an agent with a `post_download` transform, whose installed bytes cannot be compared against the download digest.
+    - `"sandbox"`: already present in the image; nothing was installed.
+    - `"cache_unverified"`: resolution or download failed; the cached fallback was installed without checksum verification.
+    """
+
 
 class AgentBinaryVersion(NamedTuple):
     version: str
@@ -30,6 +85,20 @@ class AgentBinaryVersion(NamedTuple):
     # a single binary. requires the source to define package_entrypoint and
     # cached_package_path.
     package: bool = False
+
+
+class AgentBinaryDownload(NamedTuple):
+    """Result of resolving and fetching an agent binary."""
+
+    data: bytes
+    resolved: AgentBinaryVersion
+    # the bytes came off the local cache rather than the network. the caller
+    # cannot infer this: resolution has to run before the cache path is known,
+    # so a successful resolve says nothing about whether anything was fetched.
+    from_cache: bool
+    # digest `data` was verified against (by the download or the cache read),
+    # or None when post_download transformed it after verification
+    verified_checksum: str | None
 
 
 @dataclass
@@ -51,6 +120,32 @@ class AgentBinarySource:
     cached_package_path: Callable[[str, SandboxPlatform], Path] | None = None
 
 
+def _agent_event_name(source: AgentBinarySource) -> str:
+    """Registry name of the agent (`claude_code`) from its display name ("claude code")."""
+    return source.agent.replace(" ", "_")
+
+
+def record_agent_binary_install(
+    binary_source: AgentBinarySource,
+    *,
+    requested: str,
+    version: str | None,
+    platform: SandboxPlatform | None,
+    checksum: str | None,
+    origin: AgentBinaryOrigin,
+) -> None:
+    """Record which agent binary this sample ran as a transcript `InfoEvent`."""
+    install = AgentBinaryInstall(
+        agent=_agent_event_name(binary_source),
+        requested=requested,
+        version=version,
+        platform=platform,
+        checksum=checksum,
+        origin=origin,
+    )
+    transcript().info(install.model_dump(mode="json"), source=AGENT_BINARY_EVENT_SOURCE)
+
+
 # In-process cache for version resolution results. When many samples run
 # concurrently they all call resolve_version with the same arguments.
 # Without caching, each call hits upstream APIs (e.g. GitHub, GCS),
@@ -66,6 +161,13 @@ _resolved_versions: dict[tuple[str, str, SandboxPlatform], AgentBinaryVersion] =
 # exception instead of each retrying in turn — mirrors
 # versioncache.cached_version_resolution's idiom for npm-installed agents.
 _failed_resolutions: dict[tuple[str, str, SandboxPlatform], tuple[int, Exception]] = {}
+
+# SHA-256 of installed host artifacts that have no verified digest (the output
+# of post_download, pinned-version cache reads, the offline fallback), keyed by
+# (binary, version, platform, package) and computed once per process: the
+# first install hashes and later ones reuse it. read and written only under the
+# per-binary install lock, which already serializes them. No expiry.
+_artifact_checksums: dict[tuple[str, str, SandboxPlatform, bool], str] = {}
 
 
 async def resolve_agent_binary_version(
@@ -120,9 +222,20 @@ async def ensure_agent_binary_installed(
     version: Literal["auto", "sandbox", "stable", "latest"] | str = "auto",
     user: str | None = None,
     sandbox: SandboxEnvironment | None = None,
+    *,
+    sandbox_version: Callable[[str], Awaitable[str | None]] | None = None,
 ) -> str:
+    # `sandbox_version` probes the version of a binary found in the sandbox
+    # (given its path) for the provenance record. only an agent that runs that
+    # probe anyway passes it, so the default path gains no sandbox exec.
+
     # resolve sandbox
     sandbox = sandbox or sandbox_env()
+
+    # `version` is reassigned below ("auto" becomes "stable" when the sandbox
+    # has no binary), and the provenance event reports what the caller asked
+    # for rather than what it was rewritten to
+    requested = version
 
     # look in the sandbox first if we need to
     if version == "auto" or version == "sandbox":
@@ -130,6 +243,22 @@ async def ensure_agent_binary_installed(
         if result.success:
             binary_path = result.stdout.strip()
             trace(f"Using {source.agent} installed in sandbox: {binary_path}")
+            # no checksum: the binary predates us and the host never reads
+            # it. no version unless the agent probes it anyway, and platform
+            # is left undetected because that costs three sandbox execs and
+            # this is the default path.
+            record_agent_binary_install(
+                source,
+                requested=requested,
+                version=(
+                    await sandbox_version(binary_path)
+                    if sandbox_version is not None
+                    else None
+                ),
+                platform=None,
+                checksum=None,
+                origin="sandbox",
+            )
             return binary_path
 
         # if version == "sandbox" and we don't find it that's an error
@@ -153,6 +282,8 @@ async def ensure_agent_binary_installed(
         # cache remains the offline fallback.
         binary_bytes: bytes | None = None
         package = False
+        origin: AgentBinaryOrigin = "download"
+        checksum: str | None = None
         if version not in ["stable", "latest"]:
             if source.cached_package_path is not None:
                 binary_bytes = read_cached_file(
@@ -167,11 +298,17 @@ async def ensure_agent_binary_installed(
         # download the binary
         if binary_bytes is None:
             try:
-                binary_bytes, resolved = await download_agent_binary_async(
+                downloaded = await download_agent_binary_async(
                     source, version, platform, trace
                 )
-                resolved_version = resolved.version
-                package = resolved.package
+                binary_bytes = downloaded.data
+                resolved_version = downloaded.resolved.version
+                package = downloaded.resolved.package
+                # resolution succeeding does not mean anything was fetched:
+                # "stable" resolves to a concrete version that is usually
+                # already cached from an earlier eval on this host
+                origin = "cache" if downloaded.from_cache else "download"
+                checksum = downloaded.verified_checksum
             except ChecksumMismatchError:
                 # integrity failure: the freshly-downloaded (or shared,
                 # already-failed) bytes did not match the expected digest.
@@ -202,9 +339,11 @@ async def ensure_agent_binary_installed(
                     f"single binary ({platform})"
                 )
                 resolved_version = version
+                origin = "cache_unverified"
         else:
             # If we got it from cache, version is already the resolved version
             resolved_version = version
+            origin = "cache"
 
         # write it into the container and return it
         install_path = (
@@ -245,6 +384,25 @@ async def ensure_agent_binary_installed(
             await sandbox_exec(
                 sandbox, f"{binary_path} {source.post_install}", user=user
             )
+        # recorded only once the install has actually landed, and against the
+        # bytes that landed rather than the upstream manifest digest: an agent
+        # with a post_download transform installs something other than what it
+        # downloaded. bytes verified against the resolved digest reuse it;
+        # the rest are hashed once per artifact, not once per sample.
+        if checksum is None:
+            key = (source.binary, resolved_version, platform, package)
+            checksum = _artifact_checksums.get(key)
+            if checksum is None:
+                checksum = await anyio.to_thread.run_sync(sha256_checksum, binary_bytes)
+                _artifact_checksums[key] = checksum
+        record_agent_binary_install(
+            source,
+            requested=requested,
+            version=resolved_version,
+            platform=platform,
+            checksum=checksum,
+            origin=origin,
+        )
         return binary_path
 
 
@@ -253,7 +411,7 @@ async def download_agent_binary_async(
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform,
     logger: Callable[[str], None] | None = None,
-) -> tuple[bytes, AgentBinaryVersion]:
+) -> AgentBinaryDownload:
     # resolve logger
     logger = logger or print
 
@@ -282,6 +440,7 @@ async def download_agent_binary_async(
         cache_checksum = None if source.post_download else expected_checksum
 
     binary_data = read_cached_file(cache_path, cache_checksum)
+    from_cache = binary_data is not None
     if binary_data is None:
         # not in cache, download and verify checksum
         binary_data = await download_file(download_url)
@@ -308,8 +467,10 @@ async def download_agent_binary_async(
     else:
         logger(f"Used {source.agent} binary from cache: {version} ({platform})")
 
-    # return data and resolved version
-    return binary_data, resolved
+    # return data, resolved version, whether anything was actually fetched, and
+    # the digest the data was verified against (cache_checksum is exactly the
+    # digest that still describes the returned bytes)
+    return AgentBinaryDownload(binary_data, resolved, from_cache, cache_checksum)
 
 
 def read_cached_binary(

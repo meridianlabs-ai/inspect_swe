@@ -390,16 +390,27 @@ def codex_cli(
             if cp.attempt == "resume_for_scoring":
                 return bridge.state
 
+            # resolve the installed codex version once (shared by the
+            # provenance record of a binary found in the sandbox, the
+            # auto_review gate and model alignment below)
+            probed_versions: dict[str, str | None] = {}
+
+            async def probe_codex_version(binary: str) -> str | None:
+                if binary not in probed_versions:
+                    probed_versions[binary] = await codex_binary_version(
+                        sandbox_env(sandbox), binary, user
+                    )
+                return probed_versions[binary]
+
             # ensure codex is installed and get binary location
             codex_binary = await ensure_agent_binary_installed(
-                codex_cli_binary_source(), version, user, sandbox_env(sandbox)
+                codex_cli_binary_source(),
+                version,
+                user,
+                sandbox_env(sandbox),
+                sandbox_version=probe_codex_version,
             )
-
-            # resolve the installed codex version once (shared by the
-            # auto_review gate and model alignment below)
-            codex_version = await codex_binary_version(
-                sandbox_env(sandbox), codex_binary, user
-            )
+            codex_version = await probe_codex_version(codex_binary)
 
             # auto_review requires on-request approval support (>= 0.137.0 for
             # headless exec); the floor is applied in centaur mode too so
