@@ -5,7 +5,7 @@ subtitle: Software Engineering Agents for Inspect AI
 
 ## Overview
 
-The `inspect_swe` package makes software engineering agents like [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), and [Mini SWE Agent](https://github.com/SWE-agent/mini-swe-agent) available as standard Inspect agents. For example, here we use the `claude_code()` agent as the solver in an Inspect task:
+The `inspect_swe` package makes software engineering agents like [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Mini SWE Agent](https://github.com/SWE-agent/mini-swe-agent), and [Pi](https://github.com/earendil-works/pi) available as standard Inspect agents. For example, here we use the `claude_code()` agent as the solver in an Inspect task:
 
 ``` python
 from inspect_ai import Task, task
@@ -47,6 +47,7 @@ Then, try out one or more of the available agents:
 | [`opencode()`](opencode.qmd) | Provider-independent terminal-based coding agent. |
 | [`mini_swe_agent()`](mini_swe_agent.qmd) | SWE-agent's minimal 100-line agent. |
 | [`antigravity()`](antigravity.qmd) | Google's Antigravity SDK agent (`google-antigravity` / localharness). |
+| [`pi()`](pi.qmd) | Terminal coding agent with file editing and shell tools. |
 
 
 : {tbl-colwidths=\[30,70\]}

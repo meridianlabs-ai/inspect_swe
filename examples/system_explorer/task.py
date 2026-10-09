@@ -11,6 +11,7 @@ from inspect_swe import (
     kimi_code,
     mini_swe_agent,
     opencode,
+    pi,
 )
 
 
@@ -23,6 +24,7 @@ def system_explorer(
         "kimi_code",
         "mini_swe_agent",
         "opencode",
+        "pi",
     ] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
@@ -39,6 +41,8 @@ def system_explorer(
             solver = mini_swe_agent()
         case "opencode":
             solver = opencode()
+        case "pi":
+            solver = pi()
 
     return Task(
         dataset=json_dataset("dataset.json"),
