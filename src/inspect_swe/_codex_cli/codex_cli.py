@@ -378,7 +378,9 @@ def codex_cli(
                     default=get_model(model) if transparent_proxy else None,
                 ),
                 forward_generation_config=transparent_proxy,
-                filter=classify_filter(filter, consumer.classify),
+                filter=classify_filter(
+                    filter, consumer.classify, consumer.on_filter_output
+                ),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,

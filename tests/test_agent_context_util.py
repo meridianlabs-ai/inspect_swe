@@ -112,6 +112,41 @@ async def test_wrapper_passes_through_user_filter_result() -> None:
     assert isinstance(result, GenerateInput)
 
 
+async def test_wrapper_reports_only_filter_returned_output() -> None:
+    returned = ModelOutput.from_content("model", "from the filter")
+    results: list[ModelOutput | GenerateInput | None] = [
+        None,
+        GenerateInput(
+            input=[ChatMessageUser(content="hi")],
+            tools=[],
+            tool_choice=None,
+            config=GenerateConfig(),
+        ),
+        returned,
+    ]
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        return results.pop(0)
+
+    seen: list[tuple[list[ChatMessage], ModelOutput]] = []
+    wrapped = classify_filter(
+        user_filter,
+        static_root_classifier,
+        lambda messages, output: seen.append((messages, output)),
+    )
+    args = _args()
+    with bridged_request_scope("slug"):
+        for _ in range(3):
+            await wrapped(*args)
+    assert seen == [(args[1], returned)]
+
+
 async def test_classify_exceptions_do_not_break_generation(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

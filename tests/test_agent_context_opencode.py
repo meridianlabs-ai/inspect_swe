@@ -26,8 +26,13 @@ import importlib
 from typing import Any
 
 import pytest
-from inspect_ai.agent import AgentBridgeContext, current_agent_bridge_context
+from inspect_ai.agent import (
+    AgentBridgeContext,
+    AgentState,
+    current_agent_bridge_context,
+)
 from inspect_ai.agent._bridge.context import bridged_request_scope
+from inspect_ai.agent._bridge.util import resolve_inspect_model
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageUser,
@@ -528,3 +533,68 @@ async def test_opencode_filter_small_model_sentinel_colliding_with_root_classifi
     assert await _invoke(wrapped, "claude-haiku-4-5-20251001") == AgentBridgeContext(
         "subagent"
     )
+
+
+# ---------------------------------------------------------------------------
+# sentinel routing follows a caller alias on the primary slug
+# ---------------------------------------------------------------------------
+
+
+class _BridgeCaptured(Exception):
+    pass
+
+
+async def _bridge_aliases(
+    monkeypatch: Any, **opencode_args: Any
+) -> dict[str, str | Model] | None:
+    """The `model_aliases` opencode() hands sandbox_agent_bridge."""
+    captured: dict[str, Any] = {}
+
+    def fake_bridge(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        raise _BridgeCaptured()
+
+    monkeypatch.setattr(opencode_module, "sandbox_agent_bridge", fake_bridge)
+    agent = opencode_module.opencode(**opencode_args)
+    with pytest.raises(_BridgeCaptured):
+        await agent(AgentState(messages=[]))
+    aliases: dict[str, str | Model] | None = captured["model_aliases"]
+    return aliases
+
+
+async def test_sentinels_follow_caller_alias_on_primary(monkeypatch: Any) -> None:
+    aliases = await _bridge_aliases(
+        monkeypatch,
+        model="mockllm/fallback",
+        model_aliases={"claude-sonnet-4-5": "mockllm/primary-override"},
+    )
+    assert aliases is not None
+    _, subagent, small = build_opencode_config_overrides(
+        "anthropic", _ANTHROPIC_PRIMARY
+    )
+    assert subagent is not None and small is not None
+    for sentinel in (subagent, small):
+        resolved = resolve_inspect_model(
+            _bare_model_id(sentinel), aliases, "inspect/mockllm/fallback"
+        )
+        assert resolved.name == "primary-override"
+
+
+async def test_caller_alias_on_sentinel_wins(monkeypatch: Any) -> None:
+    aliases = await _bridge_aliases(
+        monkeypatch,
+        model_aliases={
+            "claude-sonnet-4-5": "mockllm/primary-override",
+            "claude-haiku-4-5-20251001": "mockllm/sub-override",
+        },
+    )
+    assert aliases is not None
+    assert aliases["claude-haiku-4-5-20251001"] == "mockllm/sub-override"
+
+
+async def test_no_caller_alias_on_primary_passes_aliases_through(
+    monkeypatch: Any,
+) -> None:
+    other: dict[str, str | Model] = {"something-else": "mockllm/x"}
+    assert await _bridge_aliases(monkeypatch, model_aliases=other) == other
+    assert await _bridge_aliases(monkeypatch) is None

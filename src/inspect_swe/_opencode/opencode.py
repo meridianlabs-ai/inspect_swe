@@ -143,9 +143,12 @@ logger = getLogger(__name__)
 # `anthropic/claude-haiku-4-5-20251001` subagent model arrived at
 # `current_bridge_request().model` as `claude-haiku-4-5-20251001` -- so
 # classification uses the bare forms, never the `provider/`-prefixed config
-# values. No bridge `model_aliases` entries are needed for the sentinels:
-# the bridge's fallback `model` already serves any unaliased slug
-# (`resolve_inspect_model`).
+# values. The sentinels are served by whatever serves the primary slug: with
+# no caller alias on the primary, the bridge's fallback `model` serves both
+# (`resolve_inspect_model`); a caller `model_aliases` entry on the bare primary
+# slug is copied to each sentinel (`sentinel_model_aliases`), so delegated and
+# utility traffic follows the primary's route as it did before injection. A
+# caller alias on a sentinel slug itself is the caller's choice and wins.
 
 _SENTINEL_MODELS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # provider_id -> (subagent_candidates, small_model_candidates): ORDERED
@@ -317,6 +320,30 @@ def build_opencode_filter(
     return classify_filter(filter, slug_map_classifier({root_slug}, kind_by_slug))
 
 
+def sentinel_model_aliases(
+    model_aliases: dict[str, str | Model] | None,
+    opencode_model: str,
+    sentinels: Sequence[str | None],
+) -> dict[str, str | Model] | None:
+    """Route the sentinel slugs wherever a caller alias routes the primary.
+
+    Before sentinel injection, built-in sub-agents and `small_model` calls
+    inherited the primary slug, and with it any caller `model_aliases`
+    entry for that slug. Copies such an entry (keyed by the bare primary id,
+    the form on the wire) to each sentinel's bare id, unless the caller
+    already aliases that sentinel. Returns `model_aliases` unchanged when
+    there is nothing to copy.
+    """
+    primary = _bare_model_id(opencode_model)
+    if not model_aliases or primary not in model_aliases:
+        return model_aliases
+    aliases = dict(model_aliases)
+    for sentinel in sentinels:
+        if sentinel is not None:
+            aliases.setdefault(_bare_model_id(sentinel), model_aliases[primary])
+    return aliases
+
+
 def build_opencode_config(
     provider_id: str,
     provider_base_url: str,
@@ -452,6 +479,9 @@ def opencode(
     opencode_filter = build_opencode_filter(
         filter, opencode_model, subagent_sentinel, small_model_sentinel
     )
+    bridge_aliases = sentinel_model_aliases(
+        model_aliases, opencode_model, (subagent_sentinel, small_model_sentinel)
+    )
 
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
@@ -464,10 +494,11 @@ def opencode(
         async with sandbox_agent_bridge(
             state,
             model=bridge_model,
-            # the sentinel slugs need no alias entries: the bridge's fallback
-            # `model` serves any unaliased slug (`resolve_inspect_model`), and
-            # resolves `inspect/<role>` names that `get_model(model)` would not
-            model_aliases=model_aliases,
+            # the sentinel slugs follow a caller alias on the primary slug;
+            # otherwise the bridge's fallback `model` serves them like any
+            # unaliased slug (`resolve_inspect_model`), and resolves
+            # `inspect/<role>` names that `get_model(model)` would not
+            model_aliases=bridge_aliases,
             filter=opencode_filter,
             sandbox=sandbox,
             retry_refusals=retry_refusals,

@@ -126,7 +126,9 @@ def is_legacy_str_filter(fn: GenerateFilter) -> bool:
 
 
 def classify_filter(
-    user_filter: GenerateFilter | None, classify: AgentContextClassifier
+    user_filter: GenerateFilter | None,
+    classify: AgentContextClassifier,
+    on_filter_output: Callable[[list[ChatMessage], ModelOutput], None] | None = None,
 ) -> ModelFilter:
     """Wrap a user-supplied bridge filter so it runs with the agent context set.
 
@@ -140,6 +142,12 @@ def classify_filter(
     whatever `AgentBridgeContext` the bridge's ambient scope already has in
     place (`"unknown"`, absent any earlier classification) rather than
     breaking generation.
+
+    When `user_filter` returns a `ModelOutput`, the bridge skips its own
+    generation, so a `ModelEventSink` never sees that output.
+    `on_filter_output` (if given) is called with the request's messages and
+    the output before it is returned, for agents whose attribution tracks
+    state from model outputs.
     """
     user_is_legacy = user_filter is not None and is_legacy_str_filter(user_filter)
     if user_is_legacy:
@@ -174,12 +182,15 @@ def classify_filter(
             return None
 
         if user_is_legacy:
-            return await cast(StrFilter, user_filter)(
+            result = await cast(StrFilter, user_filter)(
                 model.name, messages, tools, tool_choice, config
             )
         else:
-            return await cast(ModelFilter, user_filter)(
+            result = await cast(ModelFilter, user_filter)(
                 model, messages, tools, tool_choice, config
             )
+        if on_filter_output is not None and isinstance(result, ModelOutput):
+            on_filter_output(messages, result)
+        return result
 
     return _filter

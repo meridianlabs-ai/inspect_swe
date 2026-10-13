@@ -25,18 +25,30 @@ from typing import Any
 
 import pytest
 from inspect_ai._util.content import ContentText
-from inspect_ai.agent import AgentBridgeContext
+from inspect_ai.agent import (
+    AgentBridgeContext,
+    AgentState,
+    current_agent_bridge_context,
+)
 from inspect_ai.agent._bridge.context import bridged_request_scope
+from inspect_ai.agent._bridge.types import AgentBridge
+from inspect_ai.agent._bridge.util import bridge_generate
 from inspect_ai.event import SpanBeginEvent, SpanEndEvent
 from inspect_ai.event._model import ModelEvent
-from inspect_ai.model import GenerateConfig, ModelOutput, get_model
+from inspect_ai.model import (
+    GenerateConfig,
+    GenerateInput,
+    Model,
+    ModelOutput,
+    get_model,
+)
 from inspect_ai.model._chat_message import (
     ChatMessage,
     ChatMessageAssistant,
     ChatMessageTool,
     ChatMessageUser,
 )
-from inspect_ai.tool import ToolCall
+from inspect_ai.tool import ToolCall, ToolChoice, ToolInfo
 from inspect_swe._codex_cli._events import consumer as consumer_module
 from inspect_swe._codex_cli._events.consumer import CodexConsumer
 from inspect_swe._codex_cli._events.detection import (
@@ -46,6 +58,7 @@ from inspect_swe._codex_cli._events.detection import (
     find_spawned_agents,
     spawn_result,
 )
+from inspect_swe._util.agentcontext import classify_filter
 
 # ---------------------------------------------------------------------------
 # fixtures (shapes from a real codex 0.147.0 / gpt-5.6-sol run)
@@ -413,11 +426,11 @@ def test_classify_guardian_slug_as_utility(monkeypatch: Any) -> None:
     assert result == AgentBridgeContext("utility")
 
 
-def test_classify_ambiguous_falls_to_unknown(monkeypatch: Any) -> None:
+def test_classify_ambiguous_span_is_still_subagent(monkeypatch: Any) -> None:
     consumer, _ = _consumer(monkeypatch)
 
     # two unbound spawns sharing the same task name -> a recipient basename
-    # match can't disambiguate between them.
+    # match can't disambiguate between them, so the span stays unresolved ...
     parent = _model_event(
         [ChatMessageUser(content="spawn two same-named agents")],
         tool_calls=[
@@ -430,7 +443,52 @@ def test_classify_ambiguous_falls_to_unknown(monkeypatch: Any) -> None:
     messages: list[ChatMessage] = [_agent_message_user("/root", "/root/write_fizzbuzz")]
     result = consumer.classify(get_model("mockllm/model"), messages, [])
 
-    assert result == AgentBridgeContext("unknown")
+    # ... but a non-root recipient still identifies the kind
+    assert consumer._attribute(messages) == consumer.outer_span_id
+    assert result == AgentBridgeContext("subagent")
+
+
+def test_classify_v2_followup_after_final_answer_is_subagent(
+    monkeypatch: Any,
+) -> None:
+    """V2: a child resumed by followup_task after its FINAL_ANSWER.
+
+    The FINAL_ANSWER closes the child's span, so no span state identifies the
+    child's next request; its inbound agent_message recipient still does.
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v2_spawn_call("call_w", "worker")],
+    )
+    consumer.on_complete(parent)
+    consumer.on_pending(_model_event([_agent_message_user("/root", "/root/worker")]))
+
+    final = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "done")
+    root_messages: list[ChatMessage] = [ChatMessageUser(content="go"), final]
+    assert consumer.classify(get_model("mockllm/model"), root_messages, []) == (
+        AgentBridgeContext("root")
+    )
+    assert not consumer._agents
+
+    followup: list[ChatMessage] = [
+        _agent_message_user("/root", "/root/worker"),
+        _agent_message_user("/root", "/root/worker", "MESSAGE", "one more thing"),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), followup, [])
+
+    assert result == AgentBridgeContext("subagent")
+
+    # same with another sub-agent still open (was "unknown")
+    other = _model_event(
+        root_messages, tool_calls=[_v2_spawn_call("call_o", "other_task")]
+    )
+    consumer.on_complete(other)
+    assert consumer._agents
+    result = consumer.classify(get_model("mockllm/model"), followup, [])
+
+    assert result == AgentBridgeContext("subagent")
 
 
 def test_classify_root_while_subagents_open(monkeypatch: Any) -> None:
@@ -466,10 +524,12 @@ def test_classify_root_while_subagents_open(monkeypatch: Any) -> None:
 def test_classify_matches_span_attribution(monkeypatch: Any) -> None:
     """Shared-resolver invariant: classify() agrees with _attribute()'s span.
 
-    For any request, classify() reports "subagent" exactly when _attribute()
-    resolved a sub-agent span (rather than the outer span) — classify is a
-    thin reclassification of the same maps _attribute uses, not a second
-    source of truth.
+    For any request _attribute() resolves to a sub-agent span, classify()
+    reports "subagent", and here (every call attributable) the converse
+    holds too — classify is a thin reclassification of the same maps
+    _attribute uses. The one addition is a non-root recipient with no
+    resolvable span (see the follow-up and ambiguous tests), where the kind
+    is known but the span isn't.
     """
     consumer, stub = _consumer(monkeypatch)
 
@@ -644,3 +704,97 @@ def test_classify_closes_span_on_v2_final_answer(monkeypatch: Any) -> None:
 
     consumer.on_pending(_model_event(root_messages))
     assert [e.id for e in stub.span_ends()] == [pr_span]
+
+
+# ---------------------------------------------------------------------------
+# 9. V1: a spawner whose own prompt contains the delegated text
+# ---------------------------------------------------------------------------
+
+
+def test_classify_v1_spawner_is_not_its_own_subagent(monkeypatch: Any) -> None:
+    """V1: root delegates a sentence copied from its own task prompt.
+
+    Root's next request carries that sentence (in its task prompt) and so
+    substring-matches the open spawn. It also carries the spawn call and its
+    result, which a V1 child's thread never does: the requester is the
+    spawner, so the spawn is no candidate. With nothing else open root
+    classifies "unknown" for the delegation window, never "subagent".
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    delegated = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    task = ChatMessageUser(content=f"Two steps. First, {delegated}. Then test it.")
+    spawn = _v1_spawn_call("call_1", delegated)
+    consumer.on_complete(_model_event([task], tool_calls=[spawn]))
+    span = stub.span_begins()[0].id
+
+    root_messages: list[ChatMessage] = [
+        task,
+        ChatMessageAssistant(content="", tool_calls=[spawn]),
+        _spawn_result_tool_message(
+            "call_1", '{"agent_id":"thread_abc","nickname":"Explorer"}'
+        ),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), root_messages, [])
+
+    assert result == AgentBridgeContext("unknown")
+    root_call = _model_event(root_messages)
+    consumer.on_pending(root_call)
+    assert root_call.span_id == consumer.outer_span_id
+
+    # the child itself still matches
+    child_messages: list[ChatMessage] = [ChatMessageUser(content=delegated)]
+    assert consumer.classify(get_model("mockllm/model"), child_messages, []) == (
+        AgentBridgeContext("subagent")
+    )
+    assert consumer._attribute(child_messages) == span
+
+
+# ---------------------------------------------------------------------------
+# 10. a filter that returns its own ModelOutput
+# ---------------------------------------------------------------------------
+
+
+async def test_filter_returned_spawn_registers_subagent(monkeypatch: Any) -> None:
+    """A filter that generates itself bypasses the bridge's ModelEventSink.
+
+    Driven through the real bridge_generate with the same filter wiring
+    codex_cli() installs: the spawn_agent call in the filter's own output
+    must still open the sub-agent, so the child's V1 request classifies
+    "subagent" rather than "root".
+    """
+    consumer, stub = _consumer(monkeypatch)
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    model = get_model("mockllm/model")
+
+    kinds: list[str] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        context = current_agent_bridge_context()
+        kinds.append(context.kind if context is not None else "none")
+        if messages[-1].text == "go":
+            spawn = _v1_spawn_call("call_1", prompt)
+            return ModelOutput.from_message(
+                ChatMessageAssistant(content="", tool_calls=[spawn])
+            )
+        return ModelOutput.from_content(model.name, "done")
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+    for text in ("go", prompt):
+        messages: list[ChatMessage] = [ChatMessageUser(content=text)]
+        await bridge_generate(bridge, model, messages, [], None, GenerateConfig(), None)
+
+    assert kinds == ["root", "subagent"]
+    assert [e.id for e in stub.span_begins()] == ["agent-call_1"]
