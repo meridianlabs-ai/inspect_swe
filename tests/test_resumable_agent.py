@@ -17,7 +17,7 @@ from inspect_ai.util import sandbox, store
 from inspect_swe import mini_swe_agent
 from inspect_swe._mini_swe_agent.setup import _TRAJECTORY_STORE_KEY
 
-from tests.conftest import skip_if_no_docker
+from tests.conftest import assert_eval_completed, skip_if_no_docker
 
 TRAJ_PATH = "/var/tmp/test_trajectory.json"
 
@@ -127,9 +127,16 @@ def test_resumable_agent_bad_trajectory(
 def test_resumable_agent_valid_trajectory() -> None:
     """Agent should load a valid trajectory and resume without trajectory errors.
 
-    The agent will fail when trying to call the mock model after loading,
-    but the key assertion is that trajectory loading itself succeeded
-    (no "Cannot resume", "not supported", or "invalid JSON" errors).
+    On a valid trajectory the run completes with status "success" and the
+    sample records no model event. A load failure instead raises inside the
+    agent, which errors the sample and turns the task status to "error" --
+    the same signal the bad-trajectory cases above assert on. So a completed
+    run *is* the assertion.
+
+    The solver returns the state untouched, so the sample carries only the
+    user message; that is why this test calls ``assert_eval_completed``
+    directly rather than ``run_example``, whose agent-turn check would fail
+    it.
     """
     task = Task(
         dataset=[Sample(input="test", target="pass")],
@@ -139,14 +146,4 @@ def test_resumable_agent_valid_trajectory() -> None:
     logs = eval(task, model="mockllm/model", limit=1)
 
     assert len(logs) == 1
-    log = logs[0]
-
-    # The agent may error due to mockllm/model, but trajectory-related
-    # errors mean the loading path is broken.
-    if log.status == "error":
-        error_str = str(log.error)
-        assert "Cannot resume" not in error_str, (
-            f"Trajectory load failed: {error_str[:500]}"
-        )
-        assert "not supported" not in error_str, f"Format rejected: {error_str[:500]}"
-        assert "invalid JSON" not in error_str, f"JSON parse failed: {error_str[:500]}"
+    assert_eval_completed(logs[0])

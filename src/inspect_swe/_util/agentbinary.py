@@ -68,7 +68,7 @@ _resolved_versions: dict[tuple[str, str, SandboxPlatform], AgentBinaryVersion] =
 _failed_resolutions: dict[tuple[str, str, SandboxPlatform], tuple[int, Exception]] = {}
 
 
-async def _resolve_agent_binary_version(
+async def resolve_agent_binary_version(
     source: AgentBinarySource,
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform,
@@ -261,7 +261,7 @@ async def download_agent_binary_async(
     # repeat upstream API calls that may be rate-limited, sharing a failure
     # too so a queue of samples behind a rate-limited call doesn't each
     # retry it in turn)
-    resolved = await _resolve_agent_binary_version(source, version, platform)
+    resolved = await resolve_agent_binary_version(source, version, platform)
     version = resolved.version
     expected_checksum = resolved.expected_checksum
     download_url = resolved.download_url

@@ -28,7 +28,46 @@ jobs:
           message: ":rocket: *${{ github.repository }}* ${{ github.event.release.tag_name }} — PyPI publish is *awaiting approval*."
           run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+  # A manual run builds and publishes the selected ref's code with the PyPI
+  # credential, so it may run only from main or the tag of a published
+  # release. This job checks that without checking out any code, and publish
+  # needs it, so a dispatch from any other ref fails here and publish never
+  # starts. Release events skip the check and publish as before.
+  check-ref:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Allow only main or a release tag
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        # An explicit bash shell adds pipefail, so a failed release lookup
+        # refuses the ref even if its output looks like a release.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          case "$REF" in
+            refs/heads/main)
+              exit 0
+              ;;
+            refs/tags/*)
+              tag="${REF#refs/tags/}"
+              encoded="$(jq -rn --arg t "$tag" '$t | @uri')"
+              if gh api "repos/$REPO/releases/tags/$encoded" \
+                  | jq -e --arg t "$tag" '.tag_name == $t and .draft == false' > /dev/null; then
+                exit 0
+              fi
+              echo "::error::Refusing to publish from $REF: no published release has this tag."
+              exit 1
+              ;;
+          esac
+          echo "::error::Refusing to publish from $REF: dispatch this workflow from main or a release tag."
+          exit 1
+
   publish:
+    needs: check-ref
     runs-on: ubuntu-latest
     permissions:
       id-token: write # Required for OIDC/trusted publishing

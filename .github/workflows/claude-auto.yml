@@ -1,0 +1,159 @@
+# Copy to .github/workflows/claude-auto.yml in a Meridian repo to enable the
+# @auto autonomous loop (design/auto-agent.md). Independent of the dev agent
+# (claude.yml) and reviewer (claude-review.yml).
+#
+# Requires the machine account's org secrets scoped to this repo (same as
+# claude.yml): MARVIN_APP_CLIENT_ID and MARVIN_APP_PRIVATE_KEY; without them
+# both gates fail at their mint step.
+#
+# REQUIRED EDIT: under `workflows:` list THIS repo's CI workflow name(s) — the
+# `name:` field of each CI workflow (not its filename). workflow_run is the only
+# event that reliably fires for GitHub-Actions CI completing (check_suite is
+# suppressed for Actions-created suites), and it must name what it reacts to.
+# Find names with: gh workflow list.
+
+name: Claude Auto
+
+on:
+  # Phase 1: react to CI completing (so we can fix failures).
+  workflow_run:
+    # This repo's CI workflow is `Build` (.github/workflows/build.yaml).
+    workflows: ["Build"]
+    types: [completed]
+  # Phase 2/3: react to the reviewer's marked summary comment. issue_comment
+  # fires from the default branch, so this works on pristine-base forks too
+  # (unlike pull_request_review).
+  issue_comment:
+    types: [created]
+
+jobs:
+  # CI-failure -> fix. Only a *failed* CI run for a *same-repo* PR (same-repo
+  # excludes fork heads; it does NOT mean writer-authored — any account that
+  # may open a PR here can produce such a run). The reusable workflow does
+  # the authoritative gate: it first binds the run to its PR from trusted
+  # context (design/auto-agent.md in the agents repo → Binding the failed
+  # run to its PR), then checks the `auto` label, who applied it, and the
+  # attempt cap. The three `with:` values below are the event's own fields,
+  # forwarded as-is so the reusable can compare like with like:
+  # `pull_requests[0].number` is an ASSOCIATION, not the triggering PR —
+  # GitHub's schema says the list "do[es] not necessarily indicate pull
+  # requests that triggered the run" (two PRs from one branch into different
+  # bases both appear, in no specified order) — so the reusable derives the
+  # PR itself (the one same-repo PR from `head_branch` open when the run was
+  # created, at the run's head SHA, not retargeted since) and skips unless
+  # this number agrees; it also requires the run's actors (who started and
+  # who re-ran it) to be the machine account or write-access accounts before
+  # any counter, stage, merge or model work. What it cannot establish, and
+  # does not claim: which PR GitHub considered the trigger when two share
+  # the branch, or the merge commit the run built.
+  ci-fix:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    uses: meridianlabs-ai/agents/.github/workflows/claude-auto.yml@main
+    # Agent runs restore caches, never save them (agents repo: design/agent-cache-scope.md).
+    cache-mode: read
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    secrets:
+      MARVIN_APP_CLIENT_ID: ${{ secrets.MARVIN_APP_CLIENT_ID }}
+      MARVIN_APP_PRIVATE_KEY: ${{ secrets.MARVIN_APP_PRIVATE_KEY }}
+    with:
+      # provision (optional; agents#136): the repository's provisioning recipe
+      # — bash run as the unprivileged agent user in the checkout, in place of
+      # the generic `uv venv && uv pip install -e .[dev]`, on both engines
+      # (design/executed-paths-residual.md in the agents repo). No agent job
+      # runs a claude-setup action any more (a composite runs as the runner,
+      # and nothing from the checkout may run as the runner there), so put
+      # here what claude-setup did that the generic recipe does not. uv is on
+      # PATH, HOME is the agent user's (/home/claude-agent or /home/codex), no
+      # sudo, no Docker, network on; create .venv so the agent's tools are
+      # found. A stub that still sets the
+      # earlier `codex_provision` keeps working: it is used when `provision`
+      # is empty. Examples —
+      # a Python pin:          uv venv --python 3.11 && uv pip install -e ".[dev]"
+      # a lockfile sync:       uv venv --python 3.11 && uv sync --dev
+      # Node tooling:          corepack enable --install-directory ~/.local/bin && pnpm install --frozen-lockfile
+      # provision: |
+      #   uv venv --python 3.11
+      #   uv sync --dev
+      head_branch: ${{ github.event.workflow_run.head_branch }}
+      pr_number: ${{ github.event.workflow_run.pull_requests[0].number }}
+      ci_run_id: ${{ github.event.workflow_run.id }}
+      # allow_build_config (optional, default false; agents repo:
+      # design/executed-paths-residual.md → Land: tier-2 opt-in): let the
+      # agent's commits change build and dependency configuration
+      # (pyproject.toml, setup.py, uv.lock, requirements*.txt, package.json,
+      # the npm, pnpm and yarn lockfiles, …), which the land job otherwise
+      # refuses. Set it in the dev-agent and @auto stubs alike, and only when
+      # no other agent automation in this repository checks out and runs
+      # code from agent-landed branches as the runner (a scheduled agent job
+      # that continues an earlier agent branch, say), no CI or other workflow
+      # that runs agent-branch code holds secrets or non-read permissions
+      # (read-only, secret-free CI is fine), and credentialed dispatch or tag
+      # workflows run only from trusted refs. .github/ and agent
+      # instructions stay refused either way.
+      allow_build_config: true
+
+  # Review -> fix / handoff. The marker is a cheap router (it's forgeable — only
+  # the reviewer posts it in practice); the reusable workflow does the authoritative
+  # gating (comment author == reviewer, same-repo, `auto` label, round cap), so
+  # the security boundary is there, not here.
+  review-fix:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != '' &&
+      contains(github.event.comment.body, '<!-- claude-review-summary -->')
+    uses: meridianlabs-ai/agents/.github/workflows/claude-auto-review.yml@main
+    # Agent runs restore caches, never save them (agents repo: design/agent-cache-scope.md).
+    cache-mode: read
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    secrets:
+      MARVIN_APP_CLIENT_ID: ${{ secrets.MARVIN_APP_CLIENT_ID }}
+      MARVIN_APP_PRIVATE_KEY: ${{ secrets.MARVIN_APP_PRIVATE_KEY }}
+    with:
+      # provision (optional; agents#136): the repository's provisioning recipe
+      # — bash run as the unprivileged agent user in the checkout, in place of
+      # the generic `uv venv && uv pip install -e .[dev]`, on both engines
+      # (design/executed-paths-residual.md in the agents repo). No agent job
+      # runs a claude-setup action any more (a composite runs as the runner,
+      # and nothing from the checkout may run as the runner there), so put
+      # here what claude-setup did that the generic recipe does not. uv is on
+      # PATH, HOME is the agent user's (/home/claude-agent or /home/codex), no
+      # sudo, no Docker, network on; create .venv so the agent's tools are
+      # found. A stub that still sets the
+      # earlier `codex_provision` keeps working: it is used when `provision`
+      # is empty. Examples —
+      # a Python pin:          uv venv --python 3.11 && uv pip install -e ".[dev]"
+      # a lockfile sync:       uv venv --python 3.11 && uv sync --dev
+      # Node tooling:          corepack enable --install-directory ~/.local/bin && pnpm install --frozen-lockfile
+      # provision: |
+      #   uv venv --python 3.11
+      #   uv sync --dev
+      pr_number: ${{ github.event.issue.number }}
+      comment_author: ${{ github.event.comment.user.login }}
+      # allow_build_config (optional, default false; agents repo:
+      # design/executed-paths-residual.md → Land: tier-2 opt-in): let the
+      # agent's commits change build and dependency configuration
+      # (pyproject.toml, setup.py, uv.lock, requirements*.txt, package.json,
+      # the npm, pnpm and yarn lockfiles, …), which the land job otherwise
+      # refuses. Set it in the dev-agent and @auto stubs alike, and only when
+      # no other agent automation in this repository checks out and runs
+      # code from agent-landed branches as the runner (a scheduled agent job
+      # that continues an earlier agent branch, say), no CI or other workflow
+      # that runs agent-branch code holds secrets or non-read permissions
+      # (read-only, secret-free CI is fine), and credentialed dispatch or tag
+      # workflows run only from trusted refs. .github/ and agent
+      # instructions stay refused either way.
+      allow_build_config: true

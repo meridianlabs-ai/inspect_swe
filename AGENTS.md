@@ -31,6 +31,11 @@ This file provides guidance to AI coding agents working in this repository.
 - After opening a PR, don't stop at creation: watch its checks (`gh pr checks <number> --watch`) until they complete, report the outcome, and investigate and fix any failures. If the branch falls behind `main`, update it so CI runs against current code.
 - See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines
 
+## Agent Guardrails
+
+- **Credential boundary**: treat the evaluated sandbox as untrusted. By default, bridge-owned model-provider credentials never enter it—only the dummy key used to authenticate with the in-sandbox model bridge reaches inference. A `claude_code(env=...)` caller can explicitly override its environment, including `ANTHROPIC_AUTH_TOKEN`, so caller-provided credentials must be treated as sandbox-exposed. Other real credentials (e.g. MCP auth headers) may enter the sandbox for transport, but must stay outside every model- and tool-readable path.
+- **Public API evolution**: add new parameters at the end of the signature, using `Literal` types with runtime validation for constrained options. Renaming or removing a released parameter needs a `**deprecated_args: Unpack[...]` shim; new public surface needs a concrete use case first.
+
 ## Agent Review Disclosure
 
 When an AI agent authored or co-authored a change, include an `### Agent review` section in the PR description summarizing the pre-PR review passes described above: what model/tool reviewed, whether the review ran in a fresh context and/or on a different model from the author, how many passes, and the findings — issues found, which were fixed, and which were dismissed with a one-line reason each. Maintainers weight the disclosed reviewer model and pass count when deciding how much independent review a PR still needs. If no review pass was run, say so explicitly — never report a review that didn't happen; a content-free claim ("reviewed, looks good") is worse than disclosing none. Example:
