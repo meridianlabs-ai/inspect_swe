@@ -349,7 +349,9 @@ def claude_code(
                 model=models.bridge_model,
                 model_aliases=models.aliases,
                 forward_generation_config=transparent_proxy,
-                filter=classify_filter(pinned_filter, consumer.classify),
+                filter=classify_filter(
+                    pinned_filter, consumer.classify, consumer.on_filter_output
+                ),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,

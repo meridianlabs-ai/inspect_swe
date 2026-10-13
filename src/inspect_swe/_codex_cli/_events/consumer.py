@@ -85,6 +85,9 @@ class _OpenAgent:
     thread_id: str | None = None
     agent_type: str | None = None
     """The spawn's `agent_type` argument, when given."""
+    expected_path: str | None = None
+    """V2 path Codex will give this agent (parent path + task_name), when
+    the parent's own path is known."""
 
 
 class CodexConsumer(ModelEventSink):
@@ -237,7 +240,9 @@ class CodexConsumer(ModelEventSink):
         if not self._agents:
             if non_root_recipient:
                 return self._subagent_context(messages, recipients, None)
-            return AgentBridgeContext("root")
+            return AgentBridgeContext(
+                "unknown" if self._carries_closed_prompt(messages) else "root"
+            )
 
         self._sync_threads(messages)
         if recipients == {"/root"}:
@@ -246,7 +251,28 @@ class CodexConsumer(ModelEventSink):
         span_id = self._attribute(messages)
         if span_id != self.outer_span_id or non_root_recipient:
             return self._subagent_context(messages, recipients, span_id)
-        return AgentBridgeContext("root" if not self._agents else "unknown")
+        if self._agents or self._carries_closed_prompt(messages):
+            return AgentBridgeContext("unknown")
+        return AgentBridgeContext("root")
+
+    def _carries_closed_prompt(self, messages: list[ChatMessage]) -> bool:
+        """Whether a request carries the prompt of a V1 spawn that has closed.
+
+        A completed V1 agent the parent resumes with send_input keeps its
+        spawn prompt and has no agent_message to identify it, so such a
+        request is never claimed as root. The spawner's own requests carry
+        the spawn call or result and are excluded (as in `_attribute`).
+        """
+        if not self._closed_prompts:
+            return False
+        user_text = self._user_text(messages)
+        own_calls = self._history_call_ids(messages)
+        return any(
+            call_id not in own_calls
+            and len(prompt) >= _MIN_PROMPT_LENGTH
+            and prompt in user_text
+            for call_id, prompt in self._closed_prompts.items()
+        )
 
     def _subagent_context(
         self, messages: list[ChatMessage], recipients: set[str], span_id: str | None
@@ -276,20 +302,15 @@ class CodexConsumer(ModelEventSink):
             return AgentBridgeContext(
                 "subagent", subagent_id=path, subagent_type=agent_type
             )
-        if agent is not None and not paths:
-            user_text = self._user_text(messages)
-            if not any(
-                len(prompt) >= _MIN_PROMPT_LENGTH and prompt in user_text
-                for prompt in self._closed_prompts.values()
-            ):
-                return AgentBridgeContext(
-                    "subagent",
-                    subagent_id=agent.call_id,
-                    subagent_type=agent.agent_type,
-                )
-        return AgentBridgeContext(
-            "subagent", subagent_type=agent.agent_type if agent is not None else None
-        )
+        if (
+            agent is not None
+            and not paths
+            and not self._carries_closed_prompt(messages)
+        ):
+            return AgentBridgeContext(
+                "subagent", subagent_id=agent.call_id, subagent_type=agent.agent_type
+            )
+        return AgentBridgeContext("subagent")
 
     # ------------------------------------------------------------------
     # internal
@@ -303,6 +324,7 @@ class CodexConsumer(ModelEventSink):
         Runs synchronously before the response reaches Codex, so a span is
         open before the sub-agent's first call arrives.
         """
+        parent_path = self._agent_path(parent_span_id)
         for spawned in find_spawned_agents(msg.tool_calls):
             if spawned.call_id in self._agents:
                 continue  # idempotent (defensive against retries)
@@ -313,6 +335,11 @@ class CodexConsumer(ModelEventSink):
                 prompt=spawned.message,
                 name=spawned.name,
                 agent_type=spawned.declared_type,
+                expected_path=(
+                    f"{parent_path}/{spawned.task_name}"
+                    if parent_path is not None and spawned.task_name
+                    else None
+                ),
             )
             metadata: dict[str, str] = {"agent_type": spawned.agent_type}
             if spawned.task_name:
@@ -332,6 +359,18 @@ class CodexConsumer(ModelEventSink):
         # explicit close_agent calls
         for target in find_close_targets(msg.tool_calls):
             self._close_thread(target)
+
+    def _agent_path(self, span_id: str | None) -> str | None:
+        """V2 path of the agent a span belongs to, or None when unknown.
+
+        "/root" for the outer span; a bound sub-agent's path otherwise.
+        """
+        if span_id == self.outer_span_id:
+            return "/root"
+        agent = next((a for a in self._agents.values() if a.span_id == span_id), None)
+        if agent is not None and agent.thread_id and agent.thread_id.startswith("/"):
+            return agent.thread_id
+        return None
 
     def _sync_threads(self, input_messages: list[ChatMessage]) -> None:
         """Bind spawn-result thread ids, then close threads this request completes.
@@ -429,12 +468,13 @@ class CodexConsumer(ModelEventSink):
         """Resolve a call's span from its agent_message recipient (V2).
 
         A bound thread id (from a spawn result or an earlier call) resolves
-        directly. Otherwise the recipient's final path segment is matched
-        against open spawns awaiting their first call (the spawn call carries
-        the relative task_name, the recipient carries the absolute path, e.g.
-        "write_fizzbuzz" vs "/root/write_fizzbuzz") — a unique match binds the
-        thread id so later calls and FINAL_ANSWER closes resolve directly.
-        Returns None (fall through) when no unambiguous match exists.
+        directly. Otherwise the recipient is matched against the expected
+        path of open spawns awaiting their first call (Codex joins the
+        parent's path and the spawn's relative task_name, e.g. "/root" +
+        "write_fizzbuzz") — a unique match binds the thread id so later calls
+        and FINAL_ANSWER closes resolve directly. A spawn whose parent path
+        is unknown binds only from its spawn result. Returns None (fall
+        through) when no unambiguous match exists.
         """
         recipients = agent_message_recipients(input_messages)
         if len(recipients) != 1:
@@ -448,12 +488,13 @@ class CodexConsumer(ModelEventSink):
             if agent is not None:
                 return agent.span_id
 
-        # first call from this thread: bind by task name (last path segment)
-        basename = recipient.rsplit("/", 1)[-1]
+        # first call from this thread: bind the open spawn Codex gives this
+        # exact path (parent path + task_name). A basename alone could be a
+        # same-named agent under another parent, or a finished agent resumed.
         candidates = [
             agent
             for agent in self._agents.values()
-            if agent.thread_id is None and agent.name == basename
+            if agent.thread_id is None and agent.expected_path == recipient
         ]
         if len(candidates) == 1:
             agent = candidates[0]

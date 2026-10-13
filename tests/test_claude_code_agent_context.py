@@ -554,3 +554,140 @@ def test_classify_backgrounded_subagent_does_not_borrow_a_later_id(
     with bridged_request_scope(consumer._models.subagent):
         result = _classify(consumer, text=_TASK_PROMPT)
     assert result == AgentBridgeContext("subagent")
+
+
+async def test_filter_returned_background_task_keeps_its_own_identity(
+    monkeypatch: Any,
+) -> None:
+    """Real bridge_generate with claude_code's filter wiring.
+
+    The user filter returns background Task A itself (no ModelEvent), A's
+    tool_result arrives, then a normal generation launches Task B with the
+    same prompt. A's next request must not take B's id or type.
+    """
+    from inspect_ai.agent import AgentState, current_agent_bridge_context
+    from inspect_ai.agent._bridge.types import AgentBridge
+    from inspect_ai.agent._bridge.util import bridge_generate
+    from inspect_ai.model import ChatMessage, GenerateInput, Model
+    from inspect_ai.tool import ToolChoice, ToolInfo
+    from inspect_swe._claude_code.systemprompt import pin_system_prompt_filter
+    from inspect_swe._util.agentcontext import classify_filter
+
+    consumer = _consumer(monkeypatch)
+    task_a = ToolCall(
+        id="filter_a",
+        function="Task",
+        arguments={
+            "prompt": _TASK_PROMPT,
+            "subagent_type": "Explore",
+            "run_in_background": True,
+        },
+    )
+    task_b = ToolCall(
+        id="normal_b",
+        function="Task",
+        arguments={"prompt": _TASK_PROMPT, "subagent_type": "general-purpose"},
+    )
+    seen: list[AgentBridgeContext | None] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        seen.append(current_agent_bridge_context())
+        if messages[-1].text == "spawn a":
+            return ModelOutput.from_message(
+                ChatMessageAssistant(content="", tool_calls=[task_a])
+            )
+        if messages[-1].text == "spawn b":
+            return None
+        return ModelOutput.from_content(model.name, "done")
+
+    model = get_model(
+        "mockllm/model",
+        custom_outputs=[
+            ModelOutput.from_message(
+                ChatMessageAssistant(content="", tool_calls=[task_b])
+            )
+        ],
+    )
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            pin_system_prompt_filter(lambda: "session", user_filter),
+            consumer.classify,
+            consumer.on_filter_output,
+        ),
+        model_event_sink=consumer,
+    )
+    for text, slug in [
+        ("spawn a", consumer._models.presented),
+        ("spawn b", consumer._models.presented),
+        (_TASK_PROMPT, consumer._models.subagent),
+    ]:
+        messages: list[ChatMessage] = [ChatMessageUser(content=text)]
+        await bridge_generate(bridge, model, messages, [], None, GenerateConfig(), slug)
+        if text == "spawn a":
+            consumer.process_jsonl_line(_tool_result_line("filter_a"))
+
+    assert seen[-1] == AgentBridgeContext("subagent")
+
+
+class _BridgeCaptured(Exception):
+    pass
+
+
+async def test_claude_code_wires_filter_output_tracking(monkeypatch: Any) -> None:
+    """claude_code() hands the bridge a filter that reports outputs to its sink."""
+    from collections.abc import AsyncIterator
+    from contextlib import asynccontextmanager
+
+    from inspect_ai.agent import AgentState
+    from inspect_ai.model import ChatMessage, GenerateInput, Model
+    from inspect_ai.tool import ToolChoice, ToolInfo
+    from inspect_swe._claude_code import claude_code as claude_code_module
+
+    monkeypatch.setattr(live_consumer_module, "transcript", lambda: _TranscriptStub())
+    captured: dict[str, Any] = {}
+
+    def fake_bridge(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        raise _BridgeCaptured()
+
+    @asynccontextmanager
+    async def fake_checkpointer() -> AsyncIterator[None]:
+        yield None
+
+    monkeypatch.setattr(claude_code_module, "checkpointer", fake_checkpointer)
+    monkeypatch.setattr(claude_code_module, "sandbox_agent_bridge", fake_bridge)
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        task = ToolCall(
+            id="toolu_a", function="Task", arguments={"prompt": _TASK_PROMPT}
+        )
+        return ModelOutput.from_message(
+            ChatMessageAssistant(content="", tool_calls=[task])
+        )
+
+    agent = claude_code_module.claude_code(filter=user_filter, model="mockllm/model")
+    with pytest.raises(_BridgeCaptured):
+        await agent(AgentState(messages=[]))
+
+    with bridged_request_scope("slug"):
+        await captured["filter"](
+            get_model("mockllm/model"),
+            [ChatMessageUser(content="go")],
+            [],
+            None,
+            GenerateConfig(),
+        )
+    assert list(captured["model_event_sink"]._open_agents) == ["toolu_a"]

@@ -1038,14 +1038,15 @@ def test_classify_v1_resumed_agent_does_not_borrow_a_later_id(
     ]
     consumer.classify(model, root, [])
     assert not consumer._agents
-    consumer.on_complete(
-        _model_event(root, tool_calls=[_v1_spawn_call("call_2", prompt)])
-    )
+    coder = _v1_spawn_call("call_2", prompt)
+    assert coder.arguments is not None
+    coder.arguments["agent_type"] = "coder"
+    consumer.on_complete(_model_event(root, tool_calls=[coder]))
 
+    # neither the new spawn's id nor its type ("coder") is proven for this
+    # request, which may be the resumed explorer
     child: list[ChatMessage] = [ChatMessageUser(content=prompt)]
-    assert consumer.classify(model, child, []) == AgentBridgeContext(
-        "subagent", subagent_type="explore"
-    )
+    assert consumer.classify(model, child, []) == AgentBridgeContext("subagent")
 
 
 def test_spawn_failed_shapes() -> None:
@@ -1081,3 +1082,92 @@ def test_bound_spawn_is_never_closed_as_failed(monkeypatch: Any) -> None:
         [],
     )
     assert not stub.span_ends()
+
+
+def test_classify_v1_resumed_agent_with_nothing_open_is_never_root(
+    monkeypatch: Any,
+) -> None:
+    """send_input to a completed V1 agent, with no other spawn open.
+
+    The resumed agent's request carries its spawn prompt and no
+    agent_message, so it can't be identified, but it must not read as root.
+    """
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    spawn = _v1_spawn_call("call_1", prompt)
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+    )
+    child: list[ChatMessage] = [ChatMessageUser(content=prompt)]
+    assert consumer.classify(model, child, []).kind == "subagent"
+
+    root: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        ChatMessageAssistant(content="", tool_calls=[spawn]),
+        _spawn_result_tool_message("call_1", '{"agent_id":"thread_1"}'),
+        _v1_completion_carrier("wait_agent", "thread_1"),
+    ]
+    # the spawner's own request still reads root (it carries the spawn call)
+    assert consumer.classify(model, root, []) == AgentBridgeContext("root")
+    assert not consumer._agents
+
+    resumed = child + [ChatMessageUser(content="Please also add tests")]
+    assert consumer.classify(model, resumed, []) == AgentBridgeContext("unknown")
+
+
+def test_classify_v2_same_basename_under_another_parent_keeps_identity(
+    monkeypatch: Any,
+) -> None:
+    """A finished /root/worker resumes while /root/other spawns its own worker.
+
+    The new spawn's path is /root/other/worker; the resumed agent must keep
+    its own type and must not be bound to the new spawn.
+    """
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+
+    old = _v2_spawn_call("call_old", "worker")
+    other = _v2_spawn_call("call_other", "other")
+    assert old.arguments is not None
+    old.arguments["agent_type"] = "explorer"
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[old, other])
+    )
+    worker_first: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    assert consumer.classify(model, worker_first, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/worker", subagent_type="explorer"
+    )
+    consumer.classify(
+        model,
+        [
+            ChatMessageUser(content="go"),
+            _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "done"),
+        ],
+        [],
+    )
+
+    # /root/other spawns its own "worker" (a coder)
+    other_call = _model_event(
+        [_agent_message_user("/root", "/root/other")],
+        tool_calls=[_v2_spawn_call("call_new", "worker")],
+    )
+    new_spawn = other_call.output.message.tool_calls
+    assert new_spawn is not None and new_spawn[0].arguments is not None
+    new_spawn[0].arguments["agent_type"] = "coder"
+    consumer.on_pending(other_call)
+    consumer.on_complete(other_call)
+
+    # the old worker resumes before the new spawn's result arrives
+    resumed = worker_first + [
+        _agent_message_user("/root", "/root/worker", "MESSAGE", "one more")
+    ]
+    assert consumer.classify(model, resumed, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/worker", subagent_type="explorer"
+    )
+    nested: list[ChatMessage] = [
+        _agent_message_user("/root/other", "/root/other/worker")
+    ]
+    assert consumer.classify(model, nested, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/other/worker", subagent_type="coder"
+    )

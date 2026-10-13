@@ -70,9 +70,10 @@ from inspect_ai.agent import AgentBridgeContext, current_bridge_request
 from inspect_ai.event import CompactionEvent, SpanBeginEvent, SpanEndEvent
 from inspect_ai.event._model import ModelEvent
 from inspect_ai.log import transcript
-from inspect_ai.model import Model
+from inspect_ai.model import Model, ModelOutput
 from inspect_ai.model._chat_message import (
     ChatMessage,
+    ChatMessageAssistant,
     ChatMessageSystem,
     ChatMessageUser,
 )
@@ -242,39 +243,58 @@ class LiveConsumer(ModelEventSink):
             # synchronously, before the bridge response is sent back to
             # Claude Code. By the time any sub-agent makes its first bridge
             # call, both `_open_agents` and `_pending_subagents` are ready.
-            parent_span_id = event.span_id or self.outer_span_id
-            for tc in msg.tool_calls:
-                if tc.function not in ("Task", "Agent"):
-                    continue
-                args = tc.arguments or {}
-                prompt = args.get("prompt")
-                if not isinstance(prompt, str) or not prompt:
-                    continue
-                if tc.id in self._open_agents:
-                    # idempotent — defensive against retries
-                    continue
-                agent_span_id = f"agent-{tc.id}"
-                subagent_type = args.get("subagent_type")
-                self._open_agents[tc.id] = _OpenAgent(
-                    span_id=agent_span_id,
-                    subagent_type=str(subagent_type) if subagent_type else None,
-                )
-                self._pending_subagents[tc.id] = prompt
-                span_name = args.get("subagent_type") or args.get("name") or "agent"
-                description = args.get("description") or ""
-                transcript()._event(
-                    SpanBeginEvent(
-                        id=agent_span_id,
-                        parent_id=parent_span_id,
-                        type="agent",
-                        name=str(span_name),
-                        metadata={"description": description} if description else None,
-                    )
-                )
+            self._register_tasks(msg, event.span_id or self.outer_span_id)
 
         if id(event) in self._emitted_events:
             self._emitted_events.discard(id(event))
             transcript()._event_updated(event)
+
+    def on_filter_output(
+        self, messages: list[ChatMessage], output: ModelOutput
+    ) -> None:
+        """Track Task delegations in an output the user's filter returned itself.
+
+        Such an output never produces a `ModelEvent`, so `on_complete` never
+        sees it; without this, a Task it launches is invisible and its
+        requests could take the id of a later Task with the same prompt.
+        Called by `classify_filter` before the output reaches Claude Code.
+        """
+        msg = output.message if output.choices else None
+        if msg is not None and msg.tool_calls:
+            self._register_tasks(msg, self._attribute(messages))
+
+    def _register_tasks(
+        self, msg: ChatMessageAssistant, parent_span_id: str | None
+    ) -> None:
+        """Open a span and a pending entry for each Task/Agent tool call."""
+        for tc in msg.tool_calls or []:
+            if tc.function not in ("Task", "Agent"):
+                continue
+            args = tc.arguments or {}
+            prompt = args.get("prompt")
+            if not isinstance(prompt, str) or not prompt:
+                continue
+            if tc.id in self._open_agents:
+                # idempotent — defensive against retries
+                continue
+            agent_span_id = f"agent-{tc.id}"
+            subagent_type = args.get("subagent_type")
+            self._open_agents[tc.id] = _OpenAgent(
+                span_id=agent_span_id,
+                subagent_type=str(subagent_type) if subagent_type else None,
+            )
+            self._pending_subagents[tc.id] = prompt
+            span_name = args.get("subagent_type") or args.get("name") or "agent"
+            description = args.get("description") or ""
+            transcript()._event(
+                SpanBeginEvent(
+                    id=agent_span_id,
+                    parent_id=parent_span_id,
+                    type="agent",
+                    name=str(span_name),
+                    metadata={"description": description} if description else None,
+                )
+            )
 
     # ------------------------------------------------------------------
     # JSONL consumer
