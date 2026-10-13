@@ -61,6 +61,7 @@ from .detection import (
     find_close_targets,
     find_spawned_agents,
     is_compaction_request,
+    spawn_failed,
     spawn_result,
 )
 from .toolview import tool_view
@@ -288,12 +289,26 @@ class CodexConsumer(ModelEventSink):
             self._close_thread(author)
 
     def _harvest_bindings(self, input_messages: list[ChatMessage]) -> None:
-        """Bind thread_id → span from spawn_agent tool results (by tool_call_id)."""
+        """Bind thread_id → span from spawn_agent tool results (by tool_call_id).
+
+        A failed spawn (Codex returned an error instead of an agent) closes
+        its span: no agent will ever make a request under it, and a retry
+        with the same prompt would otherwise leave the real child matching
+        two open spawns.
+        """
         for msg in input_messages:
-            if not isinstance(msg, ChatMessageTool):
+            if not isinstance(msg, ChatMessageTool) or msg.tool_call_id is None:
                 continue
             result = spawn_result(msg)
-            if result is None or msg.tool_call_id is None:
+            if result is None:
+                failed = self._agents.get(msg.tool_call_id)
+                if (
+                    failed is not None
+                    and failed.thread_id is None
+                    and spawn_failed(msg)
+                ):
+                    del self._agents[msg.tool_call_id]
+                    transcript()._event(SpanEndEvent(id=failed.span_id))
                 continue
             if result.nickname is not None:
                 self._nicknames[result.agent_id] = result.nickname

@@ -851,3 +851,67 @@ async def test_codex_cli_wires_filter_output_tracking(monkeypatch: Any) -> None:
         GenerateConfig(),
     )
     assert list(sink._agents) == ["call_1"]
+
+
+# ---------------------------------------------------------------------------
+# 11. a failed spawn closes its span
+# ---------------------------------------------------------------------------
+
+
+def test_failed_spawn_retry_child_classifies_subagent(monkeypatch: Any) -> None:
+    """Live shape (codex + gpt-5-mini, 2026-10-12).
+
+    The first spawn_agent is rejected for its reasoning_effort, and the model
+    retries with the same prompt. The failed spawn must not stay open, or the
+    real child matches two spawns and classifies "unknown".
+    """
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    prompt = "Run `uname -a` on the host and return the exact stdout."
+    task = ChatMessageUser(content="go")
+
+    failed = ToolCall(
+        id="call_1",
+        function="spawn_agent",
+        arguments={"message": prompt, "reasoning_effort": "low"},
+    )
+    consumer.on_complete(_model_event([task], tool_calls=[failed]))
+
+    retry = _v1_spawn_call("call_2", prompt)
+    root_messages: list[ChatMessage] = [
+        task,
+        ChatMessageAssistant(content="", tool_calls=[failed]),
+        _spawn_result_tool_message(
+            "call_1",
+            "Reasoning effort `low` is not supported for model `gpt-5-mini`. "
+            "Supported reasoning efforts: medium, high",
+        ),
+    ]
+    assert consumer.classify(model, root_messages, []) == AgentBridgeContext("root")
+    assert [e.id for e in stub.span_ends()] == ["agent-call_1"]
+    consumer.on_complete(_model_event(root_messages, tool_calls=[retry]))
+
+    child: list[ChatMessage] = [ChatMessageUser(content=prompt)]
+    assert consumer.classify(model, child, []).kind == "subagent"
+    assert consumer._attribute(child) == "agent-call_2"
+
+
+def test_unrecognized_json_spawn_result_keeps_span_open(monkeypatch: Any) -> None:
+    """Only a non-JSON (or errored) result counts as a failed spawn."""
+    consumer, stub = _consumer(monkeypatch)
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    spawn = _v1_spawn_call("call_1", prompt)
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+    )
+    consumer.classify(
+        get_model("mockllm/model"),
+        [
+            ChatMessageUser(content="go"),
+            ChatMessageAssistant(content="", tool_calls=[spawn]),
+            _spawn_result_tool_message("call_1", '{"thread": "new-format"}'),
+        ],
+        [],
+    )
+    assert not stub.span_ends()
+    assert "call_1" in consumer._agents

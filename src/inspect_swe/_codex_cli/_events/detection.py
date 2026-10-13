@@ -154,6 +154,20 @@ def spawn_result(message: ChatMessageTool) -> SpawnResult | None:
     return None
 
 
+def spawn_failed(message: ChatMessageTool) -> bool:
+    """Whether a `spawn_agent` tool result reports that no agent was spawned.
+
+    A successful spawn returns a JSON object under both V1 and V2 (see
+    `spawn_result`). Codex reports a failed one -- e.g. "Reasoning effort
+    `low` is not supported for model ..." -- as plain text. Only a result
+    that isn't a JSON object (or carries a tool error) counts, so an
+    unrecognized success format never reads as a failure.
+    """
+    if message.function != SPAWN_AGENT:
+        return False
+    return message.error is not None or not isinstance(_loads(message.text), dict)
+
+
 def completed_thread_ids(input_messages: list[ChatMessage]) -> set[str]:
     """Thread ids reported `completed`, from wait/close results and notifications.
 
