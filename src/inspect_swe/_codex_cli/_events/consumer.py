@@ -377,19 +377,18 @@ class CodexConsumer(ModelEventSink):
 
     @staticmethod
     def _requester_path(messages: list[ChatMessage]) -> str | None:
-        """V2 path of the agent that sent a request, from the request itself.
+        """V2 path of the agent that sent a request, when the request proves it.
 
-        Every agent_message in a request is inbound to its sender, so one
-        recipient names it ("/root" or a sub-agent path). A request with no
-        agent_message is root's: a V2 sub-agent receives its task as an
-        agent_message, so its requests always carry one. Recipients naming
-        several agents prove nothing, and a spawn that request makes binds to
-        a path only from its spawn result. The transcript span is never used:
-        a resumed or untracked agent's request lands on the outer span.
+        Every agent_message in a request is inbound to its sender, so a
+        single recipient names it ("/root" or a sub-agent path). Anything
+        else proves nothing: no agent_message (root's early requests, but
+        also any agent after Codex's local compaction, which drops them), or
+        messages to several agents. A spawn from such a request binds to a
+        path only from its spawn result, so its nesting and type appear from
+        then on. The transcript span is never used: a resumed or untracked
+        agent's request lands on the outer span.
         """
         recipients = agent_message_recipients(messages)
-        if not recipients:
-            return "/root"
         return next(iter(recipients)) if len(recipients) == 1 else None
 
     def _sync_threads(self, input_messages: list[ChatMessage]) -> None:
