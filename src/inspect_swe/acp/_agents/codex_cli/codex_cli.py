@@ -76,8 +76,12 @@ def build_codex_acp_filter(
         model: Model, messages: list[ChatMessage], tools: list[ToolInfo]
     ) -> AgentBridgeContext:
         context = by_slug(model, messages, tools)
-        if context.kind != "utility" and agent_message_recipients(messages) - {"/root"}:
-            return AgentBridgeContext("subagent")
+        paths = agent_message_recipients(messages) - {"/root"}
+        if context.kind != "utility" and paths:
+            # the agent's path is its id, as for the native codex_cli
+            return AgentBridgeContext(
+                "subagent", subagent_id=paths.pop() if len(paths) == 1 else None
+            )
         return context
 
     return classify_filter(filter, classify)

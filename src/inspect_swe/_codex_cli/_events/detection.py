@@ -40,6 +40,9 @@ class SpawnedAgent:
     reasoning_effort: str | None
     task_name: str | None = None
     """Multi-Agent V2 task name (e.g. "write_fizzbuzz"); None under V1."""
+    declared_type: str | None = None
+    """The `agent_type` argument as given; None when the spawn omits it
+    (Codex then inherits the parent's type or uses its default)."""
 
     @property
     def name(self) -> str:
@@ -105,6 +108,9 @@ def find_spawned_agents(tool_calls: list[ToolCall] | None) -> list[SpawnedAgent]
                 message=message,
                 reasoning_effort=str(reasoning) if reasoning else None,
                 task_name=str(task_name) if task_name else None,
+                declared_type=str(args["agent_type"])
+                if args.get("agent_type")
+                else None,
             )
         )
     return result

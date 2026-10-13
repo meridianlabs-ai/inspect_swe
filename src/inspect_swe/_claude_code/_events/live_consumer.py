@@ -107,6 +107,8 @@ class _OpenAgent:
     """An agent span currently open (Task tool_use seen, no tool_result yet)."""
 
     span_id: str
+    subagent_type: str | None = None
+    """The Task call's `subagent_type` argument, when given."""
 
 
 class LiveConsumer(ModelEventSink):
@@ -245,7 +247,11 @@ class LiveConsumer(ModelEventSink):
                     # idempotent — defensive against retries
                     continue
                 agent_span_id = f"agent-{tc.id}"
-                self._open_agents[tc.id] = _OpenAgent(span_id=agent_span_id)
+                subagent_type = args.get("subagent_type")
+                self._open_agents[tc.id] = _OpenAgent(
+                    span_id=agent_span_id,
+                    subagent_type=str(subagent_type) if subagent_type else None,
+                )
                 self._pending_subagents[tc.id] = prompt
                 span_name = args.get("subagent_type") or args.get("name") or "agent"
                 description = args.get("description") or ""
@@ -381,18 +387,25 @@ class LiveConsumer(ModelEventSink):
            "root" if no sub-agents are currently pending, else "unknown"
            (honest admission: an unmatched call could be main-thread or an
            unattributed sub-agent call; we can't tell)
+
+        A "subagent" answer carries the sub-agent's identity when the prompt
+        match picks exactly one pending Task: `subagent_id` is that Task's
+        tool_use id and `subagent_type` its `subagent_type` argument. With
+        no unique match (parallel Tasks whose prompts can't be told apart,
+        or a request whose first user message doesn't carry the Task prompt)
+        both are None -- the slug says "a sub-agent", not which one.
         """
         request = current_bridge_request()
         slug = request.model if request is not None else None
 
         if slug == self._models.subagent:
-            context = AgentBridgeContext("subagent")
+            context = self._subagent_context(messages)
         elif slug == self._models.haiku and not self._is_root_slug(slug):
             context = AgentBridgeContext("utility")
         elif self._is_root_slug(slug):
             context = AgentBridgeContext("root")
         elif self._match_pending_prompt(messages) is not None:
-            context = AgentBridgeContext("subagent")
+            context = self._subagent_context(messages)
         else:
             context = AgentBridgeContext(
                 "root" if not self._pending_subagents else "unknown"
@@ -400,6 +413,18 @@ class LiveConsumer(ModelEventSink):
 
         self._check_subagent_slug_drift(slug, context)
         return context
+
+    def _subagent_context(self, messages: list[ChatMessage]) -> AgentBridgeContext:
+        """The "subagent" context, identified by a unique pending-prompt match."""
+        tool_use_id = self._match_pending_prompt(messages)
+        if tool_use_id is None:
+            return AgentBridgeContext("subagent")
+        agent = self._open_agents.get(tool_use_id)
+        return AgentBridgeContext(
+            "subagent",
+            subagent_id=tool_use_id,
+            subagent_type=agent.subagent_type if agent is not None else None,
+        )
 
     def _is_root_slug(self, slug: str | None) -> bool:
         """Whether `slug` is one Claude Code uses for main-thread traffic.

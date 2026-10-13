@@ -83,6 +83,8 @@ class _OpenAgent:
     prompt: str
     name: str = "agent"
     thread_id: str | None = None
+    agent_type: str | None = None
+    """The spawn's `agent_type` argument, when given."""
 
 
 class CodexConsumer(ModelEventSink):
@@ -99,6 +101,10 @@ class CodexConsumer(ModelEventSink):
 
         # ModelEvents we've _event()'d, so on_complete knows to _event_updated.
         self._emitted_events: set[int] = set()
+
+        # thread_id → spawn agent_type, kept after the thread closes so a V2
+        # child resumed by followup_task still reports its type.
+        self._closed_types: dict[str, str] = {}
 
     @property
     def outer_span_id(self) -> str | None:
@@ -122,6 +128,7 @@ class CodexConsumer(ModelEventSink):
         self._thread_index.clear()
         self._nicknames.clear()
         self._emitted_events.clear()
+        self._closed_types.clear()
 
     # ------------------------------------------------------------------
     # ModelEventSink callbacks (called from the bridge)
@@ -223,7 +230,9 @@ class CodexConsumer(ModelEventSink):
 
         # nothing open → nothing to bind, close, or attribute against
         if not self._agents:
-            return AgentBridgeContext("subagent" if non_root_recipient else "root")
+            if non_root_recipient:
+                return self._subagent_context(recipients, None)
+            return AgentBridgeContext("root")
 
         self._sync_threads(messages)
         if recipients == {"/root"}:
@@ -231,8 +240,39 @@ class CodexConsumer(ModelEventSink):
 
         span_id = self._attribute(messages)
         if span_id != self.outer_span_id or non_root_recipient:
-            return AgentBridgeContext("subagent")
+            return self._subagent_context(recipients, span_id)
         return AgentBridgeContext("root" if not self._agents else "unknown")
+
+    def _subagent_context(
+        self, recipients: set[str], span_id: str | None
+    ) -> AgentBridgeContext:
+        """The "subagent" context, with the sub-agent's identity when known.
+
+        `subagent_id` is the agent's V2 path (its inbound agent_message
+        recipient, e.g. "/root/worker"), present on every one of its requests
+        including after a followup_task; under V1 (no agent_messages) it is
+        the `spawn_agent` call id of the span the request was attributed to,
+        stable from spawn to close (the thread id is only learned later, from
+        the parent's next request). `None` when neither identifies one agent.
+        `subagent_type` is the spawn's `agent_type` argument, when given.
+        """
+        agent = next((a for a in self._agents.values() if a.span_id == span_id), None)
+        paths = recipients - {"/root"}
+        if len(paths) == 1:
+            path = next(iter(paths))
+            agent_type = (
+                agent.agent_type if agent is not None else self._closed_types.get(path)
+            )
+            return AgentBridgeContext(
+                "subagent", subagent_id=path, subagent_type=agent_type
+            )
+        if agent is not None and not paths:
+            return AgentBridgeContext(
+                "subagent", subagent_id=agent.call_id, subagent_type=agent.agent_type
+            )
+        return AgentBridgeContext(
+            "subagent", subagent_type=agent.agent_type if agent is not None else None
+        )
 
     # ------------------------------------------------------------------
     # internal
@@ -255,6 +295,7 @@ class CodexConsumer(ModelEventSink):
                 span_id=span_id,
                 prompt=spawned.message,
                 name=spawned.name,
+                agent_type=spawned.declared_type,
             )
             metadata: dict[str, str] = {"agent_type": spawned.agent_type}
             if spawned.task_name:
@@ -324,6 +365,8 @@ class CodexConsumer(ModelEventSink):
         agent = self._agents.pop(call_id, None)
         if agent is None:
             return
+        if agent.agent_type is not None:
+            self._closed_types[thread_id] = agent.agent_type
         transcript()._event(SpanEndEvent(id=agent.span_id))
 
     def _attribute(self, input_messages: list[ChatMessage]) -> str | None:

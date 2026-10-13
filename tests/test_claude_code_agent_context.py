@@ -198,7 +198,7 @@ def test_classify_prompt_match_is_subagent_even_with_unrecognized_slug(
     _spawn_pending(consumer, "call_1", _TASK_PROMPT)
     with bridged_request_scope("some-unrecognized-slug"):
         result = _classify(consumer, text=f"<task>\n{_TASK_PROMPT}\n</task>")
-    assert result == AgentBridgeContext("subagent")
+    assert result == AgentBridgeContext("subagent", subagent_id="call_1")
 
 
 def test_classify_prompt_match_is_subagent_with_no_request_info(
@@ -211,7 +211,7 @@ def test_classify_prompt_match_is_subagent_with_no_request_info(
     consumer = _consumer(monkeypatch)
     _spawn_pending(consumer, "call_1", _TASK_PROMPT)
     result = _classify(consumer, text=f"<task>\n{_TASK_PROMPT}\n</task>")
-    assert result == AgentBridgeContext("subagent")
+    assert result == AgentBridgeContext("subagent", subagent_id="call_1")
 
 
 def test_classify_agrees_with_span_attribution(monkeypatch: Any) -> None:
@@ -232,7 +232,7 @@ def test_classify_agrees_with_span_attribution(monkeypatch: Any) -> None:
         result = consumer.classify(get_model("mockllm/model"), messages, [])
 
     assert span_id != consumer.outer_span_id
-    assert result == AgentBridgeContext("subagent")
+    assert result == AgentBridgeContext("subagent", subagent_id="call_1")
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +317,7 @@ def test_subagent_slug_drift_warns_once(
     with caplog.at_level("WARNING", logger=_DRIFT_LOGGER):
         for _ in range(10):
             result = _classify_as_subagent_by_prompt(consumer, slug)
-            assert result == AgentBridgeContext("subagent")
+            assert result == AgentBridgeContext("subagent", subagent_id="call_1")
 
     warnings = _warnings(caplog)
     assert len(warnings) == 1
@@ -466,4 +466,73 @@ def test_classify_small_fast_slug_equal_to_a_tier_is_root(monkeypatch: Any) -> N
     assert consumer._models.haiku == consumer._models.opus
     with bridged_request_scope(consumer._models.haiku):
         result = _classify(consumer)
+    assert result == AgentBridgeContext("root")
+
+
+# ---------------------------------------------------------------------------
+# sub-agent identity (subagent_id / subagent_type)
+# ---------------------------------------------------------------------------
+
+
+def _spawn_typed(
+    consumer: LiveConsumer, tool_call_id: str, prompt: str, subagent_type: str
+) -> None:
+    message = ChatMessageAssistant(
+        content="ok",
+        tool_calls=[
+            ToolCall(
+                id=tool_call_id,
+                function="Task",
+                arguments={"prompt": prompt, "subagent_type": subagent_type},
+            )
+        ],
+    )
+    consumer.on_complete(
+        ModelEvent(
+            model="m",
+            input=[],
+            tools=[],
+            tool_choice="none",
+            config=GenerateConfig(),
+            output=ModelOutput.from_message(message),
+        )
+    )
+
+
+def test_classify_identifies_parallel_subagents(monkeypatch: Any) -> None:
+    """Each subagent-slug request is tied to its own Task by its prompt."""
+    consumer = _consumer(monkeypatch)
+    other = "Write unit tests for the parser module and run them all"
+    _spawn_typed(consumer, "toolu_a", _TASK_PROMPT, "Explore")
+    _spawn_typed(consumer, "toolu_b", other, "general-purpose")
+
+    with bridged_request_scope(consumer._models.subagent):
+        a = _classify(consumer, text=f"<task>\n{_TASK_PROMPT}\n</task>")
+        b = _classify(consumer, text=other)
+    assert a == AgentBridgeContext(
+        "subagent", subagent_id="toolu_a", subagent_type="Explore"
+    )
+    assert b == AgentBridgeContext(
+        "subagent", subagent_id="toolu_b", subagent_type="general-purpose"
+    )
+
+
+def test_classify_indistinguishable_parallel_subagents_have_no_id(
+    monkeypatch: Any,
+) -> None:
+    """Two pending Tasks with the same prompt: a sub-agent, but not which."""
+    consumer = _consumer(monkeypatch)
+    _spawn_typed(consumer, "toolu_a", _TASK_PROMPT, "Explore")
+    _spawn_typed(consumer, "toolu_b", _TASK_PROMPT, "Explore")
+
+    with bridged_request_scope(consumer._models.subagent):
+        result = _classify(consumer, text=_TASK_PROMPT)
+    assert result == AgentBridgeContext("subagent")
+
+
+def test_classify_root_carries_no_identity(monkeypatch: Any) -> None:
+    consumer = _consumer(monkeypatch)
+    _spawn_typed(consumer, "toolu_a", _TASK_PROMPT, "Explore")
+    with bridged_request_scope(consumer._models.presented):
+        result = _classify(consumer, text=_TASK_PROMPT)
     assert result == AgentBridgeContext("root")
