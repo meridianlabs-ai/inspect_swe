@@ -349,6 +349,14 @@ async def test_codex_acp_filter_stamps_subagent_for_non_root_recipient() -> None
     assert await _invoke(wrapped, "openai/codex", child) == AgentBridgeContext(
         "subagent", subagent_id="/root/worker"
     )
+    # inherited messages to two different agents: a sub-agent, not which one
+    forked = [
+        _codex_agent_message("/root", "/root/a"),
+        _codex_agent_message("/root", "/root/b"),
+    ]
+    assert await _invoke(wrapped, "openai/codex", forked) == AgentBridgeContext(
+        "subagent"
+    )
     root = [_codex_agent_message("/root/worker", "/root")]
     assert await _invoke(wrapped, "openai/codex", root) == AgentBridgeContext("root")
 

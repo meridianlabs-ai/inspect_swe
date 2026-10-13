@@ -536,3 +536,21 @@ def test_classify_root_carries_no_identity(monkeypatch: Any) -> None:
     with bridged_request_scope(consumer._models.presented):
         result = _classify(consumer, text=_TASK_PROMPT)
     assert result == AgentBridgeContext("root")
+
+
+def test_classify_backgrounded_subagent_does_not_borrow_a_later_id(
+    monkeypatch: Any,
+) -> None:
+    """A backgrounded Task's tool_result arrives while it keeps running.
+
+    A later Task with the same prompt is then the only pending match for the
+    backgrounded agent's requests too; neither may claim the other's id.
+    """
+    consumer = _consumer(monkeypatch)
+    _spawn_typed(consumer, "toolu_x", _TASK_PROMPT, "Explore")
+    consumer.process_jsonl_line(_tool_result_line("toolu_x"))
+    _spawn_typed(consumer, "toolu_y", _TASK_PROMPT, "general-purpose")
+
+    with bridged_request_scope(consumer._models.subagent):
+        result = _classify(consumer, text=_TASK_PROMPT)
+    assert result == AgentBridgeContext("subagent")

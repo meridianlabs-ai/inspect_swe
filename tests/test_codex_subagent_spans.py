@@ -50,7 +50,7 @@ from inspect_ai.model._chat_message import (
     ChatMessageTool,
     ChatMessageUser,
 )
-from inspect_ai.tool import ToolCall, ToolChoice, ToolInfo
+from inspect_ai.tool import ToolCall, ToolCallError, ToolChoice, ToolInfo
 from inspect_swe._codex_cli._events import consumer as consumer_module
 from inspect_swe._codex_cli._events.consumer import CodexConsumer
 from inspect_swe._codex_cli._events.detection import (
@@ -58,6 +58,7 @@ from inspect_swe._codex_cli._events.detection import (
     agent_message_recipients,
     final_answer_authors,
     find_spawned_agents,
+    spawn_failed,
     spawn_result,
 )
 from inspect_swe._util.agentcontext import classify_filter
@@ -1012,3 +1013,71 @@ def test_classify_root_and_utility_carry_no_identity(monkeypatch: Any) -> None:
         utility = consumer.classify(model, [ChatMessageUser(content="review")], [])
     for context in (root, utility):
         assert (context.subagent_id, context.subagent_type) == (None, None)
+
+
+def test_classify_v1_resumed_agent_does_not_borrow_a_later_id(
+    monkeypatch: Any,
+) -> None:
+    """A completed V1 agent resumed by send_input runs under its old prompt.
+
+    A later spawn with the same prompt is the only open match for its
+    requests too, so neither gets an id.
+    """
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    first = _v1_spawn_call("call_1", prompt)
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[first])
+    )
+    root: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        ChatMessageAssistant(content="", tool_calls=[first]),
+        _spawn_result_tool_message("call_1", '{"agent_id":"thread_1"}'),
+        _v1_completion_carrier("wait_agent", "thread_1"),
+    ]
+    consumer.classify(model, root, [])
+    assert not consumer._agents
+    consumer.on_complete(
+        _model_event(root, tool_calls=[_v1_spawn_call("call_2", prompt)])
+    )
+
+    child: list[ChatMessage] = [ChatMessageUser(content=prompt)]
+    assert consumer.classify(model, child, []) == AgentBridgeContext(
+        "subagent", subagent_type="explore"
+    )
+
+
+def test_spawn_failed_shapes() -> None:
+    assert spawn_failed(_spawn_result_tool_message("c", "Unsupported model"))
+    errored = _spawn_result_tool_message("c", '{"agent_id": "t"}')
+    errored.error = ToolCallError("unknown", "boom")
+    assert spawn_failed(errored)
+    assert not spawn_failed(_spawn_result_tool_message("c", '{"agent_id": "t"}'))
+    assert not spawn_failed(
+        ChatMessageTool(content="oops", tool_call_id="c", function="wait_agent")
+    )
+
+
+def test_bound_spawn_is_never_closed_as_failed(monkeypatch: Any) -> None:
+    """Once its thread is bound, an agent exists: a later odd result can't close it."""
+    consumer, stub = _consumer(monkeypatch)
+    spawn = _v2_spawn_call("call_w", "worker")
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+    )
+    consumer.classify(
+        get_model("mockllm/model"),
+        [_agent_message_user("/root", "/root/worker")],
+        [],
+    )
+    consumer.classify(
+        get_model("mockllm/model"),
+        [
+            ChatMessageUser(content="go"),
+            ChatMessageAssistant(content="", tool_calls=[spawn]),
+            _spawn_result_tool_message("call_w", "not json"),
+        ],
+        [],
+    )
+    assert not stub.span_ends()

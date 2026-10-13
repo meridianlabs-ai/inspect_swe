@@ -138,6 +138,12 @@ class LiveConsumer(ModelEventSink):
         # Cleared in `_handle_user` when the matching tool_result arrives.
         self._pending_subagents: dict[str, str] = {}
 
+        # tool_use_id → Task prompt for sub-agents whose tool_result has
+        # arrived. A backgrounded Task (or a resumed one) keeps running after
+        # that, so its requests can still match a later pending Task with the
+        # same prompt; these only veto a sub-agent id, never attribute one.
+        self._detached_prompts: dict[str, str] = {}
+
         # Track which event objects we've already _event()'d so on_complete
         # knows whether to emit _event_updated (yes if we emitted) vs swallow
         # (no if we didn't — shouldn't happen with current logic but defensive).
@@ -198,6 +204,7 @@ class LiveConsumer(ModelEventSink):
             agent = self._open_agents.pop(tool_use_id)
             transcript()._event(SpanEndEvent(id=agent.span_id))
         self._pending_subagents.clear()
+        self._detached_prompts.clear()
         self._emitted_events.clear()
         self._last_stop_reason = None
 
@@ -415,9 +422,21 @@ class LiveConsumer(ModelEventSink):
         return context
 
     def _subagent_context(self, messages: list[ChatMessage]) -> AgentBridgeContext:
-        """The "subagent" context, identified by a unique pending-prompt match."""
+        """The "subagent" context, identified by a unique pending-prompt match.
+
+        No identity when the request also carries the prompt of a Task whose
+        tool_result already arrived: a backgrounded or resumed sub-agent
+        still running under that prompt would otherwise borrow the pending
+        Task's id.
+        """
         tool_use_id = self._match_pending_prompt(messages)
         if tool_use_id is None:
+            return AgentBridgeContext("subagent")
+        user_text = self._first_user_text(messages) or ""
+        if any(
+            len(prompt) >= _MIN_PROMPT_LENGTH and prompt in user_text
+            for prompt in self._detached_prompts.values()
+        ):
             return AgentBridgeContext("subagent")
         agent = self._open_agents.get(tool_use_id)
         return AgentBridgeContext(
@@ -524,7 +543,9 @@ class LiveConsumer(ModelEventSink):
             if not tool_use_id:
                 continue
             # Clear pending-subagent entry (no-op for non-Task tool_results).
-            self._pending_subagents.pop(tool_use_id, None)
+            prompt = self._pending_subagents.pop(tool_use_id, None)
+            if prompt is not None:
+                self._detached_prompts[tool_use_id] = prompt
             agent = self._open_agents.pop(tool_use_id, None)
             if agent is None:
                 continue
