@@ -27,6 +27,7 @@ from inspect_ai.model import (
 from inspect_swe._codex_cli.config import GUARDIAN_MODEL_SLUG
 from inspect_swe._gemini_cli.gemini_cli import build_gemini_filter
 from inspect_swe._gemini_cli.models import (
+    GEMINI_CONCRETE_MODEL_TARGETS,
     GEMINI_PRIMARY_ALIAS_TARGETS,
     GEMINI_UTILITY_MODEL_KINDS,
     GEMINI_UTILITY_MODEL_SLUGS,
@@ -167,8 +168,41 @@ async def test_gemini_filter_alias_primary_roots_every_resolution_target(
     )
 
 
+async def test_gemini_filter_promoted_concrete_flash_lite_is_root() -> None:
+    """gemini-cli promotes a concrete gemini-3.1-flash-lite to gemini-3.5-flash-lite.
+
+    Under the USE_GEMINI auth gemini_cli forces, resolveModel always applies
+    the "latest flash-lite" promotion. The promoted slug is also a utility
+    slug, so the root thread classified "utility" for the whole episode.
+    """
+    wrapped = build_gemini_filter(None, "gemini-3.1-flash-lite")
+    for slug in ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite"):
+        assert await _invoke(wrapped, slug) == AgentBridgeContext("root"), slug
+    assert await _invoke(wrapped, "gemini-3-flash-preview") == AgentBridgeContext(
+        "utility"
+    )
+
+
+@pytest.mark.parametrize("presented", ["gemini-3.5-flash", "gemini-3-flash"])
+async def test_gemini_filter_promoted_concrete_flash_is_root(presented: str) -> None:
+    """ResolveModel promotes these concrete flash ids to gemini-3.8-flash."""
+    wrapped = build_gemini_filter(None, presented)
+    assert await _invoke(wrapped, "gemini-3.8-flash") == AgentBridgeContext("root")
+
+
+async def test_gemini_filter_every_concrete_target_is_root() -> None:
+    for presented, targets in GEMINI_CONCRETE_MODEL_TARGETS.items():
+        assert presented.startswith("gemini-") and targets, presented
+        wrapped = build_gemini_filter(None, presented)
+        for slug in {presented, *targets}:
+            assert await _invoke(wrapped, slug) == AgentBridgeContext("root"), (
+                presented,
+                slug,
+            )
+
+
 async def test_gemini_filter_concrete_primary_has_no_alias_targets() -> None:
-    """A concrete `gemini_model` adds no extra root slugs (defaults unaffected)."""
+    """A concrete `gemini_model` with no promotions adds no extra root slugs."""
     wrapped = build_gemini_filter(None, "gemini-2.5-pro")
     assert await _invoke(wrapped, "gemini-3-flash-preview") == AgentBridgeContext(
         "utility"

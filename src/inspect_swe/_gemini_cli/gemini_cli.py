@@ -38,7 +38,11 @@ from inspect_swe._util.sandbox import resolve_agent_cwd
 from inspect_swe._util.trace import trace
 
 from .agentbinary import ensure_gemini_cli_setup
-from .models import GEMINI_PRIMARY_ALIAS_TARGETS, GEMINI_UTILITY_MODEL_KINDS
+from .models import (
+    GEMINI_CONCRETE_MODEL_TARGETS,
+    GEMINI_PRIMARY_ALIAS_TARGETS,
+    GEMINI_UTILITY_MODEL_KINDS,
+)
 
 
 def build_gemini_filter(
@@ -52,12 +56,16 @@ def build_gemini_filter(
     can resolve to before the request reaches the wire
     (``GEMINI_PRIMARY_ALIAS_TARGETS``) -- the bridge never sees ``"flash"``,
     only ``gemini-3-flash-preview``/``gemini-3.5-flash``/``gemini-2.5-flash``.
+    A concrete id gets the same treatment (``GEMINI_CONCRETE_MODEL_TARGETS``):
+    gemini-cli promotes e.g. ``gemini-3.1-flash-lite`` to
+    ``gemini-3.5-flash-lite`` before the wire.
     Anything gemini-cli's internal utility calls resolve to (see
     ``models.py``) is classified "utility" instead.
 
     When a root slug is itself one of those utility slugs -- the presented
-    model is ``gemini-3-pro-preview``, or ``flash`` resolves to
-    ``gemini-3-flash-preview`` -- utility calls under that slug are
+    model is ``gemini-3-pro-preview``, ``flash`` resolves to
+    ``gemini-3-flash-preview``, or ``gemini-3.1-flash-lite`` is promoted to
+    ``gemini-3.5-flash-lite`` -- utility calls under that slug are
     indistinguishable from main-thread traffic and classify "root". That is
     the under-attribution ``models.py`` documents, the best a slug-only
     classifier can do, and the harmless direction: the alternative (keying
@@ -65,7 +73,11 @@ def build_gemini_filter(
     whole episode. Each such slug is dropped from the kind map here rather
     than left for `slug_map_classifier` to warn about on every sample.
     """
-    root_slugs = {gemini_model, *GEMINI_PRIMARY_ALIAS_TARGETS.get(gemini_model, ())}
+    root_slugs = {
+        gemini_model,
+        *GEMINI_PRIMARY_ALIAS_TARGETS.get(gemini_model, ()),
+        *GEMINI_CONCRETE_MODEL_TARGETS.get(gemini_model, ()),
+    }
     kind_by_slug = {
         slug: kind
         for slug, kind in GEMINI_UTILITY_MODEL_KINDS.items()

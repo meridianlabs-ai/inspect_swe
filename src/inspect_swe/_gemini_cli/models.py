@@ -59,11 +59,19 @@ re-verified against upstream main on 2026-09-03) so `build_gemini_filter`
 can treat all of them as root slugs; `tests/test_gemini_models_drift.py`
 also parses that routing table and fails naming the alias/target if
 upstream declares a target this map lacks. Concrete ids passed as
-`--model` (the default `gemini-2.5-pro`) have no alias entry here even
-though some concrete ids also carry `contexts[]` re-routes upstream (e.g.
-`gemini-3-pro-preview` -> `gemini-2.5-pro` without preview access); the
-alias case is the one that flips the root thread's classification, so it
-is the one modelled.
+`--model` are rewritten too: `resolveModel` (`config/models.js`) promotes
+`gemini-3.1-flash-lite` to `gemini-3.5-flash-lite`, `gemini-3.5-flash` /
+`gemini-3-flash` to `gemini-3.8-flash`, and `gemini-3-pro-preview` to
+`gemini-3.1-pro-preview` whenever the "latest"/3.1 launches apply, which
+they always do for the `USE_GEMINI` auth `gemini_cli` forces
+(`isGemini31LaunchedForAuthType`, gemini-cli-core 0.63.0). The
+experimental dynamic path (`modelIdResolutions`) re-routes concrete ids by
+its own `contexts[]`. A promoted flash-lite id is also a utility slug, so
+without modelling this the root thread would classify "utility" for the
+whole episode. `GEMINI_CONCRETE_MODEL_TARGETS` collects, for each concrete
+id, every other slug it can reach the wire as, and `build_gemini_filter`
+treats those as root slugs exactly as it does an alias's targets. A concrete
+id with no entry (the default `gemini-2.5-pro`) is sent as-is.
 
 Gemini CLI's subagent feature has no reserved model slug of its own: a
 subagent definition's `modelConfig.model` (see `agents/local-executor.js`)
@@ -138,4 +146,52 @@ GEMINI_PRIMARY_ALIAS_TARGETS: dict[str, frozenset[str]] = {
 Keyed by the alias id accepted as `--model`; the value is the entry's
 `modelIdResolutions` `default` plus every `contexts[].target`. Concrete
 `gemini-*`/`gemma-*` ids have no entry (see the module docstring).
+"""
+
+GEMINI_CONCRETE_MODEL_TARGETS: dict[str, frozenset[str]] = {
+    # resolveModel: isPromotableFlashLiteModel (BASE_GEMINI_FLASH_LITE_MODEL)
+    # -> LATEST_GEMINI_FLASH_LITE_MODEL under useLatestFlashLite; dynamic
+    # modelIdResolutions[BASE_GEMINI_FLASH_LITE_MODEL] the same.
+    "gemini-3.1-flash-lite": frozenset({"gemini-3.5-flash-lite"}),
+    # dynamic modelIdResolutions[LATEST_GEMINI_FLASH_LITE_MODEL]:
+    # useLatestFlashLite false -> BASE.
+    "gemini-3.5-flash-lite": frozenset({"gemini-3.1-flash-lite"}),
+    # resolveModel: isPromotableFlashModel (BASE_GEMINI_FLASH_MODEL /
+    # DEFAULT_GEMINI_3_5_FLASH_MODEL) -> LATEST_GEMINI_FLASH_MODEL under
+    # useLatestFlash; dynamic modelIdResolutions[BASE_GEMINI_FLASH_MODEL] the same.
+    "gemini-3.5-flash": frozenset({"gemini-3.8-flash"}),
+    # resolveModel only: isPromotableFlashModel (LEGACY_CCPA_FLASH_MODEL).
+    "gemini-3-flash": frozenset({"gemini-3.8-flash"}),
+    # dynamic modelIdResolutions[LATEST_GEMINI_FLASH_MODEL]: useLatestFlash
+    # false -> BASE.
+    "gemini-3.8-flash": frozenset({"gemini-3.5-flash"}),
+    # dynamic modelIdResolutions['gemini-2.5-flash']: useLatestFlash -> LATEST.
+    "gemini-2.5-flash": frozenset({"gemini-3.8-flash"}),
+    # resolveModel: not promoted (explicitly excluded), but without preview
+    # access it falls back to LATEST/BASE flash; dynamic entry the same.
+    "gemini-3-flash-preview": frozenset({"gemini-3.8-flash", "gemini-3.5-flash"}),
+    # resolveModel: PREVIEW_GEMINI_MODEL -> PREVIEW_GEMINI_3_1_MODEL (or the
+    # custom-tools variant) under useGemini3_1, DEFAULT_GEMINI_MODEL without
+    # preview access; dynamic entry the same.
+    "gemini-3-pro-preview": frozenset(
+        {
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-pro-preview-customtools",
+            "gemini-2.5-pro",
+        }
+    ),
+    # dynamic entries; resolveModel's preview fallback gives DEFAULT_GEMINI_MODEL.
+    "gemini-3.1-pro-preview": frozenset(
+        {"gemini-3.1-pro-preview-customtools", "gemini-2.5-pro"}
+    ),
+    "gemini-3.1-pro-preview-customtools": frozenset({"gemini-2.5-pro"}),
+}
+"""Other slugs a concrete `--model` id can reach the wire as.
+
+Keyed by the concrete id; the value is every slug gemini-cli-core 0.63.0's
+`resolveModel` promotions and `modelIdResolutions` `contexts[].target`s can
+rewrite it to (the id itself excluded). Gathered from
+`dist/src/config/models.js` and `dist/src/config/defaultModelConfigs.js`;
+`tests/test_gemini_models_drift.py` checks the routing-table part against
+upstream main.
 """

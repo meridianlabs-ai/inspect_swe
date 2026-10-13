@@ -24,6 +24,7 @@ from dataclasses import dataclass
 import anyio
 import pytest
 from inspect_swe._gemini_cli.models import (
+    GEMINI_CONCRETE_MODEL_TARGETS,
     GEMINI_PRIMARY_ALIAS_TARGETS,
     GEMINI_UTILITY_MODEL_SLUGS,
 )
@@ -398,4 +399,26 @@ def test_live_gemini_primary_alias_targets_cover_routing_table() -> None:
         "gemini-cli primary aliases now resolve to targets missing from "
         f"GEMINI_PRIMARY_ALIAS_TARGETS: {missing_targets}. Add them in "
         "src/inspect_swe/_gemini_cli/models.py and refresh the provenance note."
+    )
+
+
+@skip_if_github_action
+def test_live_gemini_concrete_routes_covered() -> None:
+    """Every re-route of a concrete id in modelIdResolutions is a known target.
+
+    resolveModel's static promotions (e.g. gemini-3-flash -> gemini-3.8-flash)
+    live in config/models.ts code, not this table, and aren't checked here.
+    """
+    _, routing = _fetch_upstream()
+    missing = {
+        name: sorted(route.targets - {name} - known)
+        for name, route in routing.items()
+        if name.startswith(_CONCRETE_PREFIXES)
+        and not (route.targets - {name})
+        <= (known := GEMINI_CONCRETE_MODEL_TARGETS.get(name, frozenset()))
+    }
+    assert not missing, (
+        "gemini-cli now re-routes concrete model ids to targets missing from "
+        f"GEMINI_CONCRETE_MODEL_TARGETS: {missing}. Add them in "
+        "src/inspect_swe/_gemini_cli/models.py."
     )
