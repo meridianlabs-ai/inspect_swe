@@ -562,7 +562,9 @@ async def _bridge_aliases(
     return aliases
 
 
-async def test_sentinels_follow_caller_alias_on_primary(monkeypatch: Any) -> None:
+async def test_subagent_sentinel_follows_caller_alias_on_primary(
+    monkeypatch: Any,
+) -> None:
     aliases = await _bridge_aliases(
         monkeypatch,
         model="mockllm/fallback",
@@ -573,11 +575,17 @@ async def test_sentinels_follow_caller_alias_on_primary(monkeypatch: Any) -> Non
         "anthropic", _ANTHROPIC_PRIMARY
     )
     assert subagent is not None and small is not None
-    for sentinel in (subagent, small):
-        resolved = resolve_inspect_model(
+
+    def resolve(sentinel: str) -> str:
+        return resolve_inspect_model(
             _bare_model_id(sentinel), aliases, "inspect/mockllm/fallback"
-        )
-        assert resolved.name == "primary-override"
+        ).name
+
+    # built-in sub-agents inherited the primary slug (and its alias) before
+    # injection; small-model traffic went to OpenCode's catalog small model,
+    # which the fallback served
+    assert resolve(subagent) == "primary-override"
+    assert resolve(small) == "fallback"
 
 
 async def test_caller_alias_on_sentinel_wins(monkeypatch: Any) -> None:

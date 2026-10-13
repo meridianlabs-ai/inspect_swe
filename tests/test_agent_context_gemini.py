@@ -15,6 +15,7 @@ functions directly instead -- wiring is exercised structurally (by reading
 import logging
 
 import pytest
+from inspect_ai._util.content import ContentText
 from inspect_ai.agent import AgentBridgeContext, current_agent_bridge_context
 from inspect_ai.agent._bridge.context import bridged_request_scope
 from inspect_ai.model import (
@@ -335,6 +336,40 @@ async def test_codex_acp_filter_stamps_root_for_default_model() -> None:
 async def test_codex_acp_filter_stamps_utility_for_guardian_slug() -> None:
     wrapped = build_codex_acp_filter(None, "openai/codex")
     assert await _invoke(wrapped, GUARDIAN_MODEL_SLUG) == AgentBridgeContext("utility")
+
+
+async def test_codex_acp_filter_stamps_subagent_for_non_root_recipient() -> None:
+    """Multi-Agent V2: an inbound agent_message names the requesting agent.
+
+    A sub-agent requests the root slug, but its agent_message names it; the
+    root's inbound messages name /root.
+    """
+    wrapped = build_codex_acp_filter(None, "openai/codex")
+    child = [_codex_agent_message("/root", "/root/worker")]
+    assert await _invoke(wrapped, "openai/codex", child) == AgentBridgeContext(
+        "subagent"
+    )
+    root = [_codex_agent_message("/root/worker", "/root")]
+    assert await _invoke(wrapped, "openai/codex", root) == AgentBridgeContext("root")
+
+
+def _codex_agent_message(author: str, recipient: str) -> ChatMessage:
+    """A ChatMessageUser as the bridge produces it from a V2 agent_message."""
+    return ChatMessageUser(
+        content=[
+            ContentText(
+                text=f"Agent message from {author}",
+                internal={
+                    "agent_message": {
+                        "type": "agent_message",
+                        "author": author,
+                        "recipient": recipient,
+                        "content": [{"type": "input_text", "text": "hi"}],
+                    }
+                },
+            )
+        ]
+    )
 
 
 async def test_codex_acp_filter_stamps_unknown_for_unrecognized_slug() -> None:

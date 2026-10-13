@@ -147,7 +147,8 @@ def classify_filter(
     generation, so a `ModelEventSink` never sees that output.
     `on_filter_output` (if given) is called with the request's messages and
     the output before it is returned, for agents whose attribution tracks
-    state from model outputs.
+    state from model outputs. Its failures are logged and swallowed the same
+    way.
     """
     user_is_legacy = user_filter is not None and is_legacy_str_filter(user_filter)
     if user_is_legacy:
@@ -190,7 +191,13 @@ def classify_filter(
                 model, messages, tools, tool_choice, config
             )
         if on_filter_output is not None and isinstance(result, ModelOutput):
-            on_filter_output(messages, result)
+            try:
+                on_filter_output(messages, result)
+            except Exception as ex:
+                key = f"on_filter_output:{type(ex).__name__}"
+                if key not in warned:
+                    warned.add(key)
+                    logger.warning(f"agent context output tracking failed: {ex}")
         return result
 
     return _filter

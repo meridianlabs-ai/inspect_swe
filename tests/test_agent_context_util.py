@@ -147,6 +147,32 @@ async def test_wrapper_reports_only_filter_returned_output() -> None:
     assert seen == [(args[1], returned)]
 
 
+async def test_filter_output_callback_exceptions_do_not_break_generation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    returned = ModelOutput.from_content("model", "from the filter")
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        return returned
+
+    def broken(messages: list[ChatMessage], output: ModelOutput) -> None:
+        raise RuntimeError("boom")
+
+    wrapped = classify_filter(user_filter, static_root_classifier, broken)
+    with caplog.at_level(logging.WARNING), bridged_request_scope("slug"):
+        for _ in range(2):
+            assert await wrapped(*_args()) is returned
+    assert [r.getMessage() for r in caplog.records].count(
+        "agent context output tracking failed: boom"
+    ) == 1
+
+
 async def test_classify_exceptions_do_not_break_generation(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

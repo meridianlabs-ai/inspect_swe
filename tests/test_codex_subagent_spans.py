@@ -21,6 +21,8 @@ Fixture shapes below are copied from a real gpt-5.6-sol eval log
 """
 
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -798,3 +800,54 @@ async def test_filter_returned_spawn_registers_subagent(monkeypatch: Any) -> Non
 
     assert kinds == ["root", "subagent"]
     assert [e.id for e in stub.span_begins()] == ["agent-call_1"]
+
+
+class _BridgeCaptured(Exception):
+    pass
+
+
+async def test_codex_cli_wires_filter_output_tracking(monkeypatch: Any) -> None:
+    """codex_cli() hands the bridge a filter that reports outputs to its sink."""
+    from inspect_swe._codex_cli import codex_cli as codex_cli_module
+
+    _, stub = _consumer(monkeypatch)
+    captured: dict[str, Any] = {}
+
+    def fake_bridge(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        raise _BridgeCaptured()
+
+    @asynccontextmanager
+    async def fake_checkpointer() -> AsyncIterator[None]:
+        yield None
+
+    monkeypatch.setattr(codex_cli_module, "checkpointer", fake_checkpointer)
+    monkeypatch.setattr(codex_cli_module, "sandbox_agent_bridge", fake_bridge)
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        return ModelOutput.from_message(
+            ChatMessageAssistant(
+                content="", tool_calls=[_v1_spawn_call("call_1", prompt)]
+            )
+        )
+
+    agent = codex_cli_module.codex_cli(filter=user_filter)
+    with pytest.raises(_BridgeCaptured):
+        await agent(AgentState(messages=[]))
+
+    sink = captured["model_event_sink"]
+    await captured["filter"](
+        get_model("mockllm/model"),
+        [ChatMessageUser(content="go")],
+        [],
+        None,
+        GenerateConfig(),
+    )
+    assert list(sink._agents) == ["call_1"]
