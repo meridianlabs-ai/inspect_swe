@@ -395,6 +395,22 @@ def mock_pip_download_failure() -> Any:
             yield mock_run
 
 
+@pytest.fixture(autouse=True)
+def fresh_concurrency_registry() -> Iterator[None]:
+    """Reset inspect_ai's process-global concurrency registry before each test.
+
+    Registry entries (e.g. a model's connection limiter) wrap anyio
+    primitives bound to the backend they were created under, so a test that
+    generates under asyncio would leave a limiter that the same test's trio
+    variant then reuses and crashes on ("no running event loop"). Mirrors
+    inspect_ai's own test setup.
+    """
+    from inspect_ai.util._concurrency import init_concurrency
+
+    init_concurrency()
+    yield
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _package_dirs_stay_out_of_the_real_home() -> Iterator[None]:
     """Redirect the package cache/data roots so the suite never writes into $HOME.
