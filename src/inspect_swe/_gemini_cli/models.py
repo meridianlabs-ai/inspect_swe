@@ -18,7 +18,10 @@ Provenance: `@google/gemini-cli-core@0.58.0` (resolved via `npm view
 @google/gemini-cli-core version`, then fetched with `npm pack` and read
 directly from `dist/src/config/defaultModelConfigs.js` /
 `dist/src/core/baseLlmClient.js` -- first gathered from 0.54.4 on 2026-08-08,
-re-verified unchanged against 0.58.0 and upstream main on 2026-09-03).
+re-verified unchanged against 0.58.0 and upstream main on 2026-09-03;
+upstream main as of 2026-10-12 adds `useLatestFlashLite` / `useLatestFlash`
+routes to `gemini-3.5-flash-lite` / `gemini-3.8-flash`, named through the
+`BASE_`/`LATEST_` constants in `config/models.ts`).
 `gemini_cli(version="auto")` installs whatever is latest, so
 `tests/test_gemini_models_drift.py` fetches the alias table from upstream main
 and fails naming the alias/slug pair if any utility alias resolves outside
@@ -81,8 +84,10 @@ GEMINI_UTILITY_MODEL_SLUGS: frozenset[str] = frozenset(
         "gemini-3-flash-preview",
         # classifier, prompt-completion, fast-ack-helper, edit-corrector,
         # summarizer-default, summarizer-shell, chat-compression-3.1-flash-lite:
-        # all resolve via the `flash-lite` alias.
+        # all resolve via the `flash-lite` alias -- its default, and its
+        # `useLatestFlashLite` target.
         "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
         # loop-detection-double-check (unconditional; see module docstring),
         # chat-compression-3-pro, chat-compression-default.
         "gemini-3-pro-preview",
@@ -118,11 +123,14 @@ GEMINI_PRIMARY_ALIAS_TARGETS: dict[str, frozenset[str]] = {
             "gemini-3-flash-preview",
             # useGemini3_5Flash: true
             "gemini-3.5-flash",
+            # useLatestFlash: true
+            "gemini-3.8-flash",
             # hasAccessToPreview: false
             "gemini-2.5-flash",
         }
     ),
-    "flash-lite": frozenset({"gemini-3.1-flash-lite"}),
+    # default; useLatestFlashLite: true
+    "flash-lite": frozenset({"gemini-3.1-flash-lite", "gemini-3.5-flash-lite"}),
     "auto-gemini-2.5": frozenset({"gemini-2.5-pro"}),
 }
 """Concrete slugs each gemini-cli primary-model alias can reach the wire as.

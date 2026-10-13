@@ -35,6 +35,15 @@ _UPSTREAM_URL = (
     "packages/core/src/config/defaultModelConfigs.ts"
 )
 
+# defaultModelConfigs.ts names some models through constants imported from
+# this file (e.g. `default: BASE_GEMINI_FLASH_LITE_MODEL`, and as computed
+# keys `[LATEST_GEMINI_FLASH_LITE_MODEL]: {...}`); they are inlined before
+# parsing.
+_CONSTANTS_URL = (
+    "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/"
+    "packages/core/src/config/models.ts"
+)
+
 # Every alias in `DEFAULT_MODEL_CONFIGS.aliases` that gemini-cli's internal
 # machinery (not the chat loop) sends requests under. Excludes the
 # `chat-compression-*` family, which resolves to the presented model's own
@@ -126,8 +135,30 @@ def _all_str(body: str, field: str) -> list[str]:
     return re.findall(rf"\b{field}\s*:\s*['\"]([^'\"]+)['\"]", body)
 
 
-def _parse(src: str) -> tuple[dict[str, _Alias], dict[str, _Route]]:
+def _string_constants(src: str) -> dict[str, str]:
+    """`export const NAME = 'value'` string constants (not `let`: mutable)."""
+    return dict(
+        re.findall(
+            r"export\s+const\s+([A-Z][A-Z0-9_]*)\s*=\s*['\"]([^'\"]+)['\"]",
+            _strip_comments(src),
+        )
+    )
+
+
+def _inline_constants(src: str, constants: dict[str, str]) -> str:
+    """Replace constant references (computed keys and values) with literals."""
+    for name, value in constants.items():
+        src = re.sub(rf"\[\s*{name}\s*\]", f"'{value}'", src)
+        src = re.sub(rf"\b{name}\b", f"'{value}'", src)
+    return src
+
+
+def _parse(
+    src: str, constants: dict[str, str] | None = None
+) -> tuple[dict[str, _Alias], dict[str, _Route]]:
     src = _strip_comments(src)
+    if constants:
+        src = _inline_constants(src, constants)
     aliases = {
         name: _Alias(_first_str(body, "extends"), _first_str(body, "model"))
         for name, body in _top_level_entries(_section(src, "aliases")).items()
@@ -201,7 +232,13 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
   },
   overrides: [{ match: { model: 'chat-base', isRetry: true }, modelConfig: {} }],
   modelIdResolutions: {
-    'flash-lite': { default: 'gemini-3.1-flash-lite' },
+    'flash-lite': {
+      default: BASE_FLASH_LITE,
+      contexts: [
+        { condition: { useLatestFlashLite: true }, target: LATEST_FLASH_LITE },
+      ],
+    },
+    [LATEST_FLASH_LITE]: { default: LATEST_FLASH_LITE },
     'gemini-3-pro-preview': {
       default: 'gemini-3-pro-preview',
       contexts: [{ condition: { hasAccessToPreview: false }, target: 'x' }],
@@ -228,9 +265,26 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigServiceConfig = {
 };
 """
 
+_SAMPLE_MODELS_TS = """
+export const BASE_FLASH_LITE = 'gemini-3.1-flash-lite';
+export const LATEST_FLASH_LITE = 'gemini-3.5-flash-lite';
+export let DEFAULT_FLASH_LITE = BASE_FLASH_LITE;
+"""
+
+
+def _parse_sample() -> tuple[dict[str, _Alias], dict[str, _Route]]:
+    return _parse(_SAMPLE_TS, _string_constants(_SAMPLE_MODELS_TS))
+
+
+def test_string_constants_reads_only_exported_const_literals() -> None:
+    assert _string_constants(_SAMPLE_MODELS_TS) == {
+        "BASE_FLASH_LITE": "gemini-3.1-flash-lite",
+        "LATEST_FLASH_LITE": "gemini-3.5-flash-lite",
+    }
+
 
 def test_alias_resolution_follows_extends_model_and_routing_table() -> None:
-    aliases, routing = _parse(_SAMPLE_TS)
+    aliases, routing = _parse_sample()
     assert set(aliases) == {
         "base",
         "gemini-3-flash-preview",
@@ -242,6 +296,7 @@ def test_alias_resolution_follows_extends_model_and_routing_table() -> None:
     }
     assert {name: route.default for name, route in routing.items()} == {
         "flash-lite": "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite": "gemini-3.5-flash-lite",
         "gemini-3-pro-preview": "gemini-3-pro-preview",
         "flash": "gemini-3-flash-preview",
     }
@@ -258,33 +313,40 @@ def test_alias_resolution_follows_extends_model_and_routing_table() -> None:
 
 
 def test_routing_table_parser_collects_default_and_every_context_target() -> None:
-    _, routing = _parse(_SAMPLE_TS)
+    _, routing = _parse_sample()
     # default plus every contexts[].target, as a set
     assert routing["flash"].targets == {
         "gemini-3-flash-preview",
         "gemini-3.5-flash",
         "gemini-2.5-flash",
     }
+    # constants inlined in both value and computed-key positions
+    assert routing["flash-lite"].targets == {
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
+    }
     # no contexts -> just the default
-    assert routing["flash-lite"].targets == {"gemini-3.1-flash-lite"}
+    assert routing["gemini-3.5-flash-lite"].targets == {"gemini-3.5-flash-lite"}
     # a concrete id's own entry is parsed too (callers filter by key prefix)
     assert routing["gemini-3-pro-preview"].targets == {"gemini-3-pro-preview", "x"}
     # the sibling `classifierIdResolutions` table is not merged in
     assert "not-me" not in routing["flash"].targets
 
 
-def _fetch_upstream() -> str:
+def _fetch_upstream() -> tuple[dict[str, _Alias], dict[str, _Route]]:
     from inspect_swe._util.download import download_text_file
 
     try:
-        return anyio.run(download_text_file, _UPSTREAM_URL)
+        src = anyio.run(download_text_file, _UPSTREAM_URL)
+        constants = anyio.run(download_text_file, _CONSTANTS_URL)
     except Exception as ex:
         pytest.skip(f"live gemini-cli source unavailable: {ex}")
+    return _parse(src, _string_constants(constants))
 
 
 @skip_if_github_action
 def test_live_gemini_utility_aliases_resolve_into_known_slugs() -> None:
-    aliases, routing = _parse(_fetch_upstream())
+    aliases, routing = _fetch_upstream()
     missing = [alias for alias in _UTILITY_ALIASES if alias not in aliases]
     assert not missing, (
         f"upstream defaultModelConfigs.ts no longer defines utility aliases "
@@ -309,7 +371,7 @@ def test_live_gemini_utility_aliases_resolve_into_known_slugs() -> None:
 
 @skip_if_github_action
 def test_live_gemini_primary_alias_targets_cover_routing_table() -> None:
-    _, routing = _parse(_fetch_upstream())
+    _, routing = _fetch_upstream()
 
     upstream_aliases = {
         name for name in routing if not name.startswith(_CONCRETE_PREFIXES)
