@@ -1171,3 +1171,182 @@ def test_classify_v2_same_basename_under_another_parent_keeps_identity(
     assert consumer.classify(model, nested, []) == AgentBridgeContext(
         "subagent", subagent_id="/root/other/worker", subagent_type="coder"
     )
+
+
+# ---------------------------------------------------------------------------
+# 13. V2 parent paths come from the spawning request, not the transcript span
+# ---------------------------------------------------------------------------
+
+
+def _finish_v2(consumer: CodexConsumer, path: str) -> None:
+    consumer.classify(
+        get_model("mockllm/model"),
+        [
+            ChatMessageUser(content="go"),
+            _agent_message_user(path, "/root", "FINAL_ANSWER", "done"),
+        ],
+        [],
+    )
+
+
+def _typed_v2_spawn(call_id: str, task_name: str, agent_type: str) -> ToolCall:
+    spawn = _v2_spawn_call(call_id, task_name)
+    assert spawn.arguments is not None
+    spawn.arguments["agent_type"] = agent_type
+    return spawn
+
+
+def _assert_old_and_nested_workers_keep_their_types(consumer: CodexConsumer) -> None:
+    model = get_model("mockllm/model")
+    # the old /root/worker resumes before the nested spawn's result arrives
+    resumed: list[ChatMessage] = [
+        _agent_message_user("/root", "/root/worker"),
+        _agent_message_user("/root", "/root/worker", "MESSAGE", "one more"),
+    ]
+    assert consumer.classify(model, resumed, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/worker", subagent_type="explorer"
+    )
+    nested: list[ChatMessage] = [
+        _agent_message_user("/root/other", "/root/other/worker")
+    ]
+    assert consumer.classify(model, nested, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/other/worker", subagent_type="coder"
+    )
+
+
+def test_v2_resumed_parent_spawn_binds_under_its_own_path(monkeypatch: Any) -> None:
+    """/root/other finishes, is resumed, and spawns "worker" from the outer span."""
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[
+                _typed_v2_spawn("call_w", "worker", "explorer"),
+                _typed_v2_spawn("call_o", "other", "planner"),
+            ],
+        )
+    )
+    for path in ("/root/worker", "/root/other"):
+        consumer.classify(model, [_agent_message_user("/root", path)], [])
+    _finish_v2(consumer, "/root/worker")
+    _finish_v2(consumer, "/root/other")
+    assert not consumer._agents
+
+    resumed_other = _model_event(
+        [
+            _agent_message_user("/root", "/root/other"),
+            _agent_message_user("/root", "/root/other", "MESSAGE", "plan more"),
+        ],
+        tool_calls=[_typed_v2_spawn("call_new", "worker", "coder")],
+    )
+    assert consumer.classify(model, resumed_other.input, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/other", subagent_type="planner"
+    )
+    consumer.on_pending(resumed_other)
+    assert resumed_other.span_id == consumer.outer_span_id  # its span closed
+    consumer.on_complete(resumed_other)
+    assert consumer._agents["call_new"].expected_path == "/root/other/worker"
+
+    _assert_old_and_nested_workers_keep_their_types(consumer)
+
+
+def test_v2_never_tracked_parent_spawn_binds_under_its_own_path(
+    monkeypatch: Any,
+) -> None:
+    """Round-1 F4 shape: /root/other was never seen spawning, yet spawns "worker"."""
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_typed_v2_spawn("call_w", "worker", "explorer")],
+        )
+    )
+    consumer.classify(model, [_agent_message_user("/root", "/root/worker")], [])
+    _finish_v2(consumer, "/root/worker")
+
+    consumer.on_complete(
+        _model_event(
+            [_agent_message_user("/root", "/root/other")],
+            tool_calls=[_typed_v2_spawn("call_new", "worker", "coder")],
+        )
+    )
+    _assert_old_and_nested_workers_keep_their_types(consumer)
+
+
+def test_v2_filter_output_spawn_uses_the_requester_path(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+    consumer.on_filter_output(
+        [_agent_message_user("/root", "/root/other")],
+        ModelOutput.from_message(
+            ChatMessageAssistant(
+                content="", tool_calls=[_typed_v2_spawn("call_new", "worker", "coder")]
+            )
+        ),
+    )
+    assert consumer._agents["call_new"].expected_path == "/root/other/worker"
+
+
+def test_v2_spawn_from_an_unproven_requester_binds_only_from_its_result(
+    monkeypatch: Any,
+) -> None:
+    """Inbound messages to two agents prove no parent: no expected path."""
+    consumer, _ = _consumer(monkeypatch)
+    consumer.on_complete(
+        _model_event(
+            [
+                _agent_message_user("/root", "/root/a"),
+                _agent_message_user("/root", "/root/b"),
+            ],
+            tool_calls=[_v2_spawn_call("call_new", "worker")],
+        )
+    )
+    assert consumer._agents["call_new"].expected_path is None
+
+
+# ---------------------------------------------------------------------------
+# 14. a short V1 prompt still guards a resumed child
+# ---------------------------------------------------------------------------
+
+
+def test_classify_v1_short_prompt_resumed_agent_is_never_root(
+    monkeypatch: Any,
+) -> None:
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    spawn = _v1_spawn_call("call_1", "run tests")
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+    )
+    root: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        ChatMessageAssistant(content="", tool_calls=[spawn]),
+        _spawn_result_tool_message("call_1", '{"agent_id":"thread_1"}'),
+        _v1_completion_carrier("wait_agent", "thread_1"),
+    ]
+    assert consumer.classify(model, root, []) == AgentBridgeContext("root")
+    assert not consumer._agents
+
+    resumed: list[ChatMessage] = [
+        ChatMessageUser(content="run tests"),
+        ChatMessageUser(content="Please also check lint"),
+    ]
+    assert consumer.classify(model, resumed, []) == AgentBridgeContext("unknown")
+    # as a substring of other text, a short prompt proves nothing
+    other: list[ChatMessage] = [ChatMessageUser(content="go and run tests later")]
+    assert consumer.classify(model, other, []) == AgentBridgeContext("root")
+
+
+def test_classify_explicit_root_recipient_beats_closed_prompt(
+    monkeypatch: Any,
+) -> None:
+    consumer, _ = _consumer(monkeypatch)
+    consumer._closed_prompts["call_1"] = "run tests"
+    messages: list[ChatMessage] = [
+        ChatMessageUser(content="run tests"),
+        _agent_message_user("/root/x", "/root", "MESSAGE", "status"),
+    ]
+    assert consumer.classify(get_model("mockllm/model"), messages, []) == (
+        AgentBridgeContext("root")
+    )

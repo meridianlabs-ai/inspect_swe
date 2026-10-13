@@ -173,7 +173,11 @@ class CodexConsumer(ModelEventSink):
                     if custom is not None:
                         tc.view = custom
 
-            self._register_delegation(msg, event.span_id or self.outer_span_id)
+            self._register_delegation(
+                msg,
+                event.span_id or self.outer_span_id,
+                self._requester_path(event.input),
+            )
 
         if id(event) in self._emitted_events:
             self._emitted_events.discard(id(event))
@@ -192,7 +196,9 @@ class CodexConsumer(ModelEventSink):
         """
         msg = output.message if output.choices else None
         if msg is not None and msg.tool_calls:
-            self._register_delegation(msg, self._attribute(messages))
+            self._register_delegation(
+                msg, self._attribute(messages), self._requester_path(messages)
+            )
 
     # ------------------------------------------------------------------
     # filter-time classification (AgentContextClassifier)
@@ -240,9 +246,9 @@ class CodexConsumer(ModelEventSink):
         if not self._agents:
             if non_root_recipient:
                 return self._subagent_context(messages, recipients, None)
-            return AgentBridgeContext(
-                "unknown" if self._carries_closed_prompt(messages) else "root"
-            )
+            if recipients == {"/root"} or not self._carries_closed_prompt(messages):
+                return AgentBridgeContext("root")
+            return AgentBridgeContext("unknown")
 
         self._sync_threads(messages)
         if recipients == {"/root"}:
@@ -266,11 +272,18 @@ class CodexConsumer(ModelEventSink):
         if not self._closed_prompts:
             return False
         user_text = self._user_text(messages)
+        user_messages = {
+            msg.text.strip() for msg in messages if isinstance(msg, ChatMessageUser)
+        }
         own_calls = self._history_call_ids(messages)
+        # any length: a short prompt only counts as a whole user message,
+        # since as a substring it could appear anywhere
         return any(
             call_id not in own_calls
-            and len(prompt) >= _MIN_PROMPT_LENGTH
-            and prompt in user_text
+            and (
+                prompt.strip() in user_messages
+                or (len(prompt) >= _MIN_PROMPT_LENGTH and prompt in user_text)
+            )
             for call_id, prompt in self._closed_prompts.items()
         )
 
@@ -317,14 +330,16 @@ class CodexConsumer(ModelEventSink):
     # ------------------------------------------------------------------
 
     def _register_delegation(
-        self, msg: ChatMessageAssistant, parent_span_id: str | None
+        self,
+        msg: ChatMessageAssistant,
+        parent_span_id: str | None,
+        parent_path: str | None,
     ) -> None:
         """Open a span for each spawn_agent call and close close_agent targets.
 
         Runs synchronously before the response reaches Codex, so a span is
         open before the sub-agent's first call arrives.
         """
-        parent_path = self._agent_path(parent_span_id)
         for spawned in find_spawned_agents(msg.tool_calls):
             if spawned.call_id in self._agents:
                 continue  # idempotent (defensive against retries)
@@ -360,17 +375,22 @@ class CodexConsumer(ModelEventSink):
         for target in find_close_targets(msg.tool_calls):
             self._close_thread(target)
 
-    def _agent_path(self, span_id: str | None) -> str | None:
-        """V2 path of the agent a span belongs to, or None when unknown.
+    @staticmethod
+    def _requester_path(messages: list[ChatMessage]) -> str | None:
+        """V2 path of the agent that sent a request, from the request itself.
 
-        "/root" for the outer span; a bound sub-agent's path otherwise.
+        Every agent_message in a request is inbound to its sender, so one
+        recipient names it ("/root" or a sub-agent path). A request with no
+        agent_message is root's: a V2 sub-agent receives its task as an
+        agent_message, so its requests always carry one. Recipients naming
+        several agents prove nothing, and a spawn that request makes binds to
+        a path only from its spawn result. The transcript span is never used:
+        a resumed or untracked agent's request lands on the outer span.
         """
-        if span_id == self.outer_span_id:
+        recipients = agent_message_recipients(messages)
+        if not recipients:
             return "/root"
-        agent = next((a for a in self._agents.values() if a.span_id == span_id), None)
-        if agent is not None and agent.thread_id and agent.thread_id.startswith("/"):
-            return agent.thread_id
-        return None
+        return next(iter(recipients)) if len(recipients) == 1 else None
 
     def _sync_threads(self, input_messages: list[ChatMessage]) -> None:
         """Bind spawn-result thread ids, then close threads this request completes.
