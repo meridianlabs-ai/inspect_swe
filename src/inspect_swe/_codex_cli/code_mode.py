@@ -23,6 +23,15 @@ from .model_catalog import codex_catalog_tool_mode
 _SKIP_KEYS = ("features", "model_catalog_json", "profile")
 
 
+def config_override_sets(key: str, name: str) -> bool:
+    """Whether a `config_overrides` key sets `name` or a key inside it.
+
+    Codex trims each `-c` key, and a dotted key sets a field of a table.
+    """
+    key = key.strip()
+    return key == name or key.startswith(f"{name}.")
+
+
 def check_codex_code_mode_bridged_tools(
     codex_model: str,
     release_catalog: dict[str, Any] | None,
@@ -41,7 +50,7 @@ def check_codex_code_mode_bridged_tools(
         bridged_tools: The agent's bridged tool specs.
     """
     if release_catalog is None or any(
-        key.strip() == skip or key.strip().startswith(f"{skip}.")
+        config_override_sets(key, skip)
         for key in config_overrides or {}
         for skip in _SKIP_KEYS
     ):

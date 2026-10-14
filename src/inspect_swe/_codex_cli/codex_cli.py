@@ -61,7 +61,7 @@ from .agentbinary import (
     codex_cli_binary_source,
     codex_version_models_catalog,
 )
-from .code_mode import check_codex_code_mode_bridged_tools
+from .code_mode import check_codex_code_mode_bridged_tools, config_override_sets
 from .config import (
     MCP_STARTUP_TIMEOUT_SEC,
     CodexApprovalPolicy,
@@ -891,12 +891,15 @@ async def _read_model_catalog_json(
     """The catalog file named by `model_catalog_json`, or `None`.
 
     Codex uses that file in place of its own catalog. Only an absolute path to
-    a JSON object is read; when it is set but cannot be read, a warning names
-    it and alignment uses the release catalog.
+    a JSON object with a `models` list is read; when it is set but cannot be
+    read, a warning names it and alignment uses the release catalog.
     """
-    value = (config_overrides or {}).get("model_catalog_json")
-    if value is None:
+    overrides = config_overrides or {}
+    keys = [key for key in overrides if config_override_sets(key, "model_catalog_json")]
+    if not keys:
         return None
+    # the last -c pair wins, and a dotted key names no file
+    value = overrides[keys[-1]] if keys[-1].strip() == "model_catalog_json" else ""
     # Codex parses the value as TOML, else as a bare string
     path = value.strip().strip("\"'")
     catalog = None
@@ -905,11 +908,11 @@ async def _read_model_catalog_json(
             catalog = json.loads(await sandbox.read_file(path))
         except (OSError, UnicodeDecodeError, ValueError, OutputLimitExceededError):
             pass
-    if not isinstance(catalog, dict):
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
         logger.warning(
             f"codex_cli could not read model_catalog_json {path!r} in the "
-            "sandbox (it reads only an absolute path to a JSON object), so it "
-            "chooses --model from the Codex release catalog."
+            "sandbox (it reads only an absolute path to a JSON object with a "
+            "models list), so it chooses --model from the Codex release catalog."
         )
         return None
     return catalog
