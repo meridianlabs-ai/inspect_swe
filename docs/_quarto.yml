@@ -16,6 +16,7 @@ inspect-docs:
         - href: codex_cli.qmd
         - href: gemini_cli.qmd
         - href: kimi_code.qmd
+        - href: minimax_code.qmd
         - href: opencode.qmd
         - href: mini_swe_agent.qmd
         - href: antigravity.qmd

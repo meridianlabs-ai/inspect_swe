@@ -20,7 +20,11 @@ class CentaurOptions(BaseModel):
 
 
 async def run_centaur(
-    options: CentaurOptions, instructions: str, bashrc: str, state: AgentState
+    options: CentaurOptions,
+    instructions: str,
+    bashrc: str,
+    state: AgentState,
+    user: str | None = None,
 ) -> None:
     agent = human_cli(
         answer=options.answer,
@@ -28,5 +32,6 @@ async def run_centaur(
         record_session=options.record_session,
         instructions=instructions,
         bashrc=bashrc,
+        user=user,
     )
     await run(agent, state)
