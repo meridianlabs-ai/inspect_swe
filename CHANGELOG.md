@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.72](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.71...0.2.72) (2026-10-14)
+
+
+### Bug Fixes
+
+* codex_cli fails before launch when Codex code mode would deny every bridged tool call ([#184](https://github.com/meridianlabs-ai/inspect_swe/issues/184)) ([6bd7452](https://github.com/meridianlabs-ai/inspect_swe/commit/6bd7452602a8adc8ce224a422d1e075ce6ffad9f))
+
 ## [0.2.71](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.70...0.2.71) (2026-09-17)
 
 
