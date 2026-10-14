@@ -89,16 +89,12 @@ class CodexCli(ACPAgent):
 
         async with sandbox_agent_bridge(
             state,
-            # Serve any name outside model_aliases with this agent's model
-            # rather than the eval's, which may differ.
-            model=str(model),
+            # Serve every name outside model_aliases with this agent's own
+            # Model instance (and its config, base URL and model args) rather
+            # than the eval's model.
+            model_resolver=lambda _name: model,
             model_aliases=resolve_codex_auto_review_model_aliases(
-                self._auto_review,
-                self.model_map,
-                # bind the guardian slug to this agent's Model instance so it
-                # keeps the instance's config, which the model= pin above
-                # (a name) does not carry
-                default=model,
+                self._auto_review, self.model_map
             ),
             filter=self.filter,
             retry_refusals=self.retry_refusals,

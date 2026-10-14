@@ -120,9 +120,10 @@ class ClaudeCode(ACPAgent):
 
         async with sandbox_agent_bridge(
             state,
-            # Serve any name outside model_aliases with this agent's model
-            # rather than the eval's, which may differ.
-            model=str(model),
+            # Serve every name outside model_aliases with this agent's own
+            # Model instance (and its config, base URL and model args) rather
+            # than the eval's model.
+            model_resolver=lambda _name: model,
             model_aliases=self.model_map,
             filter=self.filter,
             retry_refusals=self.retry_refusals,
