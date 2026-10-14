@@ -158,9 +158,9 @@ def _consumer(monkeypatch: Any) -> tuple[CodexConsumer, _TranscriptStub]:
 def _proven_root_request(text: str = "go") -> list[ChatMessage]:
     """A root request that proves it is root: an inbound message to /root.
 
-    A V2 spawn's first-call binding needs its requester's path proven by the
-    spawning request itself; root's earliest requests carry no agent_message,
-    so those spawns bind only from their spawn result (see section 13).
+    A request with no agent_message is also taken as root's; this shape
+    exists so section 13's tests about other requesters are not about that
+    fallback.
     """
     return [
         ChatMessageUser(content=text),
@@ -281,9 +281,7 @@ def test_consumer_names_v2_spans_after_task_name(monkeypatch: Any) -> None:
 def test_consumer_attributes_subagent_call_by_recipient(monkeypatch: Any) -> None:
     consumer, stub = _consumer(monkeypatch)
 
-    # parent spawns two agents (V2: encrypted prompts, so no substring match).
-    # Root's first request carries no agent_message, so it doesn't prove which
-    # agent is spawning; each spawn binds to its path from its spawn result.
+    # parent spawns two agents (V2: encrypted prompts, so no substring match)
     parent = _model_event(
         [ChatMessageUser(content="spawn two agents")],
         tool_calls=[
@@ -294,17 +292,7 @@ def test_consumer_attributes_subagent_call_by_recipient(monkeypatch: Any) -> Non
     consumer.on_complete(parent)
     fb_span, pr_span = (e.id for e in stub.span_begins())
 
-    # before the spawn results arrive, a sub-agent's call can't be placed
-    early = _model_event([_agent_message_user("/root", "/root/write_fizzbuzz")])
-    consumer.on_pending(early)
-    assert early.span_id == consumer.outer_span_id
-
-    # root's next request carries the spawn results; from then on each
-    # sub-agent's calls (inbound agent_message to its path) nest
-    _deliver_v2_spawn_results(
-        consumer,
-        {"call_fb": "/root/write_fizzbuzz", "call_pr": "/root/write_primes"},
-    )
+    # each sub-agent's first call carries its inbound spawn agent_message
     fb_call = _model_event([_agent_message_user("/root", "/root/write_fizzbuzz")])
     consumer.on_pending(fb_call)
     assert fb_call.span_id == fb_span
@@ -333,10 +321,8 @@ def test_consumer_nests_grandchild_span_under_child(monkeypatch: Any) -> None:
     )
     consumer.on_complete(parent)
     fb_span = stub.span_begins()[0].id
-    _deliver_v2_spawn_results(consumer, {"call_fb": "/root/write_fizzbuzz"})
 
-    # child call spawns its own sub-agent; the child's request names it, so
-    # the grandchild's path (/root/write_fizzbuzz/implement_file) is known
+    # child call spawns its own sub-agent
     child_call = _model_event(
         [_agent_message_user("/root", "/root/write_fizzbuzz")],
         tool_calls=[_v2_spawn_call("call_impl", "implement_file")],
@@ -347,9 +333,6 @@ def test_consumer_nests_grandchild_span_under_child(monkeypatch: Any) -> None:
     impl_begin = stub.span_begins()[1]
     assert impl_begin.name == "implement_file"
     assert impl_begin.parent_id == fb_span
-    assert consumer._agents["call_impl"].expected_path == (
-        "/root/write_fizzbuzz/implement_file"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -367,8 +350,7 @@ def test_consumer_closes_span_on_final_answer(monkeypatch: Any) -> None:
     consumer.on_complete(parent)
     pr_span = stub.span_begins()[0].id
 
-    # the spawn result binds /root/write_primes to the span ...
-    _deliver_v2_spawn_results(consumer, {"call_pr": "/root/write_primes"})
+    # child identifies itself (binds /root/write_primes to the span) ...
     child_call = _model_event([_agent_message_user("/root", "/root/write_primes")])
     consumer.on_pending(child_call)
     assert child_call.span_id == pr_span
@@ -1342,6 +1324,106 @@ def test_v2_spawn_from_an_unproven_requester_binds_only_from_its_result(
     assert consumer._agents["call_new"].expected_path is None
 
 
+# Codex's local-compaction summary, as the model sees it: `SUMMARY_PREFIX`
+# (codex-rs/prompts/templates/compact/summary_prefix.md) followed by the
+# summary. Codex itself recognizes a summary message by this exact prefix
+# (`is_summary_message` in codex-rs/core/src/compact.rs).
+_CODEX_SUMMARY_PREFIX = (
+    "Another language model started to solve this problem and produced a "
+    "summary of its thinking process. You also have access to the state of the "
+    "tools that were used by that language model. Use this to build on the work "
+    "that has already been done and avoid duplicating work. Here is the summary "
+    "produced by the other language model, use the information in this summary "
+    "to assist with your own analysis:"
+)
+
+
+def _compaction_summary(summary: str = "The worker finished; continue.") -> str:
+    return f"{_CODEX_SUMMARY_PREFIX}\n{summary}"
+
+
+def test_v2_root_spawn_nests_from_the_childs_first_call(monkeypatch: Any) -> None:
+    """Root's early requests carry no agent_message and are still root's.
+
+    The child's first call therefore nests (and carries its type) before
+    root's next request delivers the spawn result; a child spawned in the
+    same response gets the right parent too.
+    """
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_typed_v2_spawn("call_w", "worker", "explorer")],
+        )
+    )
+    w_span = stub.span_begins()[0].id
+    assert consumer._agents["call_w"].expected_path == "/root/worker"
+
+    first = _model_event(
+        [_agent_message_user("/root", "/root/worker")],
+        tool_calls=[_v2_spawn_call("call_g", "grandchild")],
+    )
+    assert consumer.classify(model, first.input, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/worker", subagent_type="explorer"
+    )
+    consumer.on_pending(first)
+    consumer.on_complete(first)
+    assert first.span_id == w_span
+    assert stub.span_begins()[1].parent_id == w_span
+
+
+def test_v2_root_spawn_after_root_compaction_still_nests(monkeypatch: Any) -> None:
+    """Root compacting drops its agent_messages too; its spawns are still root's."""
+    consumer, stub = _consumer(monkeypatch)
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content=_compaction_summary())],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    w_span = stub.span_begins()[0].id
+    first = _model_event([_agent_message_user("/root", "/root/worker")])
+    consumer.on_pending(first)
+    assert first.span_id == w_span
+
+
+def test_v2_closed_path_is_never_rebound_by_expected_path(monkeypatch: Any) -> None:
+    """A finished agent's path binds no later spawn by expected path alone.
+
+    Codex is not known to reuse a path for a new child, so a request under a
+    closed path is the finished agent resumed. The guard costs a same-named
+    re-spawn only its first-call binding: it still binds from its result.
+    """
+    consumer, stub = _consumer(monkeypatch)
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_1", "worker")],
+        )
+    )
+    consumer.on_pending(_model_event([_agent_message_user("/root", "/root/worker")]))
+    _finish_v2(consumer, "/root/worker")
+    assert not consumer._agents
+
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go again")],
+            tool_calls=[_v2_spawn_call("call_2", "worker")],
+        )
+    )
+    second_span = stub.span_begins()[1].id
+    resumed = _model_event([_agent_message_user("/root", "/root/worker")])
+    consumer.on_pending(resumed)
+    assert resumed.span_id == consumer.outer_span_id
+    assert consumer._agents["call_2"].thread_id is None
+
+    _deliver_v2_spawn_results(consumer, {"call_2": "/root/worker"})
+    later = _model_event([_agent_message_user("/root", "/root/worker")])
+    consumer.on_pending(later)
+    assert later.span_id == second_span
+
+
 # ---------------------------------------------------------------------------
 # 14. a short V1 prompt still guards a resumed child
 # ---------------------------------------------------------------------------
@@ -1396,8 +1478,10 @@ def test_v2_compacted_parent_spawn_binds_only_from_its_result(
     """Codex local compaction drops agent_messages from the parent's history.
 
     A compacted /root/other spawning "worker" carries no recipient, so its
-    request proves no parent. The spawn must not take /root/worker's path;
-    it binds (and gets its type) from its spawn result.
+    request reads as root's and the spawn expects /root/worker, a path it
+    does not own. The finished /root/worker, resumed, must not bind to it
+    (a closed path is never re-bound by expected path), and the nested
+    spawn binds (and gets its type) from its spawn result.
     """
     consumer, _ = _consumer(monkeypatch)
     model = get_model("mockllm/model")
@@ -1411,12 +1495,7 @@ def test_v2_compacted_parent_spawn_binds_only_from_its_result(
     _finish_v2(consumer, "/root/worker")
     assert not consumer._agents
 
-    compacted: list[ChatMessage] = [
-        ChatMessageUser(
-            content="Another language model started to solve this problem and "
-            "produced a summary of its thinking process. Continue."
-        )
-    ]
+    compacted: list[ChatMessage] = [ChatMessageUser(content=_compaction_summary())]
     nested = _typed_v2_spawn("call_nested", "worker", "coder")
     if filtered:
         consumer.on_filter_output(
@@ -1429,7 +1508,7 @@ def test_v2_compacted_parent_spawn_binds_only_from_its_result(
         event = _model_event(compacted, tool_calls=[nested])
         consumer.on_pending(event)
         consumer.on_complete(event)
-    assert consumer._agents["call_nested"].expected_path is None
+    assert consumer._agents["call_nested"].expected_path == "/root/worker"
 
     old: list[ChatMessage] = [
         _agent_message_user("/root", "/root/worker", "MESSAGE", "continue")
@@ -1440,6 +1519,8 @@ def test_v2_compacted_parent_spawn_binds_only_from_its_result(
     assert consumer.classify(model, old, []) == AgentBridgeContext(
         "subagent", subagent_id="/root/worker", subagent_type="explorer"
     )
+    # the resumed agent did not take the nested spawn's binding
+    assert consumer._agents["call_nested"].thread_id is None
     assert consumer.classify(model, nested_request, []) == AgentBridgeContext(
         "subagent", subagent_id="/root/other/worker"
     )

@@ -113,6 +113,12 @@ class CodexConsumer(ModelEventSink):
         # sub-agent id (see `_subagent_context`), never attributes one.
         self._closed_prompts: dict[str, str] = {}
 
+        # thread ids (V2: paths) whose span has closed. A new spawn is never
+        # bound to such a path by expected path alone (see
+        # `_attribute_by_recipient`): the request under it is the finished
+        # agent resumed, not a new child.
+        self._closed_paths: set[str] = set()
+
     @property
     def outer_span_id(self) -> str | None:
         """Span for main-agent attribution, resolved at emission time.
@@ -137,6 +143,7 @@ class CodexConsumer(ModelEventSink):
         self._emitted_events.clear()
         self._closed_types.clear()
         self._closed_prompts.clear()
+        self._closed_paths.clear()
 
     # ------------------------------------------------------------------
     # ModelEventSink callbacks (called from the bridge)
@@ -377,18 +384,24 @@ class CodexConsumer(ModelEventSink):
 
     @staticmethod
     def _requester_path(messages: list[ChatMessage]) -> str | None:
-        """V2 path of the agent that sent a request, when the request proves it.
+        """V2 path of the agent that sent a request, from the request itself.
 
-        Every agent_message in a request is inbound to its sender, so a
-        single recipient names it ("/root" or a sub-agent path). Anything
-        else proves nothing: no agent_message (root's early requests, but
-        also any agent after Codex's local compaction, which drops them), or
-        messages to several agents. A spawn from such a request binds to a
-        path only from its spawn result, so its nesting and type appear from
-        then on. The transcript span is never used: a resumed or untracked
-        agent's request lands on the outer span.
+        Every agent_message in a request is inbound to its sender, so one
+        recipient names it ("/root" or a sub-agent path). A request with no
+        agent_message is taken as root's: a V2 sub-agent receives its task
+        as an agent_message, so only root's early requests lack one. Codex's
+        local compaction also drops them, so a compacted sub-agent's spawn
+        gets a root-level expected path it does not own; that path can only
+        mislead a first-call binding if a finished agent at it is resumed,
+        which `_attribute_by_recipient` guards against (a closed path is
+        never re-bound by expected path). Recipients naming several agents
+        prove nothing, and a spawn that request makes binds to a path only
+        from its spawn result. The transcript span is never used: a resumed
+        or untracked agent's request lands on the outer span.
         """
         recipients = agent_message_recipients(messages)
+        if not recipients:
+            return "/root"
         return next(iter(recipients)) if len(recipients) == 1 else None
 
     def _sync_threads(self, input_messages: list[ChatMessage]) -> None:
@@ -443,6 +456,7 @@ class CodexConsumer(ModelEventSink):
         if agent.agent_type is not None:
             self._closed_types[thread_id] = agent.agent_type
         self._closed_prompts[call_id] = agent.prompt
+        self._closed_paths.add(thread_id)
         transcript()._event(SpanEndEvent(id=agent.span_id))
 
     def _attribute(self, input_messages: list[ChatMessage]) -> str | None:
@@ -491,9 +505,15 @@ class CodexConsumer(ModelEventSink):
         path of open spawns awaiting their first call (Codex joins the
         parent's path and the spawn's relative task_name, e.g. "/root" +
         "write_fizzbuzz") — a unique match binds the thread id so later calls
-        and FINAL_ANSWER closes resolve directly. A spawn whose parent path
-        is unknown binds only from its spawn result. Returns None (fall
-        through) when no unambiguous match exists.
+        and FINAL_ANSWER closes resolve directly. A path whose agent has
+        already closed is never bound this way: a request under it is that
+        finished agent resumed (Codex is not known to reuse a path for a new
+        child; if it did, the re-spawn would still bind from its result),
+        and the only open spawn expecting it would be one whose parent's path
+        was misread as root after local compaction dropped its
+        agent_messages. Such a spawn, like one whose parent path is unknown,
+        binds only from its spawn result. Returns None (fall through) when no
+        unambiguous match exists.
         """
         recipients = agent_message_recipients(input_messages)
         if len(recipients) != 1:
@@ -510,6 +530,8 @@ class CodexConsumer(ModelEventSink):
         # first call from this thread: bind the open spawn Codex gives this
         # exact path (parent path + task_name). A basename alone could be a
         # same-named agent under another parent, or a finished agent resumed.
+        if recipient in self._closed_paths:
+            return None
         candidates = [
             agent
             for agent in self._agents.values()
