@@ -164,10 +164,15 @@ _failed_resolutions: dict[tuple[str, str, SandboxPlatform], tuple[int, Exception
 
 # SHA-256 of installed host artifacts that have no verified digest (the output
 # of post_download, pinned-version cache reads, the offline fallback), keyed by
-# (binary, version, platform, package) and computed once per process: the
-# first install hashes and later ones reuse it. read and written only under the
-# per-binary install lock, which already serializes them. No expiry.
-_artifact_checksums: dict[tuple[str, str, SandboxPlatform, bool], str] = {}
+# the cache file the bytes came from and computed once per process: the first
+# install hashes and later ones reuse it. filled under the per-binary install
+# lock, which already serializes the hashing. every write or unlink of a cache
+# file below drops its entry, so a replaced file is hashed again.
+_artifact_checksums: dict[Path, str] = {}
+
+
+def _forget_artifact_checksum(cache_path: Path) -> None:
+    _artifact_checksums.pop(cache_path, None)
 
 
 async def resolve_agent_binary_version(
@@ -390,11 +395,15 @@ async def ensure_agent_binary_installed(
         # downloaded. bytes verified against the resolved digest reuse it;
         # the rest are hashed once per artifact, not once per sample.
         if checksum is None:
-            key = (source.binary, resolved_version, platform, package)
-            checksum = _artifact_checksums.get(key)
+            cache_path = (
+                source.cached_package_path(resolved_version, platform)
+                if package and source.cached_package_path is not None
+                else source.cached_binary_path(resolved_version, platform)
+            )
+            checksum = _artifact_checksums.get(cache_path)
             if checksum is None:
                 checksum = await anyio.to_thread.run_sync(sha256_checksum, binary_bytes)
-                _artifact_checksums[key] = checksum
+                _artifact_checksums[cache_path] = checksum
         record_agent_binary_install(
             source,
             requested=requested,
@@ -461,6 +470,7 @@ async def download_agent_binary_async(
             stale = source.cached_binary_path(version, platform)
             if stale.exists():
                 stale.unlink()
+                _forget_artifact_checksum(stale)
 
         # trace
         logger(f"Downloaded {source.agent} binary: {version} ({platform})")
@@ -498,6 +508,7 @@ def read_cached_file(cache_path: Path, expected_checksum: str | None) -> bytes |
         return binary_data
     else:
         cache_path.unlink()
+        _forget_artifact_checksum(cache_path)
         return None
 
 
@@ -508,6 +519,7 @@ def write_cached_file(
 ) -> None:
     with open(cache_path, "wb") as f:
         f.write(binary_data)
+    _forget_artifact_checksum(cache_path)
 
     _cleanup_binary_cache(source, keep_count=3)
 
@@ -523,3 +535,4 @@ def _cleanup_binary_cache(source: AgentBinarySource, keep_count: int = 5) -> Non
     files_to_remove = cache_files[:-keep_count]
     for file_path in files_to_remove:
         file_path.unlink()
+        _forget_artifact_checksum(file_path)

@@ -637,3 +637,30 @@ def test_codex_cli_probes_its_version_once(tmp_path: Path, version: str) -> None
 
 class _StopAfterVersionGate(Exception):
     """Ends a codex_cli run once its version gate has been reached."""
+
+
+def test_replaced_cache_file_is_hashed_again(tmp_path: Path) -> None:
+    # a pinned install memoizes the hash of a corrupt cached package. a later
+    # "stable" install resolving to the same version fails verification on it,
+    # unlinks it and downloads a clean archive; the next pinned install must
+    # record the clean bytes' hash, not the memoized corrupt one
+    corrupt = b"corrupt-package-archive"
+    clean = b"clean-package-archive"
+    resolved = AgentBinaryVersion(
+        "9.5.1",
+        hashlib.sha256(clean).hexdigest(),
+        "https://example.com/codex-package.tar.gz",
+        True,
+    )
+    source = _source(tmp_path, "codex-prov-replaced", resolved, package_capable=True)
+    assert source.cached_package_path is not None
+    source.cached_package_path("9.5.1", "linux-arm64").write_bytes(corrupt)
+
+    _, before = _install(source, "9.5.1", _FakeSandbox())
+    with patch.object(agentbinary, "download_file", AsyncMock(return_value=clean)):
+        _, downloaded = _install(source, "stable", _FakeSandbox())
+    _, after = _install(source, "9.5.1", _FakeSandbox())
+
+    assert [e.checksum for e in before] == [hashlib.sha256(corrupt).hexdigest()]
+    assert [e.origin for e in downloaded] == ["download"]
+    assert [e.checksum for e in after] == [hashlib.sha256(clean).hexdigest()]
