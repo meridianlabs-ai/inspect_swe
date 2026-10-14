@@ -142,9 +142,8 @@ def resolve_codex_auto_review_model_aliases(
     Call within a running task (role resolution reads task context). A `str`
     naming a defined Inspect model role binds via `get_model(role=...)`;
     other values pass through for the bridge to resolve. `default` is bound
-    when auto_review is enabled but no model is configured — pass it for
-    bridges without a fallback model (e.g. the ACP bridge), where the
-    guardian slug would otherwise fail to resolve.
+    when auto_review is enabled but no model is configured — pass it to send
+    guardian requests to that model rather than the bridge's fallback.
     """
     if auto_review is None:
         return model_aliases

@@ -165,8 +165,7 @@ def test_auto_review_model_aliases_none_passthrough() -> None:
 
 
 def test_auto_review_model_aliases_default_binds_guardian() -> None:
-    # bridges without a fallback model (e.g. ACP) pass a default so the
-    # guardian slug always resolves
+    # a default binds the guardian slug when auto_review names no model
     aliases = resolve_codex_auto_review_model_aliases(
         CodexAutoReview(), {"alias": "x"}, default="openai/gpt-4o"
     )
