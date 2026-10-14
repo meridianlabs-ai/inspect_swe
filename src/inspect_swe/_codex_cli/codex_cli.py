@@ -151,7 +151,8 @@ def codex_cli(
             set. Defaults to `None`, which derives the slug from the real model so
             Codex's prompt/tooling aligns with what's actually running. The
             slug comes from the `model_catalog_json` file in `config_overrides`
-            when set (an absolute path in the sandbox, without TOML escapes),
+            when set (an absolute path in the sandbox, bare or in one pair of
+            quotes without escapes),
             else from the installed
             release's catalog. Pass an explicit slug to override.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
@@ -892,9 +893,9 @@ async def _read_model_catalog_json(
     """The catalog file named by `model_catalog_json`, or `None`.
 
     Codex uses that file in place of its own catalog. Only an absolute path to
-    a JSON object with a `models` list is read, and TOML escapes in a quoted
-    path are not decoded; when it is set but cannot be read, a warning names
-    it and alignment uses the release catalog.
+    a JSON object with a `models` list is read, given bare or in one pair of
+    quotes without escapes; when it is set but cannot be read, a warning
+    names it and alignment uses the release catalog.
     """
     overrides = config_overrides or {}
     keys = [key for key in overrides if config_override_sets(key, "model_catalog_json")]
@@ -902,18 +903,24 @@ async def _read_model_catalog_json(
         return None
     # the last -c pair wins, and a dotted key names no file
     value = overrides[keys[-1]] if keys[-1].strip() == "model_catalog_json" else ""
-    # Codex parses the value as TOML: a quoted string keeps its inner text as
-    # is, and a value that is not TOML has every quote trimmed from its ends
-    value = value.strip()
-    inner = value[1:-1]
-    quoted = (
-        len(value) >= 2 and value[0] == value[-1] in "\"'" and value[0] not in inner
+    # Codex parses the value as TOML, else trims every quote from its ends. A
+    # value that does not start with a quote is not a TOML string, and of the
+    # TOML strings only one plain pair of quotes is read: escapes, multi-line
+    # strings and anything after the closing quote are not decoded
+    path = value.strip()
+    quote, inner = path[:1], path[1:-1]
+    plain = (
+        len(path) >= 2
+        and path[-1] == quote
+        and quote not in inner
+        and not (quote == '"' and "\\" in inner)
     )
-    path = inner if quoted else value.strip("\"'")
-    # a backslash in a TOML basic string starts an escape, which is not decoded
-    escaped = value.startswith('"') and "\\" in value
+    if quote not in ("'", '"'):
+        path = path.strip("\"'")
+    elif plain:
+        path = inner
     catalog = None
-    if PurePosixPath(path).is_absolute() and not escaped:
+    if PurePosixPath(path).is_absolute() and (quote not in ("'", '"') or plain):
         try:
             catalog = json.loads(await sandbox.read_file(path))
         except (OSError, UnicodeDecodeError, ValueError, OutputLimitExceededError):
@@ -921,9 +928,9 @@ async def _read_model_catalog_json(
     if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
         logger.warning(
             f"codex_cli could not read model_catalog_json {path!r} in the "
-            "sandbox (it reads only an absolute path, without TOML escapes, to "
-            "a JSON object with a models list), so it chooses --model from the "
-            "Codex release catalog."
+            "sandbox (it reads only an absolute path, bare or in one pair of "
+            "quotes without escapes, to a JSON object with a models list), so it "
+            "chooses --model from the Codex release catalog."
         )
         return None
     return catalog

@@ -216,7 +216,6 @@ def test_alignment_uses_a_custom_catalog(
         ("'/tmp/catalog.json\"'", '/tmp/catalog.json"'),
         # a value that is not TOML has every quote trimmed from its ends
         ("/tmp/catalog.json'", "/tmp/catalog.json"),
-        ("'/tmp/catalog.json'\"", "/tmp/catalog.json"),
     ],
 )
 def test_alignment_reads_the_file_codex_reads(
@@ -273,16 +272,32 @@ def test_alignment_falls_back_to_the_release_catalog_when_unreadable(
     assert path.strip('"') in caplog.text
 
 
-@pytest.mark.parametrize("path", [json.dumps("/tmp/模型.json"), r'"/tmp/\"c\".json"'])
-def test_alignment_does_not_decode_toml_escapes(
+@pytest.mark.parametrize(
+    "path",
+    [
+        # TOML escapes
+        json.dumps("/tmp/模型.json"),
+        r'"/tmp/\"c\".json"',
+        # multi-line strings, which can end in a quote or start with a newline
+        "'''/tmp/catalog.json''''",
+        '"""/tmp/catalog.json""""',
+        "'''\n/tmp/catalog.json'''",
+        '"""\n/tmp/catalog.json"""',
+        # text after the closing quote
+        "'/tmp/catalog.json'\"",
+        '"/tmp/catalog.json" # catalog',
+    ],
+)
+def test_alignment_reads_only_plain_quoted_values(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, path: str
 ) -> None:
-    """A quoted path with an escape is not read, even if the raw name exists."""
-    raw = path.strip('"')
-    sandbox = _Sandbox({raw: CUSTOM_CATALOG, json.loads(path): CUSTOM_CATALOG})
+    """Other quoted values are not read, even if a file they could name exists."""
+    names = ["/tmp/catalog.json", "/tmp/catalog.json'", '/tmp/catalog.json"']
+    names += ["/tmp/模型.json", '/tmp/"c".json', path.strip("\"'")]
+    sandbox = _Sandbox({name: CUSTOM_CATALOG for name in names})
     overrides = {"model_catalog_json": path}
     assert _align(monkeypatch, "gpt-5.9", overrides, sandbox) == "gpt-5.5"
-    assert "without TOML escapes" in caplog.text
+    assert "one pair of quotes without escapes" in caplog.text
     assert sandbox.reads == 0
 
 
