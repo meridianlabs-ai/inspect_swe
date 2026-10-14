@@ -1,3 +1,4 @@
+import json
 import mimetypes
 import shlex
 from logging import getLogger
@@ -30,7 +31,12 @@ from inspect_ai.tool import (
     install_skills,
     read_skills,
 )
-from inspect_ai.util import SandboxEnvironment, checkpointer, store
+from inspect_ai.util import (
+    OutputLimitExceededError,
+    SandboxEnvironment,
+    checkpointer,
+    store,
+)
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 from typing_extensions import Unpack
@@ -55,7 +61,7 @@ from .agentbinary import (
     codex_cli_binary_source,
     codex_version_models_catalog,
 )
-from .code_mode import check_codex_code_mode_bridged_tools
+from .code_mode import check_codex_code_mode_bridged_tools, config_override_sets
 from .config import (
     MCP_STARTUP_TIMEOUT_SEC,
     CodexApprovalPolicy,
@@ -143,8 +149,12 @@ def codex_cli(
         system_prompt: Additional system prompt to append to default system prompt.
         model_config: Codex model slug used to select the system prompt and tool
             set. Defaults to `None`, which derives the slug from the real model so
-            Codex's prompt/tooling aligns with what's actually running. Pass an
-            explicit slug to override.
+            Codex's prompt/tooling aligns with what's actually running. The
+            slug comes from the `model_catalog_json` file in `config_overrides`
+            when set (an absolute path in the sandbox, bare or in one pair of
+            quotes without escapes),
+            else from the installed
+            release's catalog. Pass an explicit slug to override.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
@@ -491,7 +501,12 @@ def codex_cli(
             # align Codex's `--model` slug to the real bridged model, and fail
             # before launch if code mode would deny every bridged tool call
             codex_model = await _resolve_codex_model_checked(
-                model, model_config, codex_version, config_overrides, bridged_tools
+                sbox,
+                model,
+                model_config,
+                codex_version,
+                config_overrides,
+                bridged_tools,
             )
 
             # determine CODEX_HOME (default to agent working dir)
@@ -842,6 +857,7 @@ async def _stage_prompt_images(
 
 
 async def _resolve_codex_model_checked(
+    sandbox: SandboxEnvironment,
     model: str | None,
     model_config: str | None,
     codex_version: str | None,
@@ -851,20 +867,81 @@ async def _resolve_codex_model_checked(
     """Resolve the `--model` slug, then run the code-mode check on bridged tools.
 
     The release catalog is fetched once and shared by both, so an offline run
-    pays for one failed fetch, not two.
+    pays for one failed fetch, not two. Alignment chooses from the caller's
+    `model_catalog_json` instead when it is set and readable.
     """
     version_catalog = await codex_version_models_catalog(codex_version)
-    codex_model = await resolve_codex_model(model, model_config, version_catalog)
+    custom_catalog = (
+        await _read_model_catalog_json(sandbox, config_overrides)
+        if model_config is None
+        else None
+    )
+    codex_model = await resolve_codex_model(
+        model,
+        model_config,
+        custom_catalog if custom_catalog is not None else version_catalog,
+    )
     check_codex_code_mode_bridged_tools(
         codex_model, version_catalog, config_overrides, bridged_tools
     )
     return codex_model
 
 
+async def _read_model_catalog_json(
+    sandbox: SandboxEnvironment, config_overrides: dict[str, str] | None
+) -> dict[str, Any] | None:
+    """The catalog file named by `model_catalog_json`, or `None`.
+
+    Codex uses that file in place of its own catalog. Only an absolute path to
+    a JSON object with a `models` list is read, given bare or in one pair of
+    quotes without escapes; when it is set but cannot be read, a warning
+    names it and alignment uses the release catalog.
+    """
+    overrides = config_overrides or {}
+    keys = [key for key in overrides if config_override_sets(key, "model_catalog_json")]
+    if not keys:
+        return None
+    # the last -c pair wins, and a dotted key names no file
+    value = overrides[keys[-1]] if keys[-1].strip() == "model_catalog_json" else ""
+    # Codex parses the value as TOML, else trims every quote from its ends. A
+    # value that does not start with a quote is not a TOML string, and of the
+    # TOML strings only one plain pair of quotes is read: escapes, multi-line
+    # strings, control characters TOML rejects and anything after the closing
+    # quote are not decoded
+    path = value.strip()
+    quote, inner = path[:1], path[1:-1]
+    plain = (
+        len(path) >= 2
+        and path[-1] == quote
+        and quote not in inner
+        and not (quote == '"' and "\\" in inner)
+        and all(c == "\t" or ("\x1f" < c != "\x7f") for c in inner)
+    )
+    if quote not in ("'", '"'):
+        path = path.strip("\"'")
+    elif plain:
+        path = inner
+    catalog = None
+    if PurePosixPath(path).is_absolute() and (quote not in ("'", '"') or plain):
+        try:
+            catalog = json.loads(await sandbox.read_file(path))
+        except (OSError, UnicodeDecodeError, ValueError, OutputLimitExceededError):
+            pass
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
+        logger.warning(
+            f"codex_cli could not read model_catalog_json {path!r} in the "
+            "sandbox (it reads only an absolute path, bare or in one pair of "
+            "quotes without escapes, to a JSON object with a models list), so it "
+            "chooses --model from the Codex release catalog."
+        )
+        return None
+    return catalog
+
+
 async def resolve_codex_model(
     model: str | None,
     model_config: str | None,
-    version_catalog: dict[str, Any] | None,
+    catalog: dict[str, Any] | None,
 ) -> str:
     """Resolve the Codex `--model` slug aligned to the real bridged model.
 
@@ -875,9 +952,9 @@ async def resolve_codex_model(
     `service_model_name()` rather than the registry name — so a custom `otter`
     provider reporting `gpt-5.5` aligns to that catalog entry. "latest"/codename
     models (per the provider's `is_latest()`) align to the latest catalog profile
-    rather than Codex's generic fallback. `version_catalog` is the installed
-    release's `models.json` (`None` when unknown, which aligns against the
-    bundled snapshot).
+    rather than Codex's generic fallback. `catalog` is the caller's
+    `model_catalog_json` or the installed release's `models.json` (`None` when
+    unknown, which aligns against the bundled snapshot).
     """
     resolved_model = get_model(model)
     real_model = ModelName(resolved_model)
@@ -890,7 +967,7 @@ async def resolve_codex_model(
     resolution = resolve_codex_model_slug(
         model_name,
         api=real_api,
-        catalog=codex_alignment_catalog(version_catalog),
+        catalog=codex_alignment_catalog(catalog),
         override=model_config,
         is_latest=is_latest_openai_model(api),
     )
