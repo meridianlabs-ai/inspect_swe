@@ -1,5 +1,6 @@
 """Unit tests for the Codex code-mode check on bridged tools (no Docker)."""
 
+import json
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -246,6 +247,19 @@ def test_alignment_falls_back_to_the_release_catalog_when_unreadable(
     assert _align(monkeypatch, "gpt-5.9", overrides, _Sandbox(files)) == "gpt-5.5"
     assert "could not read model_catalog_json" in caplog.text
     assert path.strip('"') in caplog.text
+
+
+@pytest.mark.parametrize("path", [json.dumps("/tmp/模型.json"), r'"/tmp/\"c\".json"'])
+def test_alignment_does_not_decode_toml_escapes(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, path: str
+) -> None:
+    """A quoted path with an escape is not read, even if the raw name exists."""
+    raw = path.strip('"')
+    sandbox = _Sandbox({raw: CUSTOM_CATALOG, json.loads(path): CUSTOM_CATALOG})
+    overrides = {"model_catalog_json": path}
+    assert _align(monkeypatch, "gpt-5.9", overrides, sandbox) == "gpt-5.5"
+    assert "without TOML escapes" in caplog.text
+    assert sandbox.reads == 0
 
 
 def test_alignment_falls_back_for_a_dotted_key(
