@@ -214,7 +214,8 @@ def resolve_codex_model_slug(
       (gpt-5.4+), in which case it returns ``_GENERIC_FALLBACK_SLUG`` to force
       Codex's generic prompt (no ``apply_patch``, no ``tool_search``) and avoid a
       ``tool_search`` 400. (Catalog ``supports_search_tool`` reflects Codex's own
-      backend, not the public Responses API the bridge uses.)
+      backend, not the public Responses API the bridge uses.) It raises
+      ``ValueError`` when a catalog entry matches that slug.
     - An OpenAI model *not* in the catalog returns the latest catalog slug —
       getting the full coding prompt + ``apply_patch`` + ``tool_search`` — when it
       supports ``tool_search`` (gpt-5.4+, see ``_supports_tool_search``) or is a
@@ -270,6 +271,16 @@ def resolve_codex_model_slug(
         if matched.get("supports_search_tool") and not tool_search_ok:
             # catalog would bind tool_search, but this real model predates the
             # public-API boundary → force generic fallback to avoid a 400.
+            captor = _matched_entry(_GENERIC_FALLBACK_SLUG, models)
+            if captor is not None:
+                # a custom catalog can name an entry that the sentinel matches
+                raise ValueError(
+                    f"codex_cli runs '{model_name}' with Codex's generic prompt "
+                    "(it predates tool_search) through the slug "
+                    f"'{_GENERIC_FALLBACK_SLUG}', but the Codex catalog entry "
+                    f"'{captor['slug']}' matches that slug. Rename the entry or "
+                    "set model_config."
+                )
             return CodexModelResolution(
                 slug=_GENERIC_FALLBACK_SLUG,
                 reason=(

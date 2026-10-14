@@ -216,6 +216,8 @@ def test_alignment_uses_a_custom_catalog(
         ("'/tmp/catalog.json\"'", '/tmp/catalog.json"'),
         # a value that is not TOML has every quote trimmed from its ends
         ("/tmp/catalog.json'", "/tmp/catalog.json"),
+        # TOML allows a tab in a string
+        ('"/tmp/catalog\tjson\'"', "/tmp/catalog\tjson'"),
     ],
 )
 def test_alignment_reads_the_file_codex_reads(
@@ -223,6 +225,7 @@ def test_alignment_reads_the_file_codex_reads(
 ) -> None:
     decoy = '{"models": [{"slug": "gpt-5.7", "priority": 0}]}'
     candidates = ["/tmp/catalog.json", "/tmp/catalog.json'", '/tmp/catalog.json"']
+    candidates += [file, file.strip("\"'")]
     sandbox = _Sandbox(
         {name: CUSTOM_CATALOG if name == file else decoy for name in candidates}
     )
@@ -286,6 +289,12 @@ def test_alignment_falls_back_to_the_release_catalog_when_unreadable(
         # text after the closing quote
         "'/tmp/catalog.json'\"",
         '"/tmp/catalog.json" # catalog',
+        # control characters TOML rejects, so Codex trims the quotes instead
+        '"/tmp/a\nb\'"',
+        "'/tmp/a\nb\"'",
+        '"/tmp/a\rb\'"',
+        "'/tmp/a\x01b\"'",
+        '"/tmp/a\x7fb\'"',
     ],
 )
 def test_alignment_reads_only_plain_quoted_values(
@@ -293,7 +302,7 @@ def test_alignment_reads_only_plain_quoted_values(
 ) -> None:
     """Other quoted values are not read, even if a file they could name exists."""
     names = ["/tmp/catalog.json", "/tmp/catalog.json'", '/tmp/catalog.json"']
-    names += ["/tmp/模型.json", '/tmp/"c".json', path.strip("\"'")]
+    names += ["/tmp/模型.json", '/tmp/"c".json', path.strip("\"'"), path[1:-1]]
     sandbox = _Sandbox({name: CUSTOM_CATALOG for name in names})
     overrides = {"model_catalog_json": path}
     assert _align(monkeypatch, "gpt-5.9", overrides, sandbox) == "gpt-5.5"

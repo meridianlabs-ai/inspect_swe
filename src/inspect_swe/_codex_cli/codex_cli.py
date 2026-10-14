@@ -906,7 +906,8 @@ async def _read_model_catalog_json(
     # Codex parses the value as TOML, else trims every quote from its ends. A
     # value that does not start with a quote is not a TOML string, and of the
     # TOML strings only one plain pair of quotes is read: escapes, multi-line
-    # strings and anything after the closing quote are not decoded
+    # strings, control characters TOML rejects and anything after the closing
+    # quote are not decoded
     path = value.strip()
     quote, inner = path[:1], path[1:-1]
     plain = (
@@ -914,6 +915,7 @@ async def _read_model_catalog_json(
         and path[-1] == quote
         and quote not in inner
         and not (quote == '"' and "\\" in inner)
+        and all(c == "\t" or ("\x1f" < c != "\x7f") for c in inner)
     )
     if quote not in ("'", '"'):
         path = path.strip("\"'")

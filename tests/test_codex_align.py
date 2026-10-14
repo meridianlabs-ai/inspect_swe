@@ -27,6 +27,7 @@ import anyio
 import pytest
 from inspect_ai import Task, eval
 from inspect_ai.dataset import Sample
+from inspect_ai.log import EvalLog
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageSystem,
@@ -78,6 +79,14 @@ class _CaptureFirstRequest:
 def _run_codex(
     model: str, custom_catalog: dict[str, Any] | None = None
 ) -> _CaptureFirstRequest:
+    log, capture = _run_codex_log(model, custom_catalog)
+    assert capture.tool_names is not None, "Codex made no bridged request"
+    return capture
+
+
+def _run_codex_log(
+    model: str, custom_catalog: dict[str, Any] | None = None
+) -> tuple[EvalLog, _CaptureFirstRequest]:
     capture = _CaptureFirstRequest(respond=custom_catalog is not None)
     files = config_overrides = None
     version = "auto"
@@ -95,9 +104,8 @@ def _run_codex(
         ),
         sandbox=("docker", _DOCKERFILE),
     )
-    eval(task, model=model, limit=1)
-    assert capture.tool_names is not None, "Codex made no bridged request"
-    return capture
+    log = eval(task, model=model, limit=1)[0]
+    return log, capture
 
 
 def _offers_apply_patch(tool_names: list[str]) -> bool:
@@ -152,10 +160,10 @@ _CATALOG_FILE = "/tmp/codex-models.json"
 _CUSTOM_MARKER = "CUSTOM-CATALOG-GPT-9.9"
 
 
-def _custom_catalog() -> dict[str, Any]:
-    """A catalog whose only entry is `gpt-9.9`, with marked instructions.
+def _custom_catalog(*slugs: str) -> dict[str, Any]:
+    """A catalog of `gpt-9.9` and `slugs`, each entry with marked instructions.
 
-    The entry is a copy of the release's latest one. The release catalog has
+    Each entry is a copy of the release's latest one. The release catalog has
     no `gpt-9.9`, and Codex's generic fallback has no marker.
     """
     release = anyio.run(codex_version_models_catalog, _CODEX_VERSION)
@@ -170,7 +178,10 @@ def _custom_catalog() -> dict[str, Any]:
     messages["instructions_template"] = (
         f"{_CUSTOM_MARKER}\n{messages['instructions_template']}"
     )
-    return {**release, "models": [entry]}
+    models = [entry]
+    for slug in slugs:
+        models.append({**copy.deepcopy(entry), "slug": slug, "priority": 99})
+    return {**release, "models": models}
 
 
 @pytest.mark.slow
@@ -195,3 +206,33 @@ def test_codex_align_custom_catalog(
     assert _offers_apply_patch(capture.tool_names or []), (
         f"expected the custom entry's apply_patch, got: {capture.tool_names}"
     )
+
+
+@pytest.mark.slow
+@skip_if_no_docker
+def test_codex_align_custom_catalog_sub_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # gpt-5.2 predates tool_search, so its custom entry (which binds it) is
+    # replaced by Codex's generic prompt
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    capture = _run_codex("openai/gpt-5.2", _custom_catalog("gpt-5.2"))
+    assert capture.system_prompt and _CUSTOM_MARKER not in capture.system_prompt
+    assert not _offers_tool_search(capture.tool_names or []), capture.tool_names
+    assert not _offers_apply_patch(capture.tool_names or []), capture.tool_names
+
+
+@pytest.mark.slow
+@skip_if_no_docker
+def test_codex_align_custom_catalog_refuses_a_generic_captor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # an `inspect` entry would match the generic fallback slug and bind its tools
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    log, capture = _run_codex_log(
+        "openai/gpt-5.2", _custom_catalog("gpt-5.2", "inspect")
+    )
+    assert log.status == "error"
+    assert log.error is not None
+    assert "entry 'inspect' matches that slug" in log.error.message
+    assert capture.tool_names is None
