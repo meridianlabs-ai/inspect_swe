@@ -208,6 +208,30 @@ def test_alignment_uses_a_custom_catalog(
     assert sandbox.reads == 1
 
 
+@pytest.mark.parametrize(
+    "path,file",
+    [
+        # a TOML string keeps a quote character inside it
+        ('"/tmp/catalog.json\'"', "/tmp/catalog.json'"),
+        ("'/tmp/catalog.json\"'", '/tmp/catalog.json"'),
+        # a value that is not TOML has every quote trimmed from its ends
+        ("/tmp/catalog.json'", "/tmp/catalog.json"),
+        ("'/tmp/catalog.json'\"", "/tmp/catalog.json"),
+    ],
+)
+def test_alignment_reads_the_file_codex_reads(
+    monkeypatch: pytest.MonkeyPatch, path: str, file: str
+) -> None:
+    decoy = '{"models": [{"slug": "gpt-5.7", "priority": 0}]}'
+    candidates = ["/tmp/catalog.json", "/tmp/catalog.json'", '/tmp/catalog.json"']
+    sandbox = _Sandbox(
+        {name: CUSTOM_CATALOG if name == file else decoy for name in candidates}
+    )
+    overrides = {"model_catalog_json": path}
+    assert _align(monkeypatch, "gpt-5.5", overrides, sandbox) == "gpt-5.9"
+    assert sandbox.reads == 1
+
+
 @pytest.mark.parametrize("model,slug", [("gpt-5.9", "gpt-5.5"), ("gpt-5.5", "gpt-5.5")])
 def test_alignment_uses_the_release_catalog_without_a_custom_one(
     monkeypatch: pytest.MonkeyPatch, model: str, slug: str

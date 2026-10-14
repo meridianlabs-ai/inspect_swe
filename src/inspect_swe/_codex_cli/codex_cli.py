@@ -151,7 +151,8 @@ def codex_cli(
             set. Defaults to `None`, which derives the slug from the real model so
             Codex's prompt/tooling aligns with what's actually running. The
             slug comes from the `model_catalog_json` file in `config_overrides`
-            when set (an absolute path in the sandbox), else from the installed
+            when set (an absolute path in the sandbox, without TOML escapes),
+            else from the installed
             release's catalog. Pass an explicit slug to override.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
@@ -901,11 +902,16 @@ async def _read_model_catalog_json(
         return None
     # the last -c pair wins, and a dotted key names no file
     value = overrides[keys[-1]] if keys[-1].strip() == "model_catalog_json" else ""
-    # Codex parses the value as TOML, else as a bare string
+    # Codex parses the value as TOML: a quoted string keeps its inner text as
+    # is, and a value that is not TOML has every quote trimmed from its ends
     value = value.strip()
-    path = value.strip("\"'")
+    inner = value[1:-1]
+    quoted = (
+        len(value) >= 2 and value[0] == value[-1] in "\"'" and value[0] not in inner
+    )
+    path = inner if quoted else value.strip("\"'")
     # a backslash in a TOML basic string starts an escape, which is not decoded
-    escaped = value.startswith('"') and "\\" in path
+    escaped = value.startswith('"') and "\\" in value
     catalog = None
     if PurePosixPath(path).is_absolute() and not escaped:
         try:
