@@ -6,9 +6,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
 
-from inspect_ai.agent import AgentState, SandboxAgentBridge, agent, sandbox_agent_bridge
-from inspect_ai.model import get_model
-from inspect_ai.tool import Skill, install_skills, read_skills
+from inspect_ai.agent import (
+    AgentBridgeContext,
+    AgentState,
+    SandboxAgentBridge,
+    agent,
+    sandbox_agent_bridge,
+)
+from inspect_ai.model import ChatMessage, GenerateFilter, Model, get_model
+from inspect_ai.tool import Skill, ToolInfo, install_skills, read_skills
 from inspect_ai.util import (
     ExecRemoteProcess,
     ExecRemoteStreamingOptions,
@@ -18,7 +24,9 @@ from inspect_ai.util import (
 from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import Unpack
 
+from inspect_swe._codex_cli._events.detection import agent_message_recipients
 from inspect_swe._codex_cli.config import (
+    GUARDIAN_MODEL_SLUG,
     CodexAutoReview,
     CodexDeprecatedArgs,
     CodexWebSearch,
@@ -27,6 +35,11 @@ from inspect_swe._codex_cli.config import (
     resolve_codex_auto_review_model_aliases,
     resolve_codex_deprecated_args,
     resolve_codex_web_search,
+)
+from inspect_swe._util.agentcontext import (
+    ModelFilter,
+    classify_filter,
+    slug_map_classifier,
 )
 from inspect_swe._util.path import join_path
 from inspect_swe._util.sandbox import sandbox_exec
@@ -37,6 +50,41 @@ from inspect_swe.acp.agent import ACPAgentParams
 from .agentbinary import ensure_codex_acp_setup
 
 logger = logging.getLogger(__name__)
+
+
+def build_codex_acp_filter(
+    filter: GenerateFilter | None, default_model: str
+) -> ModelFilter:
+    """Codex CLI (ACP) bridge filter: agent-context classification by requested slug.
+
+    ``codex-acp`` has no JSONL/event stream for a `CodexConsumer` to parse,
+    so there's no spawn_agent thread tracking or compaction-marker detection
+    available here -- just the two stateless checks from
+    `CodexConsumer.classify` (see `_codex_cli/_events/consumer.py`): the
+    guardian slug, and under Multi-Agent V2 an inbound `agent_message`
+    addressed to a path other than "/root", which only a sub-agent's
+    request carries. Under V1 there is NO sub-agent detection: Codex's
+    `spawn_agent` takes no per-agent model, so a spawned sub-agent requests
+    the same ``default_model`` as the root thread and classifies "root". A
+    filter gated on `is_root_agent()` therefore also steers V1 codex-acp
+    sub-agents; the native `codex_cli` tracks spawned threads from model
+    outputs the bridge hands its event sink.
+    """
+    by_slug = slug_map_classifier({default_model}, {GUARDIAN_MODEL_SLUG: "utility"})
+
+    def classify(
+        model: Model, messages: list[ChatMessage], tools: list[ToolInfo]
+    ) -> AgentBridgeContext:
+        context = by_slug(model, messages, tools)
+        paths = agent_message_recipients(messages) - {"/root"}
+        if context.kind != "utility" and paths:
+            # the agent's path is its id, as for the native codex_cli
+            return AgentBridgeContext(
+                "subagent", subagent_id=paths.pop() if len(paths) == 1 else None
+            )
+        return context
+
+    return classify_filter(filter, classify)
 
 
 class CodexACPAgentParams(ACPAgentParams, CodexDeprecatedArgs, total=False):
@@ -97,7 +145,7 @@ class CodexCli(ACPAgent):
                 # requests to this agent's model
                 default=get_model(self.model),
             ),
-            filter=self.filter,
+            filter=build_codex_acp_filter(self.filter, default_model),
             retry_refusals=self.retry_refusals,
             bridged_tools=self.bridged_tools or None,
             web_search=self._web_search != "disabled",

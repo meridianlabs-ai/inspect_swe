@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import os
 import shutil
 import subprocess
@@ -13,6 +14,23 @@ from inspect_ai import eval
 from inspect_ai.log import EvalLog, EvalSample
 from inspect_ai.model import ChatMessageAssistant
 from inspect_swe._util import appdirs
+
+
+# ---------------------------------------------------------------------------
+# Automatically mark every async test function with @pytest.mark.anyio so
+# pytest can run it (anyio is registered but requires the marker in strict
+# mode). A hookwrapper is required because its setup phase executes *before*
+# the anyio plugin's tryfirst pytest_pycollect_makeitem hook, which is where
+# anyio looks for the marker. A conftest-level ``pytestmark`` would be too
+# late (applied after collection). Mirrors inspect_ai's tests/conftest.py.
+# ---------------------------------------------------------------------------
+@pytest.hookimpl(hookwrapper=True)
+def pytest_pycollect_makeitem(
+    collector: pytest.Module | pytest.Class, name: str, obj: object
+) -> Any:
+    if inspect.iscoroutinefunction(obj) or inspect.isasyncgenfunction(obj):
+        pytest.mark.anyio(obj)
+    yield
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -375,6 +393,22 @@ def mock_pip_download_failure() -> Any:
                 stderr="ERROR: Could not find a version that satisfies the requirement (network error)",
             )
             yield mock_run
+
+
+@pytest.fixture(autouse=True)
+def fresh_concurrency_registry() -> Iterator[None]:
+    """Reset inspect_ai's process-global concurrency registry before each test.
+
+    Registry entries (e.g. a model's connection limiter) wrap anyio
+    primitives bound to the backend they were created under, so a test that
+    generates under asyncio would leave a limiter that the same test's trio
+    variant then reuses and crashes on ("no running event loop"). Mirrors
+    inspect_ai's own test setup.
+    """
+    from inspect_ai.util._concurrency import init_concurrency
+
+    init_concurrency()
+    yield
 
 
 @pytest.fixture(autouse=True, scope="session")
