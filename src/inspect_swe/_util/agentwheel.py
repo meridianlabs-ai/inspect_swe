@@ -140,18 +140,18 @@ rm -rf "{wheels_dir}" "{sandbox_tarball_path}"
 
 #  Platform Mapping: SandboxPlatform -> pip platform strings
 # https://packaging.python.org/en/latest/specifications/platform-compatibility-tags/
-PIP_PLATFORMS: dict[SandboxPlatform, str] = {
-    "linux-x64": "manylinux2014_x86_64",
-    "linux-arm64": "manylinux2014_aarch64",
-    "linux-x64-musl": "musllinux_1_1_x86_64",
-    "linux-arm64-musl": "musllinux_1_1_aarch64",
+PIP_PLATFORMS: dict[SandboxPlatform, list[str]] = {
+    "linux-x64": ["manylinux2014_x86_64"],
+    "linux-arm64": ["manylinux2014_aarch64"],
+    "linux-x64-musl": ["musllinux_1_1_x86_64", "musllinux_1_2_x86_64"],
+    "linux-arm64-musl": ["musllinux_1_1_aarch64", "musllinux_1_2_aarch64"],
 }
 
 
-def platform_to_pip_platform(platform: SandboxPlatform) -> str:
+def platform_to_pip_platforms(platform: SandboxPlatform) -> list[str]:
     if platform not in PIP_PLATFORMS:
         raise ValueError(f"Unsupported platform: {platform}")
-    return PIP_PLATFORMS[platform]
+    return list(PIP_PLATFORMS[platform])
 
 
 # mirror of cleanup_cached_binaries in _util/agentbinary.py
@@ -335,7 +335,7 @@ def download_wheels_tarball(
             return cached, version
 
     # 2 map platform and run pip download
-    pip_platform = platform_to_pip_platform(platform)
+    pip_platforms = platform_to_pip_platforms(platform)
     package_spec = f"{package_name}=={version}" if version else package_name
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -351,8 +351,7 @@ def download_wheels_tarball(
             package_spec,
             "--dest",
             str(wheel_dir),
-            "--platform",
-            pip_platform,
+            *[arg for tag in pip_platforms for arg in ("--platform", tag)],
             "--python-version",
             python_version,
             "--only-binary=:all:",
