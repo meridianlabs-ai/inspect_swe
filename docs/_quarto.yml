@@ -18,4 +18,5 @@ inspect-docs:
         - href: kimi_code.qmd
         - href: opencode.qmd
         - href: mini_swe_agent.qmd
+        - href: antigravity_cli.qmd
         - href: antigravity.qmd
