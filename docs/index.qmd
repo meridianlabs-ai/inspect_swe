@@ -45,8 +45,77 @@ Then, try out one or more of the available agents:
 | [`gemini_cli()`](gemini_cli.qmd) | Google's open-source AI agent [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
 | [`kimi_code()`](kimi_code.qmd) | Moonshot AI's terminal-based coding agent [Kimi Code](https://github.com/MoonshotAI/kimi-code) |
 | [`opencode()`](opencode.qmd) | Provider-independent terminal-based coding agent. |
+| [`omp()`](#oh-my-pi) | Oh My Pi's sandboxed coding agent with Inspect model routing. |
 | [`mini_swe_agent()`](mini_swe_agent.qmd) | SWE-agent's minimal 100-line agent. |
 | [`antigravity()`](antigravity.qmd) | Google's Antigravity SDK agent (`google-antigravity` / localharness). |
 
 
 : {tbl-colwidths=\[30,70\]}
+
+## Oh My Pi
+
+[`omp()`](reference/index.qmd#omp) runs [Oh My Pi](https://github.com/can1357/oh-my-pi)
+inside the sample sandbox. It is distinct from the upstream Pi coding agent.
+Use it as a task solver:
+
+```python
+from inspect_ai import Task, task
+from inspect_ai.dataset import Sample
+from inspect_swe import omp
+
+@task
+def coding_task() -> Task:
+    return Task(
+        dataset=[Sample(input="Inspect the project, fix the failing test, and run it.")],
+        solver=omp(context_window=32768, max_tokens=8192),
+        sandbox="docker",
+    )
+```
+
+Select the serving model with Inspect's `--model`, or pass an Inspect model name
+to `omp(model=...)`. OMP's main and auxiliary chat roles use that same bridge;
+the adapter is not specific to Strata or any other provider. Set `context_window`
+and `max_tokens` to the serving model's capacities. These values control OMP's
+local context budgeting; Inspect's generation configuration controls actual
+model requests. Inspect records model messages, usage, and sample limits.
+
+The adapter pins OMP **18.6.1** by default. Its standalone binary is downloaded
+and checksum-verified on the host, then staged through the existing agent-binary
+installer; it does not install npm packages inside the sandbox. Linux x64 and
+arm64 glibc/musl releases are supported; musl images must provide `libstdc++` and
+`libgcc`. The binary needs a writable home for native-addon extraction.
+`download_agent_binary("omp", "18.6.1")` supports prefetching. Other versions
+and `version="sandbox"` use the same configuration, whose provider-discovery
+settings are tied to 18.6.1; validate compatibility before changing the version.
+
+Each agent instance gets a private home and explicit session file per sample.
+Repeated calls to that same instance resume the session. Imported assistant
+history without its matching OMP session is rejected. Session files live inside
+the sandbox and are removed with it. OMP process failure raises an error rather
+than returning a successful answer; cancellation terminates the remote process.
+
+The unattended tool surface is `read`, `write`, `edit` (including OMP's native
+AST editing), `bash`, `grep`, `glob`, `task`, `todo`, and `wait`. Input must be
+text-only. This adapter does not expose MCP/host bridged tools, interactive ACP
+or centaur mode, or OMP-specific tool/subagent span reconstruction. Its native
+tools execute in the sandbox; Inspect observes their model request/response
+traffic through the bridge, not a separate tool-dispatch audit.
+
+OMP starts with a cleared environment, isolated home, dummy bridge credential,
+and explicit model/configuration selectors. Ambient extensions, skills, rules,
+MCP discovery, title generation, hosted fallback models, telemetry, and update
+checks are disabled for the pinned release. Host provider credentials are never
+copied into the sandbox. This is **not a network isolation boundary**: project
+dotenv files can still affect OMP, and its shell tools can access whatever the
+sandbox permits. Use a network-isolated sandbox for untrusted projects, and do
+not mount host credentials or personal configuration into it.
+
+The real-binary, network-disabled Docker checks use deterministic Inspect model
+responses rather than a live provider:
+
+```bash
+pytest --runslow tests/test_omp.py
+```
+
+They exercise file writing, command execution, session continuation, and
+cancellation while a model request is pending.
