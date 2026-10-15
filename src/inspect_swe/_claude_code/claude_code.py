@@ -44,7 +44,7 @@ from inspect_swe._claude_code._events.stream import (
     StderrEvent,
     claude_code_event_stream,
 )
-from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.centaur import CentaurOptions, CommandsFilter, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -149,6 +149,8 @@ def claude_code(
     replace_system_prompt: str | None = None,
     allowlist_mcp_tools: bool = True,
     allowlist_bridged_tools: bool = True,
+    *,
+    commands_filter: CommandsFilter | None = None,
     **deprecated_args: Unpack[ClaudeCodeDeprecatedArgs],
 ) -> Agent:
     """Claude Code agent.
@@ -179,6 +181,9 @@ def claude_code(
         disallowed_tools: List of tool names to disallow entirely (disallowing
             `"WebSearch"` also disables web search for the agent).
         centaur: Run in 'centaur' mode, which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended.
+        commands_filter: In centaur mode only, filter or augment the human agent's
+            task commands (for example to install project-specific submit/score
+            commands). Ignored outside centaur mode.
         attempts: Configure agent to make multiple attempts. When this is specified, the task will be scored when the agent stops calling tools. If the scoring is successful, execution will stop. Otherwise, the agent will be prompted to pick up where it left off for another attempt.
         model: Model name to use for Opus and Sonnet calls (defaults to main model for task).
         model_config: Model id used to select the identity Claude Code presents
@@ -465,6 +470,8 @@ def claude_code(
                     claude_cmd=[claude_binary] + cmd,
                     agent_env=agent_env,
                     state=state,
+                    user=user,
+                    commands_filter=commands_filter,
                 )
             else:
                 # execute the agent (track debug output)
@@ -762,6 +769,8 @@ async def run_claude_code_centaur(
     claude_cmd: list[str],
     agent_env: dict[str, str],
     state: AgentState,
+    user: str | None = None,
+    commands_filter: CommandsFilter | None = None,
 ) -> None:
     instructions = "Claude Code:\n\n - You may also use Claude Code via the 'claude' command.\n - Use 'claude --resume' if you need to resume a previous claude session."
 
@@ -780,7 +789,9 @@ async def run_claude_code_centaur(
     )
 
     # run the human cli
-    await run_centaur(options, instructions, bashrc, state)
+    await run_centaur(
+        options, instructions, bashrc, state, user=user, commands_filter=commands_filter
+    )
 
 
 class ClaudeCodeDebug(StoreModel):
