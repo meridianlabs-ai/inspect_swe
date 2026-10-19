@@ -46,3 +46,7 @@ When an AI agent authored or co-authored a change, include an `### Agent review`
 - Findings: 3 — 2 fixed, 1 dismissed (flagged a missing None check that is
   guarded upstream)
 ```
+
+## Reviewing other people's pull requests
+
+Unless a maintainer asked for your review, submit any review on someone else's pull request as a **Comment**, never **Approve** or **Request changes**. In this repository those are maintainer decisions: a non-maintainer's verdict doesn't count toward merging and misleads the author about where their PR stands. Put any confirmation or concern in the comment text, and say that you are an AI agent and not a maintainer. This does not apply to agents acting for project maintainers.
