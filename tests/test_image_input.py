@@ -21,7 +21,7 @@ from tests.conftest import (
 # color names a model might reasonably use for the two solid-color images in
 # examples/image_input (magenta = rgb(255,0,255), green = rgb(0,200,0))
 MAGENTA_NAMES = ["magenta", "fuchsia", "pink", "purple", "violet"]
-GREEN_NAMES = ["green"]
+GREEN_NAMES = ["green", "lime"]
 
 
 @skip_if_no_openai
