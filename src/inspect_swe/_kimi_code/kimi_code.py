@@ -36,6 +36,7 @@ from inspect_ai.tool import (
     MCPServerConfigHTTP,
     MCPServerConfigStdio,
     Skill,
+    Tool,
     ToolChoice,
     ToolInfo,
     install_skills,
@@ -46,6 +47,7 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
+from inspect_swe._util.bridged_tools import resolve_bridged_tools
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
@@ -114,7 +116,7 @@ def kimi_code(
     system_prompt: str | None = None,
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
-    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+    bridged_tools: Sequence[Tool | BridgedToolsSpec] | None = None,
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
@@ -150,7 +152,9 @@ def kimi_code(
         system_prompt: Additional system prompt to append
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent
-        bridged_tools: Host-side Inspect tools to expose to the agent via MCP
+        bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
+            Each BridgedToolsSpec creates an MCP server; plain Tools are
+            grouped into one MCP server named `tools`.
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
         centaur: Run in 'centaur' mode, which makes Kimi Code available to an Inspect `human_cli()` agent rather than running it unattended.
@@ -190,6 +194,9 @@ def kimi_code(
 
     resolved_disallowed = list(disallowed_tools or [])
     filter_is_legacy = filter is not None and _is_legacy_str_filter(filter)
+
+    # resolve plain Tools into specs once, so bad input fails at construction
+    bridged_tools_specs = resolve_bridged_tools(bridged_tools)
 
     async def execute(state: AgentState) -> AgentState:
         resolved_model = _resolve_model(model=model, model_aliases=model_aliases)
@@ -238,7 +245,7 @@ def kimi_code(
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,
-            bridged_tools=bridged_tools,
+            bridged_tools=bridged_tools_specs,
             # granted unconditionally to preserve today's behaviour; a grant is
             # inert unless the CLI declares a native web tool
             web_search=True,

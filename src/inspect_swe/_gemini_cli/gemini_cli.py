@@ -15,13 +15,14 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
 from inspect_ai.scorer import score
-from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
+from inspect_ai.tool import MCPServerConfig, Skill, Tool, install_skills, read_skills
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util._async import is_callable_coroutine
+from inspect_swe._util.bridged_tools import resolve_bridged_tools
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
@@ -45,7 +46,7 @@ def gemini_cli(
     system_prompt: str | None = None,
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
-    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+    bridged_tools: Sequence[Tool | BridgedToolsSpec] | None = None,
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     web_search: bool = True,
     centaur: bool | CentaurOptions = False,
@@ -76,7 +77,9 @@ def gemini_cli(
         system_prompt: Additional system prompt to append
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent
-        bridged_tools: Host-side Inspect tools to expose to the agent via MCP
+        bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
+            Each BridgedToolsSpec creates an MCP server; plain Tools are
+            grouped into one MCP server named `tools`.
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
         web_search: Enable the agent's web search tool (defaults to `True`).
@@ -115,6 +118,9 @@ def gemini_cli(
     # resolve attempts
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
+    # resolve plain Tools into specs once, so bad input fails at construction
+    bridged_tools_specs = resolve_bridged_tools(bridged_tools)
+
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "gemini_cli_model_port"
@@ -129,7 +135,7 @@ def gemini_cli(
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,
-            bridged_tools=bridged_tools,
+            bridged_tools=bridged_tools_specs,
             web_search=web_search,
         ) as bridge:
             # resolve sandbox

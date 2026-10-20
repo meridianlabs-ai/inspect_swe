@@ -16,6 +16,8 @@ from typing import Any
 
 from inspect_ai.agent import BridgedToolsSpec
 
+from inspect_swe._util.bridged_tools import DEFAULT_BRIDGED_TOOLS_NAME
+
 from .model_catalog import codex_catalog_tool_mode
 
 # config_overrides keys that can change the tool mode or which tools are
@@ -64,7 +66,9 @@ def check_codex_code_mode_bridged_tools(
         'tool_mode = "code_mode_only"): the model calls MCP tools from the code '
         "it writes instead of proposing each call, so the bridge denies every "
         f"call to bridged server(s) {names}. Set require_proposal=False on the "
-        "existing BridgedToolsSpec for each of them. Approval policies then "
+        "existing BridgedToolsSpec for each of them (plain Tools passed in "
+        f"bridged_tools are served as '{DEFAULT_BRIDGED_TOOLS_NAME}': wrap them "
+        "in a BridgedToolsSpec to set it). Approval policies then "
         "review only the exec call that runs the code, not the tool calls made "
         "from it."
     )
