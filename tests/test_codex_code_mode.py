@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, patch
 import anyio
 import pytest
 from inspect_ai.agent import BridgedToolsSpec
+from inspect_ai.tool import Tool, tool
 from inspect_swe._codex_cli import agentbinary
 from inspect_swe._codex_cli import codex_cli as codex_cli_module
 from inspect_swe._codex_cli.code_mode import check_codex_code_mode_bridged_tools
+from inspect_swe._util.bridged_tools import resolve_bridged_tools
 
 CATALOG: dict[str, Any] = {
     "models": [
@@ -44,6 +46,28 @@ def test_code_mode_raises_for_servers_that_require_proposal() -> None:
     assert "'host_tools', 'search'" in message
     assert "'open'" not in message
     assert "require_proposal=False on the existing BridgedToolsSpec" in message
+
+
+def test_code_mode_raises_for_plain_tools() -> None:
+    """Plain Tools resolve to the implicit `tools` server, which requires proposal."""
+
+    @tool
+    def lookup() -> Tool:
+        async def execute(key: str) -> str:
+            """Look up a value by key.
+
+            Args:
+                key: The key to look up.
+            """
+            return key
+
+        return execute
+
+    with pytest.raises(ValueError) as ex:
+        _check(specs=resolve_bridged_tools([lookup()]))
+    message = str(ex.value)
+    assert "bridged server(s) 'tools'" in message
+    assert "wrap them in a BridgedToolsSpec" in message
 
 
 def test_code_mode_raises_for_a_suffixed_slug() -> None:
