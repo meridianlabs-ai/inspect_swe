@@ -108,10 +108,7 @@ class CodexCli(ACPAgent):
 
             # Resolve CODEX_HOME (mirrors the non-ACP codex_cli agent).
             if self._home_dir is None:
-                working_dir = await sandbox_exec(
-                    sbox, "pwd", user=self.user, cwd=self.cwd
-                )
-                codex_home = join_path(working_dir, ".codex")
+                codex_home = join_path(self.cwd, ".codex")
             else:
                 codex_home = await sandbox_exec(
                     sbox,
@@ -187,9 +184,7 @@ class CodexCli(ACPAgent):
         """Determine where to write AGENTS.md."""
         if self._home_dir is not None:
             return join_path(codex_home, "AGENTS.md")
-        elif self.cwd is not None:
-            return join_path(self.cwd, "AGENTS.md")
-        return "AGENTS.md"
+        return join_path(self.cwd, "AGENTS.md")
 
     async def _config_toml_path(
         self,
@@ -199,7 +194,7 @@ class CodexCli(ACPAgent):
         """Determine where to write config.toml."""
         if self._home_dir is not None:
             return join_path(codex_home, "config.toml")
-        directory = ".codex" if self.cwd is None else join_path(self.cwd, ".codex")
+        directory = join_path(self.cwd, ".codex")
         await sandbox_exec(sbox, cmd=f"mkdir -p {directory}", user=self.user)
         return join_path(directory, "config.toml")
 
