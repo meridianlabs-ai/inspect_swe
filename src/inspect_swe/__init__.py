@@ -2,6 +2,7 @@ from ._antigravity.antigravity import antigravity
 from ._claude_code.claude_code import claude_code
 from ._codex_cli.codex_cli import codex_cli
 from ._codex_cli.config import CodexAutoReview
+from ._deepseek_harness.deepseek_harness import deepseek_harness
 from ._gemini_cli.gemini_cli import gemini_cli
 from ._kimi_code.kimi_code import kimi_code
 from ._mini_swe_agent.mini_swe_agent import mini_swe_agent
@@ -34,6 +35,7 @@ __all__ = [
     "antigravity",
     "claude_code",
     "codex_cli",
+    "deepseek_harness",
     "gemini_cli",
     "kimi_code",
     "mini_swe_agent",

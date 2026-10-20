@@ -5,13 +5,25 @@ from inspect_ai.agent import AgentAttempts
 from inspect_ai.dataset import Sample
 from inspect_ai.scorer import includes
 from inspect_ai.util import SandboxEnvironmentType
-from inspect_swe import claude_code, codex_cli, gemini_cli, mini_swe_agent, opencode
+from inspect_swe import (
+    claude_code,
+    codex_cli,
+    deepseek_harness,
+    gemini_cli,
+    mini_swe_agent,
+    opencode,
+)
 
 
 @task
 def multiple_attempts(
     agent: Literal[
-        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent", "opencode"
+        "claude_code",
+        "codex_cli",
+        "deepseek_harness",
+        "gemini_cli",
+        "mini_swe_agent",
+        "opencode",
     ] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
@@ -26,6 +38,8 @@ def multiple_attempts(
             solver = claude_code(system_prompt=system_prompt, attempts=attempts)
         case "codex_cli":
             solver = codex_cli(system_prompt=system_prompt, attempts=attempts)
+        case "deepseek_harness":
+            solver = deepseek_harness(system_prompt=system_prompt, attempts=attempts)
         case "gemini_cli":
             solver = gemini_cli(system_prompt=system_prompt, attempts=attempts)
         case "mini_swe_agent":

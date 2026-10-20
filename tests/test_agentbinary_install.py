@@ -94,6 +94,42 @@ def test_package_install_extracts_in_sandbox(tmp_path: Path) -> None:
     assert any("tar -xzf" in cmd and install_dir in cmd for cmd in execs)
 
 
+def test_package_install_converts_archive_before_writing(tmp_path: Path) -> None:
+    source = _package_source(tmp_path)
+    source.package_to_tar_gz = lambda data: b"converted:" + data
+    assert source.cached_package_path is not None
+    cache = source.cached_package_path("9.9.9", "linux-arm64")
+    cache.write_bytes(b"wheel-bytes")
+
+    written: dict[str, bytes] = {}
+
+    class _CapturingSandbox(_FakeSandbox):
+        async def write_file(self, path: str, data: bytes) -> None:
+            written[path] = data
+
+    with (
+        patch.object(
+            agentbinary,
+            "detect_sandbox_platform",
+            AsyncMock(return_value="linux-arm64"),
+        ),
+        patch.object(agentbinary, "trace", lambda msg: None),
+        patch.object(agentbinary, "sandbox_exec", AsyncMock(return_value="")),
+    ):
+        anyio.run(
+            ensure_agent_binary_installed,
+            source,
+            "9.9.9",
+            None,
+            cast(SandboxEnvironment, _CapturingSandbox(installed=False)),
+        )
+
+    install_dir = f"{SANDBOX_INSTALL_DIR}/codex-9.9.9-linux-arm64"
+    assert written == {f"{install_dir}.tar.gz": b"converted:wheel-bytes"}
+    # the cache keeps the verbatim (checksum-verifiable) upstream artifact
+    assert cache.read_bytes() == b"wheel-bytes"
+
+
 def test_package_install_skips_when_already_installed(tmp_path: Path) -> None:
     source = _package_source(tmp_path)
     assert source.cached_package_path is not None
