@@ -647,7 +647,8 @@ def claude_code(
                 finally:
                     # Close any spans the final attempt left open — covers
                     # both normal exit (last subprocess ran cleanly but a
-                    # sub-agent never returned its tool_result) and
+                    # sub-agent never returned its tool_result or, for a
+                    # background agent, its task_notification) and
                     # exception exit (RuntimeError above, or anything else
                     # raised inside the loop). Without this, the agent
                     # span tree leaks past the @agent boundary.
