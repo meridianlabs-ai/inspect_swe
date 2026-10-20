@@ -1,4 +1,7 @@
+from contextlib import AbstractContextManager, nullcontext
+
 from inspect_ai.agent import AgentState, human_cli, run
+from inspect_ai.util import sandbox_default
 from pydantic import BaseModel, Field
 
 
@@ -20,13 +23,42 @@ class CentaurOptions(BaseModel):
 
 
 async def run_centaur(
-    options: CentaurOptions, instructions: str, bashrc: str, state: AgentState
+    options: CentaurOptions,
+    instructions: str,
+    bashrc: str,
+    state: AgentState,
+    *,
+    user: str | None = None,
+    sandbox: str | None = None,
 ) -> None:
-    agent = human_cli(
-        answer=options.answer,
-        intermediate_scoring=options.intermediate_scoring,
-        record_session=options.record_session,
-        instructions=instructions,
-        bashrc=bashrc,
+    """Hand the session to the human, in the environment the agent resolved.
+
+    Args:
+        options: Options for centaur mode.
+        instructions: Instructions beyond the default task command instructions.
+        bashrc: Additional content for the human cli shell's .bashrc.
+        state: Agent state to run the human session against.
+        user: User to open the session as, or `None` for the sandbox
+            environment's own default.
+        sandbox: Name of the sandbox to run the session in, or `None` to leave
+            the ambient default alone.
+
+    A named sandbox has to become the default for the whole session, not just
+    for one call within it: `human_cli` installs the task tools and offers the
+    login through unnamed lookups of its own, so a wrapper that resolved a
+    named sandbox for its own launch would otherwise hand the human a terminal
+    in a different container from the one it installed into.
+    """
+    selected: AbstractContextManager[None] = (
+        sandbox_default(sandbox) if sandbox is not None else nullcontext()
     )
-    await run(agent, state)
+    with selected:
+        agent = human_cli(
+            answer=options.answer,
+            intermediate_scoring=options.intermediate_scoring,
+            record_session=options.record_session,
+            user=user,
+            instructions=instructions,
+            bashrc=bashrc,
+        )
+        await run(agent, state)
