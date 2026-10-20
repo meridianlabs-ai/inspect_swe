@@ -1,5 +1,6 @@
 """Unit tests for the Codex code-mode check on bridged tools (no Docker)."""
 
+import sys
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -241,6 +242,7 @@ def test_alignment_uses_a_custom_catalog(
         (r'"/tmp/\u6a21\u578b.json"', "/tmp/模型.json"),
         (r'"/tmp/\"c\".json"', '/tmp/"c".json'),
         (r"'/tmp/c\d.json'", r"/tmp/c\d.json"),
+        (r'"/tmp/\\x41.json"', r"/tmp/\x41.json"),
         # multi-line strings, which can end in a quote or start with a newline
         ("'''/tmp/catalog.json''''", "/tmp/catalog.json'"),
         ('"""/tmp/catalog.json""""', '/tmp/catalog.json"'),
@@ -256,6 +258,9 @@ def test_alignment_uses_a_custom_catalog(
         ("'/tmp/catalog.json'\"", "/tmp/catalog.json"),
         ('"/tmp/a\nb\'"', "/tmp/a\nb"),
         ("'/tmp/a\x01b\"'", "/tmp/a\x01b"),
+        # an escape TOML rejects, and a \x that is not a TOML 1.1 escape
+        (r'"/tmp/c\d.json"', r"/tmp/c\d.json"),
+        (r'"/tmp/\x4g.json"', r"/tmp/\x4g.json"),
     ],
 )
 def test_alignment_reads_the_file_codex_reads(
@@ -321,9 +326,6 @@ def test_alignment_falls_back_to_the_release_catalog_when_unreadable(
         "true",
         '["/tmp/catalog.json"]',
         '{ path = "/tmp/catalog.json" }',
-        # TOML 1.1 escapes, which tomllib reads only from Python 3.15
-        r'"/tmp/\x41.json"',
-        r'"/tmp/\e.json"',
     ],
 )
 def test_alignment_falls_back_for_values_that_name_no_file(
@@ -335,6 +337,34 @@ def test_alignment_falls_back_for_values_that_name_no_file(
     overrides = {"model_catalog_json": path}
     assert _align(monkeypatch, "gpt-5.9", overrides, sandbox) == "gpt-5.5"
     assert "could not read model_catalog_json" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "path,escape,decoded",
+    [
+        (r'"/tmp/\x41.json"', r"\x41", "/tmp/A.json"),
+        (r'"/tmp/\e.json"', r"\e", "/tmp/\x1b.json"),
+        (r'"/tmp/\\\x41.json"', r"\x41", "/tmp/\\A.json"),
+    ],
+)
+def test_alignment_warns_for_toml_1_1_escapes(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+    escape: str,
+    decoded: str,
+) -> None:
+    """Codex decodes these; tomllib does so only from Python 3.15."""
+    names = ["/tmp/catalog.json", decoded, path.strip('"'), path[1:-1]]
+    sandbox = _Sandbox({name: CUSTOM_CATALOG for name in names})
+    overrides = {"model_catalog_json": path}
+    if sys.version_info >= (3, 15):
+        assert _align(monkeypatch, "gpt-5.9", overrides, sandbox) == "gpt-5.9"
+        assert sandbox.reads == 1
+    else:
+        assert _align(monkeypatch, "gpt-5.9", overrides, sandbox) == "gpt-5.5"
+        assert f"the TOML 1.1 escape '{escape}' is unsupported" in caplog.text
+        assert sandbox.reads == 0
 
 
 def test_alignment_falls_back_for_a_dotted_key(

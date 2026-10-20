@@ -1,5 +1,6 @@
 import json
 import mimetypes
+import re
 import shlex
 import tomllib
 from logging import getLogger
@@ -135,7 +136,7 @@ def codex_cli(
     approve_static_mcp_tools: bool = False,
     **deprecated_args: Unpack[CodexDeprecatedArgs],
 ) -> Agent:
-    """Codex CLI.
+    r"""Codex CLI.
 
     Agent that uses OpenAI [Codex CLI](https://github.com/openai/codex) running in a sandbox.
 
@@ -155,8 +156,11 @@ def codex_cli(
             Codex's prompt/tooling aligns with what's actually running. The
             slug comes from the `model_catalog_json` file in `config_overrides`
             when set (an absolute path in the sandbox, read as TOML the way
-            Codex reads it), else from the installed release's catalog. Pass
-            an explicit slug to override.
+            Codex reads it), else from the installed release's catalog. On
+            Python 3.11-3.14, TOML 1.1 escapes (`\xHH`, `\e`) are
+            unsupported; alignment warns and uses the release catalog. Use a
+            bare path or a TOML literal string. Pass an explicit slug to
+            override.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
@@ -893,6 +897,10 @@ async def _resolve_codex_model_checked(
     return codex_model
 
 
+# a TOML 1.1 escape (\xHH or \e) not preceded by an escaped backslash
+_TOML_1_1_ESCAPE = re.compile(r"(?<!\\)(?:\\\\)*(\\x[0-9A-Fa-f]{2}|\\e)")
+
+
 async def _read_model_catalog_json(
     sandbox: SandboxEnvironment, config_overrides: dict[str, str] | None
 ) -> dict[str, Any] | None:
@@ -910,16 +918,23 @@ async def _read_model_catalog_json(
     # the last -c pair wins, and a dotted key names no file
     value = overrides[keys[-1]] if keys[-1].strip() == "model_catalog_json" else ""
     # Codex parses the trimmed value as TOML, else trims every quote from its
-    # ends. Its TOML 1.1 parser reads \e and \xHH escapes, which tomllib reads
-    # only from Python 3.15, so a double-quoted value with a backslash that
-    # tomllib rejects is not read
+    # ends. Its TOML 1.1 parser also reads \xHH and \e escapes, which tomllib
+    # reads only from Python 3.15: a value tomllib rejects for one is not read
     value = value.strip()
     path: Any = None
     try:
         path = tomllib.loads(f"_x_ = {value}")["_x_"]
     except tomllib.TOMLDecodeError:
-        if not (value.startswith('"') and "\\" in value):
-            path = value.strip("\"'")
+        escape = _TOML_1_1_ESCAPE.search(value) if value.startswith('"') else None
+        if escape:
+            logger.warning(
+                f"codex_cli could not read model_catalog_json {value!r}: on "
+                f"Python 3.11-3.14 the TOML 1.1 escape '{escape.group(1)}' is "
+                "unsupported, so it chooses --model from the Codex release "
+                "catalog. Use a bare path or a TOML literal string."
+            )
+            return None
+        path = value.strip("\"'")
     catalog = None
     if isinstance(path, str) and PurePosixPath(path).is_absolute():
         try:
