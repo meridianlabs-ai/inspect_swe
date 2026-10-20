@@ -54,7 +54,7 @@ For example, here we specify a custom system prompt:
 
 -   **Model identity.** `dsh` is given the served model's real name, so its system prompt names the actual model. The model is registered as a plain (text-only) catalog entry: the built-in DeepSeek entries opt into DeepSeek-API-only wire features (in-history system prompt updates, deferred tool loading, Files API image upload) that the bridge does not speak.
 
--   **Reasoning effort.** Natively `dsh` requests `high` reasoning effort. The bridge doesn't forward the inner agent's request-level settings, so the agent applies `reasoning_effort="high"` itself unless the eval sets `reasoning_effort` or `reasoning_tokens`.
+-   **Reasoning effort.** Natively `dsh` requests `high` reasoning effort. The bridge doesn't forward the inner agent's request-level settings, so the agent applies `reasoning_effort="high"` itself unless the eval sets `reasoning_effort`, `reasoning_tokens`, or a `reasoning` field in `extra_body` (e.g. `--extra-body '{"reasoning":{"effort":"max"}}'` to request `max` through OpenRouter, where Inspect currently sends `reasoning_effort="max"` as `xhigh`).
 
 -   **Upstream reporting is disabled.** Telemetry export, the session-log and plugin-inventory fields that `dsh` attaches to requests for DeepSeek's official API, and the auxiliary model call that titles the session are turned off.
 

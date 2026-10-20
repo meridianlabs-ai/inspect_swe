@@ -417,9 +417,12 @@ def deepseek_harness(
 
 def _reasoning_unset(model: Model, config: GenerateConfig) -> bool:
     # dsh requests high effort natively, but the bridge drops its request-level
-    # config; apply that default unless the eval sets reasoning itself
+    # config; apply that default unless the eval sets reasoning itself (including
+    # a raw `extra_body` reasoning field, which a provider would otherwise overwrite)
     return all(
-        c.reasoning_effort is None and c.reasoning_tokens is None
+        c.reasoning_effort is None
+        and c.reasoning_tokens is None
+        and "reasoning" not in (c.extra_body or {})
         for c in (config, model.config, active_generate_config())
     )
 

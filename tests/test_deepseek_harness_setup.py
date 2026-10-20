@@ -452,6 +452,9 @@ def test_reasoning_default_applies_only_when_unset() -> None:
     ):
         assert _reasoning_unset(model, GenerateConfig())
         assert not _reasoning_unset(model, GenerateConfig(reasoning_tokens=1024))
+        assert not _reasoning_unset(
+            model, GenerateConfig(extra_body={"reasoning": {"effort": "max"}})
+        )
         model.config = GenerateConfig(reasoning_effort="low")
         assert not _reasoning_unset(model, GenerateConfig())
     model.config = GenerateConfig()
