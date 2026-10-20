@@ -15,7 +15,7 @@ jobs:
   # skipped on documentation-only changes.
   #
   # The skip lives on the STEPS of each matrix job, not on the job itself. The
-  # `main` ruleset requires the versioned check names (`py-ruff (3.10)`, ...),
+  # `main` ruleset requires the versioned check names (`py-ruff (3.11)`, ...),
   # and a job skipped by a job-level `if` never expands its matrix: it reports a
   # single unversioned check (`py-ruff`), so the required contexts stay
   # "Expected" forever and a docs-only PR can never merge. With the condition on
@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.14"]
     steps:
       - if: needs.changes.outputs.build == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.14"]
     steps:
       - if: needs.changes.outputs.build == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.14"]
     steps:
       - if: needs.changes.outputs.build == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.14"]
     steps:
       - if: needs.changes.outputs.build == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
