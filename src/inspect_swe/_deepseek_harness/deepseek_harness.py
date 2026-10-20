@@ -55,13 +55,9 @@ from .._util.sandbox import resolve_agent_cwd
 from .agentbinary import deepseek_harness_binary_source
 from .reasoning import ReasoningRestorer
 
-# The `dsh` profile the agent runs: one task per invocation, final answer and
-# a newline-delimited JSON event stream on stdout, same tools/prompt as dsh's
-# other surfaces.
+# one task per run, same prompt and tools as dsh's other surfaces
 DSH_PROFILE = "headless"
 
-# dsh's conversation adapter is a DeepSeek "Messages" (Anthropic-compatible)
-# client registered under this provider route.
 DSH_PROVIDER = "deepseek-official"
 
 # context window dsh's DeepSeek adapter assumes for a model without one
@@ -69,8 +65,7 @@ DSH_DEFAULT_CONTEXT_WINDOW = 1_000_000
 
 logger = getLogger(__name__)
 
-# dsh's mcp-client namespaces tools as mcp__<serverName>__<tool> and only
-# accepts these server names
+# server names dsh's mcp-client accepts
 _MCP_SERVER_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 
 # GenerateFilter is a union of Model-first and (deprecated) str-first callables;
@@ -172,18 +167,13 @@ def deepseek_harness(
     resolved_skills = read_skills(skills) if skills is not None else None
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
-    # dsh's mcp-client has no per-server tool filter and no legacy SSE
-    # transport, so reject configs we can't honor rather than silently widen
-    # or drop them.
     for server in mcp_servers or []:
         _validate_mcp_server(server)
 
     filter_is_legacy = filter is not None and _is_legacy_str_filter(filter)
 
     async def execute(state: AgentState) -> AgentState:
-        # present the served model's real name to dsh (its system prompt says
-        # "powered by the {{model}} model") and alias that name back to the
-        # served model; an explicit alias name is presented as-is
+        # give dsh the served model's real name (its prompt names the model)
         served_model = resolve_inspect_model(
             requested_model, model_aliases, bridge_model
         )
@@ -212,9 +202,7 @@ def deepseek_harness(
             tool_choice: ToolChoice | None,
             config: GenerateConfig,
         ) -> ModelOutput | GenerateInput | None:
-            # in place (not only via GenerateInput) so the restored reasoning
-            # persists in both the recorded ModelEvent input and the bridge
-            # state messages
+            # in place, so the change also lands in the transcript and state
             changed = reasoning_restorer.restore(messages)
             if filter is not None:
                 if filter_is_legacy:
@@ -242,9 +230,7 @@ def deepseek_harness(
             retry_refusals=retry_refusals,
             port=port,
             bridged_tools=bridged_tools,
-            # dsh's native web_search tool issues Anthropic `web_search`
-            # server-tool requests, which the bridge serves via this grant
-            # (for providers with internal search, as for kimi/claude code)
+            # serves dsh's web_search tool (providers with internal search)
             web_search=True,
         ) as bridge:
             # resolve sandbox
@@ -261,8 +247,7 @@ def deepseek_harness(
             for server in bridge.mcp_server_configs:
                 _validate_mcp_server(server)
 
-            # detect sandbox home directory; dsh never falls back to ~/.dsh
-            # when DSH_HOME is set, so give each run an isolated home
+            # detect sandbox home directory
             home_result = await sbox.exec(["sh", "-c", "echo $HOME"], user=user)
             sandbox_home = home_result.stdout.strip() or "/root"
             dsh_home = f"{sandbox_home}/.dsh-inspect"
@@ -282,17 +267,14 @@ def deepseek_harness(
 
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
-            # continue the sample's dsh session when re-invoked on a state
-            # that already carries an assistant turn
+            # continue the sample's dsh session on re-invocation
             SESSION_ID = "deepseek_harness_session_id"
             session_id: str | None = (
                 store().get(SESSION_ID, None) if has_assistant_response else None
             )
 
-            # headless takes a single task and has no separate system-prompt
-            # flag, so prepend system messages to a new session's task. A
-            # continued session already carries them, and the state's system
-            # message is now dsh's own (round-tripped by the bridge).
+            # headless has no system-prompt flag, so prepend system messages to
+            # a new session's task (a continued one already has them)
             if session_id is None:
                 system_messages = [
                     m.text for m in state.messages if isinstance(m, ChatMessageSystem)
@@ -305,15 +287,11 @@ def deepseek_harness(
             agent_env = {
                 "DSH_HOME": dsh_home,
                 "HOME": sandbox_home,
-                # dsh sends this as its x-api-key; the bridge accepts any key
-                # and real provider credentials never enter the sandbox
+                # dummy key for the bridge
                 "DEEPSEEK_API_KEY": "sk-inspect-bridge",
-                # conversation adapter (appends /v1/messages) and the
-                # auxiliary native web search (appends /messages)
                 "DEEPSEEK_BASE_URL": f"http://localhost:{bridge.port}",
                 "DEEPSEEK_SEARCH_BASE_URL": f"http://localhost:{bridge.port}/v1",
-                # the sandbox is the isolation boundary; dsh's own policy
-                # would otherwise ask for approval no one can answer
+                # no approval prompts; the sandbox is the boundary
                 "DSH_PERMISSION_MODE": "danger-full-access",
                 "DSH_TELEMETRY_MODE": "DISABLED",
             } | (env or {})
@@ -327,8 +305,6 @@ def deepseek_harness(
                 "--json",
             ]
 
-            # dsh connects MCP servers before its first turn, but gate on the
-            # bridged endpoints serving so a slow bridge can't race startup
             http_mcp_configs = [
                 c
                 for c in bridge.mcp_server_configs
@@ -355,14 +331,9 @@ def deepseek_harness(
                         required=True,
                     )
 
-                # the task is read from stdin (no positional task), which
-                # keeps a prompt starting with "-" from parsing as an option.
-                # the event stream goes to a file: it opens with the one
-                # `session` event, which a long run would push out of the
-                # bounded captured stdout.
-                # the profile patch can carry MCP auth headers, so it is
-                # handed to dsh as an open descriptor and unlinked before
-                # launch rather than left at a path the agent's tools can read
+                # task on stdin (a leading "-" can't parse as an option);
+                # events to a file so a long run keeps its first `session` line;
+                # the patch (may hold MCP headers) is passed as an unlinked fd
                 await sbox.write_file(prompt_file, agent_prompt)
                 await sbox.write_file(patch_file, patch)
                 result = await sbox.exec_remote(
@@ -385,7 +356,6 @@ def deepseek_harness(
                     stream=False,
                 )
 
-                # first line (session) and the stream's tail (turn end, errors)
                 events_result = await sbox.exec(
                     [
                         "sh",
@@ -482,30 +452,22 @@ def _profile_patch(
     context_window: int | None,
     mcp_servers: Sequence[MCPServerConfig],
 ) -> str:
-    # dsh profile patches are YAML patch lists; JSON is valid YAML and keeps
-    # every value (prompts, urls, headers) safely quoted. A row patch's
-    # `config` replaces that row's complete config.
+    # JSON is valid YAML and keeps every value safely quoted
     rows: list[dict[str, Any]] = [
-        # route the default agent model through the bridge
         {
             "id": "agent-default-model",
             "config": {"provider": DSH_PROVIDER, "model": model},
         },
-        # a plain catalog entry: the default `deepseek-flash` entry opts into
-        # DeepSeek-API-only wire features (in-history system prompt updates,
-        # deferred tool loading) that the bridge does not speak, and images
-        # are uploaded through DeepSeek's Files API, so keep it text-only
+        # plain text-only entry: the built-in ones use DeepSeek-API-only
+        # features the bridge doesn't speak
         {
             "id": "llm-deepseek",
             "config": {"models": [_catalog_model(model, context_window)]},
         },
-        # these attach the session log / plugin inventory to every request
-        # (diagnostics for DeepSeek's official API, meaningless via the bridge)
+        # request fields and calls meant for DeepSeek's own API, and telemetry
         {"id": "session-log-deepseek", "disabled": True},
         {"id": "plugin-package-inventory-deepseek", "disabled": True},
-        # an auxiliary model call that only names the session
         {"id": "session-title-llm", "disabled": True},
-        # never export telemetry from an eval sandbox
         {"id": "session-telemetry-otel", "disabled": True},
     ]
 
@@ -544,8 +506,6 @@ def _mcp_row(server: MCPServerConfig) -> dict[str, Any]:
         }
     else:
         raise ValueError(f"Unsupported MCP server config type: {type(server).__name__}")
-    # a server that fails to connect should fail the run, not silently run
-    # the task without its tools
     config["failOnStartupError"] = True
     return {
         "id": f"mcp-{server.name}",

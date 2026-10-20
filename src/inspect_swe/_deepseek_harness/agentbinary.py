@@ -14,18 +14,13 @@ from .._util.appdirs import package_cache_dir
 from .._util.download import download_text_file
 from .._util.sandbox import SandboxPlatform
 
-# DeepSeek Harness publishes its standalone `dsh` runtime (a single native
-# executable plus a ripgrep sidecar and a small resource directory, no Node or
-# Python needed) as per-platform wheels of this PyPI package.
+# per-platform wheels holding the standalone `dsh` runtime
 DSH_RUNTIME_PACKAGE = "deepseek-harness-runtime-bin"
 PYPI_JSON_URL = f"https://pypi.org/pypi/{DSH_RUNTIME_PACKAGE}"
 
-# directory inside the wheel that holds the executable, its sidecars and the
-# per-platform resource directory (the executable locates its sidecars and
-# resources relative to itself, so the directory is installed as a whole)
+# installed as a whole: the executable finds its sidecars relative to itself
 _WHEEL_RUNTIME_DIR = "deepseek_harness_runtime/runtime/"
 
-# name of the launcher script written at the root of the installed package
 DSH_ENTRYPOINT = "dsh"
 
 
@@ -56,8 +51,6 @@ def deepseek_harness_binary_source() -> AgentBinarySource:
                 f"No DeepSeek Harness runtime wheel for platform {platform} "
                 f"in version {version}"
             )
-        # the wheel is cached verbatim (so its PyPI sha256 stays verifiable)
-        # and converted to the extractable tar.gz at install time
         return AgentBinaryVersion(
             version, wheel["digests"]["sha256"], wheel["url"], package=True
         )
@@ -88,9 +81,7 @@ def deepseek_harness_binary_source() -> AgentBinarySource:
 
 
 def _wheel_platform_tag(platform: SandboxPlatform) -> str:
-    # The runtime is published as manylinux (glibc) wheels only, so there is
-    # no build to fall back to on musl images (e.g. Alpine) — the glibc build
-    # would install fine and then fail at exec. Raise at resolution time.
+    # glibc-only wheels; the build would install on musl and then fail at exec
     if platform.endswith("-musl"):
         raise RuntimeError(
             f"DeepSeek Harness publishes glibc-only linux builds; no musl "
@@ -114,9 +105,7 @@ async def _fetch_release(version: str | None) -> dict[str, Any]:
     return dict(json.loads(await download_text_file(url)))
 
 
-# Converting a ~95MB wheel holding a ~320MB executable takes several seconds,
-# and every sample installs into its own sandbox, so memoize the conversion for
-# the process lifetime (keyed by wheel digest; a handful of versions at most).
+# conversion takes seconds and every sample installs, so memoize per process
 _tar_gz_cache_lock = threading.Lock()
 _tar_gz_cache: dict[str, bytes] = {}
 
@@ -153,8 +142,7 @@ def _wheel_to_tar_gz(wheel_bytes: bytes) -> bytes:
         if executable is None:
             raise RuntimeError("DeepSeek Harness wheel has no runtime executable")
 
-        # stable entrypoint: the executable's name embeds the platform, and it
-        # must stay beside its sidecars, so launch it through a tiny script
+        # stable entrypoint (the executable's name embeds the platform)
         launcher = f'#!/bin/sh\nexec "$(dirname "$0")/runtime/{executable}" "$@"\n'
         _add_file(tar, DSH_ENTRYPOINT, launcher.encode(), 0o755)
 

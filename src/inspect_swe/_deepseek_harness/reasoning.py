@@ -9,27 +9,16 @@ from inspect_ai.model import (
     ContentText,
 )
 
-# The bridge's Anthropic API surface can only replay reasoning as a `thinking`
-# block when it originated from Inspect's Anthropic provider. Reasoning from
-# any other provider (DeepSeek, OpenRouter, ...) reaches the agent as a plain
-# text block holding ContentReasoning.text (`<think>{reasoning}</think>`, or
-# the summary for a redacted block) with its signature dropped, and an
-# otherwise empty text reply as NO_CONTENT. dsh stores both as ordinary
-# assistant text and sends them back that way, so without repair the model
-# would see its earlier reasoning as visible output and lose provider replay
-# metadata (e.g. OpenRouter reasoning_details) that a native dsh run on
-# DeepSeek's API keeps as thinking blocks.
+# The bridge's Anthropic API returns non-Anthropic reasoning to the client as
+# a `<think>...</think>` text block (signature dropped). dsh sends it back as
+# plain assistant text, so the model would see old reasoning as output.
 
 
 class ReasoningRestorer:
     """Restore reasoning that the bridge flattened into assistant text.
 
-    Originals are looked up in the sample transcript's model events by their
-    exact flattened text, so restored blocks carry their signatures. A text
-    that maps to more than one original (e.g. several redacted blocks without
-    summaries all flatten to `<think></think>`), or to none, is left as is
-    rather than replayed with the wrong (or no) provider metadata. Not
-    thread-safe; use one instance per agent execution.
+    Originals are found in the transcript's model events by their exact
+    flattened text. Text matching none, or more than one, is left as is.
     """
 
     def __init__(self) -> None:
@@ -58,9 +47,7 @@ class ReasoningRestorer:
                         restored_any = True
                         continue
                 content.append(item)
-            # drop the bridge's NO_CONTENT placeholder beside restored
-            # reasoning (a reply that is only NO_CONTENT keeps it, as providers
-            # reject an assistant message with neither content nor tool calls)
+            # drop the bridge's NO_CONTENT placeholder, unless it is all that's left
             if restored_any:
                 without_placeholder = [
                     c
@@ -80,8 +67,7 @@ class ReasoningRestorer:
         while index < len(events):
             event = events[index]
             if isinstance(event, ModelEvent):
-                # a pending call has no output yet: resume scanning here next
-                # time rather than skipping it (dsh runs subagents in parallel)
+                # no output yet; rescan from here next time
                 if event.pending:
                     break
                 content = event.output.message.content
