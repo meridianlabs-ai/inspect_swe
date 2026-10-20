@@ -8,6 +8,7 @@ reference: inspect_swe
 
 ### claude_code
 ### codex_cli
+### deepseek_harness
 ### gemini_cli
 ### opencode
 ### mini_swe_agent

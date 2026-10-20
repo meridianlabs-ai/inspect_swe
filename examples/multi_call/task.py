@@ -6,13 +6,25 @@ from inspect_ai.dataset import Sample
 from inspect_ai.model import ChatMessageUser
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import SandboxEnvironmentType
-from inspect_swe import claude_code, codex_cli, gemini_cli, mini_swe_agent, opencode
+from inspect_swe import (
+    claude_code,
+    codex_cli,
+    deepseek_harness,
+    gemini_cli,
+    mini_swe_agent,
+    opencode,
+)
 
 
 @solver
 def multi_call_solver(
     agent_type: Literal[
-        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent", "opencode"
+        "claude_code",
+        "codex_cli",
+        "deepseek_harness",
+        "gemini_cli",
+        "mini_swe_agent",
+        "opencode",
     ],
 ) -> Solver:
     async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -23,6 +35,8 @@ def multi_call_solver(
                 agent = claude_code(system_prompt=system_prompt)
             case "codex_cli":
                 agent = codex_cli(system_prompt=system_prompt)
+            case "deepseek_harness":
+                agent = deepseek_harness(system_prompt=system_prompt)
             case "gemini_cli":
                 agent = gemini_cli(system_prompt=system_prompt)
             case "mini_swe_agent":

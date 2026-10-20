@@ -87,6 +87,20 @@ def test_cached_agent_binaries_lists_kimi_code(tmp_path: Path) -> None:
     assert [(b.agent, b.version) for b in cached] == [("kimi_code", "1.2.3")]
 
 
+def test_cached_agent_binaries_lists_deepseek_harness(tmp_path: Path) -> None:
+    from inspect_swe._deepseek_harness import agentbinary as dsh_agentbinary
+
+    with patch.object(dsh_agentbinary, "package_cache_dir", return_value=tmp_path):
+        (tmp_path / "deepseek-harness-package-0.2.1rc2-linux-x64.whl").write_bytes(b"x")
+        (tmp_path / "deepseek-harness-package-0.1.5-linux-x64.whl").write_bytes(b"x")
+        cached = cached_agent_binaries("deepseek_harness")
+
+    assert [(b.agent, b.version) for b in cached] == [
+        ("deepseek_harness", "0.2.1rc2"),
+        ("deepseek_harness", "0.1.5"),
+    ]
+
+
 def test_resolve_agent_version_passes_through_pinned_version() -> None:
     # an explicit version needs no network: it is returned unchanged
     assert resolve_agent_version("codex_cli", "0.50.0") == "0.50.0"
@@ -99,7 +113,9 @@ def test_resolve_agent_version_rejects_unknown_platform() -> None:
 
 @pytest.mark.parametrize("version", ["stable", "1.2.3"])
 def test_resolve_agent_version_rejects_unknown_agent(version: str) -> None:
-    with pytest.raises(ValueError, match="claude_code, codex_cli, kimi_code"):
+    with pytest.raises(
+        ValueError, match="claude_code, codex_cli, deepseek_harness, kimi_code"
+    ):
         resolve_agent_version("gemini_cli", version)  # type: ignore[arg-type]
 
 

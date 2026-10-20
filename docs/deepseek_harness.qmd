@@ -1,0 +1,84 @@
+---
+title: DeepSeek Harness
+agent: deepseek_harness
+agent_provider: "DeepSeek"
+agent_name: "DeepSeek Harness"
+agent_url: "https://github.com/deepseek-ai/deepseek-harness"
+---
+
+{{< include _snippets/agent_intro.md >}}
+
+The agent runs the `dsh` headless profile, which is DeepSeek Harness's complete coding-agent composition (system prompt, file/shell/search tools, subagents, workflows, todo and goal tracking, automatic compaction), with its DeepSeek Messages adapter pointed at the Inspect model bridge.
+
+## Options
+
+The following options are supported for customizing the behavior of the agent:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Additional system prompt (prepended to the task, as `dsh` headless has no separate system-prompt option). |
+| `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
+| `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
+| `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
+| `mcp_ready_timeout` | Seconds to wait for bridged MCP endpoints to serve tools before the agent launch errors. |
+| `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
+| `model` | Model name to use for agent (defaults to main model for task). |
+| `context_window` | Context window to configure for `dsh` (drives its automatic compaction). Defaults to the bridged model's context length from Inspect model metadata, falling back to `dsh`'s own default (1,000,000 tokens) when that metadata is unavailable. |
+| `filter` | Filter for intercepting bridged model requests. |
+| `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
+| `cwd` | Working directory for {{< meta agent_name >}} session. |
+| `env` | Environment variables to set for {{< meta agent_name >}}. |
+| `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |
+
+: {tbl-colwidths=\[25,75\]}
+
+For example, here we specify a custom system prompt:
+
+```python
+{{< meta agent >}}(
+    system_prompt="You are an ace system researcher."
+)
+```
+
+{{< include _snippets/agent_mcp_servers.md >}}
+
+{{< meta agent_name >}} supports stdio and Streamable HTTP MCP servers. Per-server tool filtering (`tools=[...]`) and legacy SSE servers are not supported and raise an error.
+
+{{< include _snippets/agent_bridged_tools.md >}}
+
+## Model Bridging
+
+`dsh` speaks DeepSeek's Anthropic-compatible Messages API. A few adjustments keep a bridged run close to a native `dsh` run against DeepSeek's API:
+
+-   **Reasoning replay.** The bridge can only return reasoning to an Anthropic-style client as a `thinking` block when it came from Inspect's Anthropic provider; reasoning from any other provider (DeepSeek, OpenRouter, etc.) would reach `dsh` as plain `<think>` text and be sent back to the model as visible output. The agent restores those blocks to the original reasoning (including provider signatures, e.g. OpenRouter `reasoning_details`) before each request, so the model sees its earlier reasoning as reasoning, as it would natively.
+
+-   **Model identity.** `dsh` is given the served model's real name, so its system prompt names the actual model. The model is registered as a plain (text-only) catalog entry: the built-in DeepSeek entries opt into DeepSeek-API-only wire features (in-history system prompt updates, deferred tool loading, Files API image upload) that the bridge does not speak.
+
+-   **Reasoning effort.** Natively `dsh` requests `high` reasoning effort. The bridge doesn't forward the inner agent's request-level settings, so the agent applies `reasoning_effort="high"` itself unless the eval sets `reasoning_effort`, `reasoning_tokens`, or a `reasoning` field in `extra_body` (e.g. `--extra-body '{"reasoning":{"effort":"max"}}'` to request `max` through OpenRouter, where Inspect currently sends `reasoning_effort="max"` as `xhigh`).
+
+-   **Upstream reporting is disabled.** Telemetry export, the session-log and plugin-inventory fields that `dsh` attaches to requests for DeepSeek's official API, and the auxiliary model call that titles the session are turned off.
+
+-   **Web search.** `dsh`'s `web_search` tool issues an Anthropic `web_search` server-tool request, which is sent to the bridge. It returns results when the served model's provider supports Inspect's internal web search (OpenAI, Anthropic, Gemini, Grok, Perplexity); otherwise (e.g. DeepSeek models) the tool reports an error to the model. `web_fetch` runs from inside the sandbox and is subject to its network policy.
+
+-   **Permissions.** `dsh` runs in `danger-full-access` mode (no approval prompts) since the sandbox is the isolation boundary.
+
+## Installation
+
+{{< meta agent_name >}} publishes its standalone runtime (a single native executable, with no Node.js or Python requirement in the sandbox) as glibc-only Linux wheels of the [`deepseek-harness-runtime-bin`](https://pypi.org/project/deepseek-harness-runtime-bin/) PyPI package, and the agent runs it via `bash`, so sandbox images must provide glibc 2.28+ and bash (e.g. Debian/Ubuntu based images). musl-based images such as Alpine are not supported and fail at version resolution time.
+
+By default, the agent will download the current latest version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `"auto"` | Use any available version of {{< meta agent_name >}} in the sandbox, otherwise download the latest version. |
+| `"sandbox"` | Use the version of {{< meta agent_name >}} in the sandbox (raises `RuntimeError` if not available in the sandbox) |
+| `"latest"` | Download and use the very latest version. |
+| `"x.x.x"` | Download and use a specific version number (a `deepseek-harness-runtime-bin` PyPI version, e.g. `"0.2.1rc2"`). |
+
+: {tbl-colwidths=\[25,75\]}
+
+{{< meta agent_name >}} is in developer preview and documents that it will make compatibility-breaking changes, so pinning a specific version is recommended for reproducible evaluations.
+
+{{< include _snippets/agent_installation.md >}}
+
+{{< include _snippets/agent_troubleshooting.md >}}

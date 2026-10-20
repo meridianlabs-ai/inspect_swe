@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Literal, NamedTuple
 
+import anyio
 from inspect_ai.util import SandboxEnvironment, concurrency
 from inspect_ai.util import sandbox as sandbox_env
 
@@ -49,6 +50,9 @@ class AgentBinarySource:
     # archives. required when resolve_version can return package=True.
     package_entrypoint: str | None = None
     cached_package_path: Callable[[str, SandboxPlatform], Path] | None = None
+    # converts a package archive in another format (e.g. a wheel) to tar.gz at
+    # install time, so the cache keeps the checksum-verifiable original
+    package_to_tar_gz: Callable[[bytes], bytes] | None = None
 
 
 # In-process cache for version resolution results. When many samples run
@@ -228,6 +232,11 @@ async def ensure_agent_binary_installed(
                 # archive (e.g. bin/*, codex-resources/*) stay executable; only
                 # the entrypoint is chmod'd as a belt-and-suspenders measure
                 archive_path = f"{install_path}.tar.gz"
+                if source.package_to_tar_gz is not None:
+                    # cpu-bound, so keep it off the event loop
+                    binary_bytes = await anyio.to_thread.run_sync(
+                        source.package_to_tar_gz, binary_bytes
+                    )
                 await sandbox.write_file(archive_path, binary_bytes)
                 await sandbox_exec(
                     sandbox,

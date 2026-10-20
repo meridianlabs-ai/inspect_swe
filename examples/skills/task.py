@@ -6,13 +6,13 @@ from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 from inspect_ai.scorer import includes
 from inspect_ai.util import SandboxEnvironmentType
-from inspect_swe import claude_code, codex_cli, gemini_cli, opencode
+from inspect_swe import claude_code, codex_cli, deepseek_harness, gemini_cli, opencode
 
 
 @task
 def agent_skills(
     agent: Literal[
-        "claude_code", "codex_cli", "gemini_cli", "opencode"
+        "claude_code", "codex_cli", "deepseek_harness", "gemini_cli", "opencode"
     ] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
@@ -28,6 +28,10 @@ def agent_skills(
             solver = claude_code(system_prompt=system_prompt, skills=skills, attempts=2)
         case "codex_cli":
             solver = codex_cli(system_prompt=system_prompt, skills=skills, attempts=2)
+        case "deepseek_harness":
+            solver = deepseek_harness(
+                system_prompt=system_prompt, skills=skills, attempts=2
+            )
         case "gemini_cli":
             solver = gemini_cli(system_prompt=system_prompt, skills=skills, attempts=2)
         case "opencode":
