@@ -48,6 +48,7 @@ from inspect_swe._util.toml import to_toml
 from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
+from .._util.agentcontext import classify_filter
 from ._events.consumer import CodexConsumer
 from .agentbinary import (
     codex_alignment_catalog,
@@ -385,7 +386,9 @@ def codex_cli(
                     default=get_model(model) if transparent_proxy else None,
                 ),
                 forward_generation_config=transparent_proxy,
-                filter=filter,
+                filter=classify_filter(
+                    filter, consumer.classify, consumer.on_filter_output
+                ),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,

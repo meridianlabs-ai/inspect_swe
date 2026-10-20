@@ -1,6 +1,6 @@
 """Real-time consumer of Claude Code JSONL output.
 
-Two responsibilities, both driven from the same `LiveConsumer` instance:
+Three responsibilities, all driven from the same `LiveConsumer` instance:
 
 1. **`ModelEventSink`** — installed on the agent bridge so the bridge hands
    us every `ModelEvent` for routing instead of emitting it to the transcript
@@ -49,24 +49,40 @@ Two responsibilities, both driven from the same `LiveConsumer` instance:
    `SpanEndEvent` (on `tool_result` for Task/Agent), and emits
    `CompactionEvent` for `compact_boundary` system events. Span
    *opening* is no longer driven from JSONL — see callback (1) above.
+
+3. **`AgentContextClassifier`** — `classify()` is installed on the bridge
+   filter (via `agentcontext.classify_filter`, see `claude_code.py`) so
+   every bridged request is stamped with a real `AgentBridgeContext`
+   ("root"/"subagent"/"utility"/"unknown") before generation. It reuses the
+   same `_pending_subagents` map and `_match_pending_prompt` substring
+   match that (1) uses for span attribution, plus two structural signals
+   read from the requested model slug (`current_bridge_request().model`):
+   the synthetic subagent slug and small-fast/haiku slug that
+   `ClaudeCodeModels` (see `model.py`) resolves distinctly from the primary
+   presented slug. See `classify`'s docstring for the full truth table.
 """
 
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
 
+from inspect_ai.agent import AgentBridgeContext, current_bridge_request
 from inspect_ai.event import CompactionEvent, SpanBeginEvent, SpanEndEvent
 from inspect_ai.event._model import ModelEvent
 from inspect_ai.log import transcript
+from inspect_ai.model import Model, ModelOutput
 from inspect_ai.model._chat_message import (
     ChatMessage,
+    ChatMessageAssistant,
     ChatMessageSystem,
     ChatMessageUser,
 )
 from inspect_ai.model._model import ModelEventSink
 from inspect_ai.model._model_output import StopReason
+from inspect_ai.tool import ToolInfo
 from inspect_ai.util._span import current_span_id
 
+from ..model import ClaudeCodeModels
 from .toolview import tool_view
 
 logger = getLogger(__name__)
@@ -78,12 +94,22 @@ logger = getLogger(__name__)
 # typically full sentences).
 _MIN_PROMPT_LENGTH = 16
 
+# Number of requests `classify` attributes to a sub-agent via the pending-
+# prompt match while carrying something other than the subagent slug, before
+# warning that subagent traffic may not be carrying that slug at all (see
+# `_check_subagent_slug_drift`). One such request can be the documented race
+# where Claude Code hasn't yet propagated `CLAUDE_CODE_SUBAGENT_MODEL` to a
+# sub-agent's very first call; a second one is drift.
+_SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD = 2
+
 
 @dataclass
 class _OpenAgent:
     """An agent span currently open (Task tool_use seen, no tool_result yet)."""
 
     span_id: str
+    subagent_type: str | None = None
+    """The Task call's `subagent_type` argument, when given."""
 
 
 class LiveConsumer(ModelEventSink):
@@ -94,7 +120,14 @@ class LiveConsumer(ModelEventSink):
     by Claude Code.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, models: ClaudeCodeModels) -> None:
+        # resolved presented identities (presented/subagent/haiku slugs) used
+        # by classify() to tell subagent/utility traffic apart from
+        # main-thread traffic by requested slug alone. No circular-import
+        # hazard: model.py depends only on inspect_ai.model, not on this
+        # package's _events subpackage.
+        self._models = models
+
         # tool_use_id → _OpenAgent for currently-open agent spans (Task/Agent
         # tool_use blocks we've SpanBegin'd, not yet SpanEnd'd).
         self._open_agents: dict[str, _OpenAgent] = {}
@@ -106,6 +139,12 @@ class LiveConsumer(ModelEventSink):
         # Cleared in `_handle_user` when the matching tool_result arrives.
         self._pending_subagents: dict[str, str] = {}
 
+        # tool_use_id → Task prompt for sub-agents whose tool_result has
+        # arrived. A backgrounded Task (or a resumed one) keeps running after
+        # that, so its requests can still match a later pending Task with the
+        # same prompt; these only veto a sub-agent id, never attribute one.
+        self._detached_prompts: dict[str, str] = {}
+
         # Track which event objects we've already _event()'d so on_complete
         # knows whether to emit _event_updated (yes if we emitted) vs swallow
         # (no if we didn't — shouldn't happen with current logic but defensive).
@@ -115,6 +154,19 @@ class LiveConsumer(ModelEventSink):
         # runner loop to distinguish an Anthropic refusal (content_filter)
         # from a genuine scaffold crash when Claude Code exits non-zero.
         self._last_stop_reason: StopReason | None = None
+
+        # Drift canary (see `classify`'s "structural" branch 1): the
+        # synthetic subagent slug shape ("<presented>-subagent") was never
+        # live-verified against a real CC build the way the catalog-name
+        # slugs in probe P1 were. These track whether reality matches the
+        # assumption, so a rejected/ignored slug surfaces as a warning
+        # instead of silently degrading to prompt-match-only attribution.
+        # Only requests the prompt match attributes to a sub-agent while they
+        # carry some other slug are counted: those are the requests that
+        # should have carried the subagent slug and didn't.
+        self._subagent_slug_seen = False
+        self._subagent_requests_missing_slug = 0
+        self._subagent_slug_drift_warned = False
 
     @property
     def last_stop_reason(self) -> StopReason | None:
@@ -139,11 +191,21 @@ class LiveConsumer(ModelEventSink):
         still-open agent span (innermost first) so the transcript stays
         balanced even if Claude Code crashed before its tool_result blocks
         were written.
+
+        Deliberately does NOT clear the subagent-slug drift canary fields
+        (`_subagent_slug_seen`, `_subagent_slug_drift_warned`,
+        `_subagent_requests_missing_slug`) -- they track this consumer
+        instance's lifetime, not any single attempt, so a slug sighting (or a
+        warning already issued, or a slug-less sub-agent request already
+        counted) from before a retry still carries over to later attempts.
+        Clearing `_pending_subagents` does mean nothing can prompt-match (and
+        so nothing can count) until the next attempt spawns a sub-agent.
         """
         for tool_use_id in reversed(list(self._open_agents.keys())):
             agent = self._open_agents.pop(tool_use_id)
             transcript()._event(SpanEndEvent(id=agent.span_id))
         self._pending_subagents.clear()
+        self._detached_prompts.clear()
         self._emitted_events.clear()
         self._last_stop_reason = None
 
@@ -181,35 +243,58 @@ class LiveConsumer(ModelEventSink):
             # synchronously, before the bridge response is sent back to
             # Claude Code. By the time any sub-agent makes its first bridge
             # call, both `_open_agents` and `_pending_subagents` are ready.
-            parent_span_id = event.span_id or self.outer_span_id
-            for tc in msg.tool_calls:
-                if tc.function not in ("Task", "Agent"):
-                    continue
-                args = tc.arguments or {}
-                prompt = args.get("prompt")
-                if not isinstance(prompt, str) or not prompt:
-                    continue
-                if tc.id in self._open_agents:
-                    # idempotent — defensive against retries
-                    continue
-                agent_span_id = f"agent-{tc.id}"
-                self._open_agents[tc.id] = _OpenAgent(span_id=agent_span_id)
-                self._pending_subagents[tc.id] = prompt
-                span_name = args.get("subagent_type") or args.get("name") or "agent"
-                description = args.get("description") or ""
-                transcript()._event(
-                    SpanBeginEvent(
-                        id=agent_span_id,
-                        parent_id=parent_span_id,
-                        type="agent",
-                        name=str(span_name),
-                        metadata={"description": description} if description else None,
-                    )
-                )
+            self._register_tasks(msg, event.span_id or self.outer_span_id)
 
         if id(event) in self._emitted_events:
             self._emitted_events.discard(id(event))
             transcript()._event_updated(event)
+
+    def on_filter_output(
+        self, messages: list[ChatMessage], output: ModelOutput
+    ) -> None:
+        """Track Task delegations in an output the user's filter returned itself.
+
+        Such an output never produces a `ModelEvent`, so `on_complete` never
+        sees it; without this, a Task it launches is invisible and its
+        requests could take the id of a later Task with the same prompt.
+        Called by `classify_filter` before the output reaches Claude Code.
+        """
+        msg = output.message if output.choices else None
+        if msg is not None and msg.tool_calls:
+            self._register_tasks(msg, self._attribute(messages))
+
+    def _register_tasks(
+        self, msg: ChatMessageAssistant, parent_span_id: str | None
+    ) -> None:
+        """Open a span and a pending entry for each Task/Agent tool call."""
+        for tc in msg.tool_calls or []:
+            if tc.function not in ("Task", "Agent"):
+                continue
+            args = tc.arguments or {}
+            prompt = args.get("prompt")
+            if not isinstance(prompt, str) or not prompt:
+                continue
+            if tc.id in self._open_agents:
+                # idempotent — defensive against retries
+                continue
+            agent_span_id = f"agent-{tc.id}"
+            subagent_type = args.get("subagent_type")
+            self._open_agents[tc.id] = _OpenAgent(
+                span_id=agent_span_id,
+                subagent_type=str(subagent_type) if subagent_type else None,
+            )
+            self._pending_subagents[tc.id] = prompt
+            span_name = args.get("subagent_type") or args.get("name") or "agent"
+            description = args.get("description") or ""
+            transcript()._event(
+                SpanBeginEvent(
+                    id=agent_span_id,
+                    parent_id=parent_span_id,
+                    type="agent",
+                    name=str(span_name),
+                    metadata={"description": description} if description else None,
+                )
+            )
 
     # ------------------------------------------------------------------
     # JSONL consumer
@@ -239,29 +324,213 @@ class LiveConsumer(ModelEventSink):
     def _attribute(self, input_messages: list[ChatMessage]) -> str | None:
         """Resolve the span_id for an incoming bridge call.
 
-        Substring-matches the first user message's text against currently-
-        pending sub-agent prompts. Exactly one match → that sub-agent's
-        span. Zero or multiple matches → outer span.
+        A request under a main-thread slug is the root thread's regardless
+        of prompt content (same reasoning as `classify` step 3), so it lands
+        on the outer span. Otherwise delegates the substring match to
+        `_match_pending_prompt` (shared with `classify`) and resolves the
+        matched sub-agent's span, falling back to the outer span whenever
+        there's no unambiguous match.
         """
-        if not self._pending_subagents:
+        request = current_bridge_request()
+        if self._is_root_slug(request.model if request is not None else None):
             return self.outer_span_id
-
-        user_text = self._first_user_text(input_messages)
-        if not user_text:
-            return self.outer_span_id
-
-        matches: list[str] = []
-        for tool_use_id, prompt in self._pending_subagents.items():
-            if len(prompt) < _MIN_PROMPT_LENGTH:
-                continue
-            if prompt in user_text:
-                matches.append(tool_use_id)
-
-        if len(matches) == 1:
-            agent = self._open_agents.get(matches[0])
+        tool_use_id = self._match_pending_prompt(input_messages)
+        if tool_use_id is not None:
+            agent = self._open_agents.get(tool_use_id)
             if agent is not None:
                 return agent.span_id
         return self.outer_span_id
+
+    def _match_pending_prompt(self, input_messages: list[ChatMessage]) -> str | None:
+        """Resolve the pending sub-agent whose prompt matches this call, if any.
+
+        Substring-matches the first user message's text against currently-
+        pending sub-agent prompts (see class docstring for why substring
+        matching, rather than JSONL, drives sub-agent attribution). Returns
+        the matched sub-agent's tool_use_id, or `None` when there are no
+        pending sub-agents, no first-user-message text, or the match is
+        ambiguous (zero or multiple hits) — callers treat all of those the
+        same way (fall back to the outer span / a non-subagent verdict).
+        """
+        if not self._pending_subagents:
+            return None
+
+        user_text = self._first_user_text(input_messages)
+        if not user_text:
+            return None
+
+        matches = [
+            tool_use_id
+            for tool_use_id, prompt in self._pending_subagents.items()
+            if len(prompt) >= _MIN_PROMPT_LENGTH and prompt in user_text
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    # ------------------------------------------------------------------
+    # filter-time classification (AgentContextClassifier)
+    # ------------------------------------------------------------------
+
+    def classify(
+        self, model: Model, messages: list[ChatMessage], tools: list[ToolInfo]
+    ) -> AgentBridgeContext:
+        """Filter-time agent classification, run before generation.
+
+        Two structural signals come from the requested model slug (probe P1
+        of the agent-bridge-context plan, live-verified against CC 2.1.220):
+        every Task-tool subagent request — including custom agents with
+        their own `model:` front-matter — carries `CLAUDE_CODE_SUBAGENT_MODEL`'s
+        value as its raw requested slug; main-thread requests carry
+        `ANTHROPIC_MODEL`'s value (`presented`), or `ANTHROPIC_DEFAULT_OPUS_MODEL`
+        / `ANTHROPIC_DEFAULT_SONNET_MODEL`'s value (`opus`/`sonnet`) when
+        Claude Code's own tier swap is in effect -- those are configured tiers
+        of the main thread, not delegation. Small-fast/utility traffic
+        was never observed headless, but the wiring says it would carry
+        `ANTHROPIC_SMALL_FAST_MODEL`'s value (`haiku`) — that signal only
+        fires when the caller configured a distinct `haiku_model` (otherwise
+        `haiku` inherits `presented`, indistinguishable from main-thread
+        traffic, so the check requires `haiku != presented`). A third,
+        inferred signal — the same pending-subagent prompt substring match
+        `_attribute` uses for span attribution — covers requests that bypass
+        the slug signal (e.g. a race where Claude Code hasn't yet propagated
+        the subagent env var, or any other slug drift).
+
+        Truth table (checked in this order):
+
+        1. slug == subagent slug → "subagent" (structural)
+        2. slug == small-fast slug, and that slug is not also a main-thread
+           slug → "utility" (structural)
+        3. slug in {presented, opus, sonnet} → "root" (structural: per P1,
+           subagent traffic never carries a main-thread slug, so such a
+           call with sub-agents open is still main-thread, not ambiguous).
+           Checked BEFORE the prompt match below: the root thread's first
+           user message is its task prompt, and a Task prompt is often a
+           verbatim excerpt of it, so a content match alone would stamp the
+           root thread "subagent" for the whole delegation window -- the
+           harmful direction for an `is_root_agent()` gate.
+        4. pending-subagent prompt match → "subagent" (inferred; only
+           reached for an unrecognized or missing slug, i.e. it covers
+           slug-bypass drift rather than overriding a structural answer)
+        5. otherwise (unrecognized slug, or no request info available) →
+           "root" if no sub-agents are currently pending, else "unknown"
+           (honest admission: an unmatched call could be main-thread or an
+           unattributed sub-agent call; we can't tell)
+
+        A "subagent" answer carries the sub-agent's identity when the prompt
+        match picks exactly one pending Task: `subagent_id` is that Task's
+        tool_use id and `subagent_type` its `subagent_type` argument. With
+        no unique match (parallel Tasks whose prompts can't be told apart,
+        or a request whose first user message doesn't carry the Task prompt)
+        both are None -- the slug says "a sub-agent", not which one.
+        """
+        request = current_bridge_request()
+        slug = request.model if request is not None else None
+
+        if slug == self._models.subagent:
+            context = self._subagent_context(messages)
+        elif slug == self._models.haiku and not self._is_root_slug(slug):
+            context = AgentBridgeContext("utility")
+        elif self._is_root_slug(slug):
+            context = AgentBridgeContext("root")
+        elif self._match_pending_prompt(messages) is not None:
+            context = self._subagent_context(messages)
+        else:
+            context = AgentBridgeContext(
+                "root" if not self._pending_subagents else "unknown"
+            )
+
+        self._check_subagent_slug_drift(slug, context)
+        return context
+
+    def _subagent_context(self, messages: list[ChatMessage]) -> AgentBridgeContext:
+        """The "subagent" context, identified by a unique pending-prompt match.
+
+        No identity when the request also carries the prompt of a Task whose
+        tool_result already arrived: a backgrounded or resumed sub-agent
+        still running under that prompt would otherwise borrow the pending
+        Task's id.
+        """
+        tool_use_id = self._match_pending_prompt(messages)
+        if tool_use_id is None:
+            return AgentBridgeContext("subagent")
+        user_text = self._first_user_text(messages) or ""
+        if any(
+            len(prompt) >= _MIN_PROMPT_LENGTH and prompt in user_text
+            for prompt in self._detached_prompts.values()
+        ):
+            return AgentBridgeContext("subagent")
+        agent = self._open_agents.get(tool_use_id)
+        return AgentBridgeContext(
+            "subagent",
+            subagent_id=tool_use_id,
+            subagent_type=agent.subagent_type if agent is not None else None,
+        )
+
+    def _is_root_slug(self, slug: str | None) -> bool:
+        """Whether `slug` is one Claude Code uses for main-thread traffic.
+
+        `presented` plus the opus/sonnet tiers (env.py exports them as
+        ANTHROPIC_DEFAULT_OPUS_MODEL / ANTHROPIC_DEFAULT_SONNET_MODEL); per
+        probe P1, sub-agent traffic never carries any of them.
+        """
+        return slug is not None and slug in (
+            self._models.presented,
+            self._models.opus,
+            self._models.sonnet,
+        )
+
+    def _check_subagent_slug_drift(
+        self, slug: str | None, context: AgentBridgeContext
+    ) -> None:
+        """Warn (once, per consumer instance) if reality contradicts probe P1.
+
+        The synthetic subagent slug (`models.subagent`, a non-catalog shape
+        like "claude-sonnet-4-5-subagent" — see `model.py`) was never
+        live-verified the way P1's real catalog-name slugs were: if some CC
+        version rejects or ignores a non-catalog `CLAUDE_CODE_SUBAGENT_MODEL`
+        value, subagent requests would silently stop carrying it, and
+        `classify`/`_attribute` would quietly fall back to prompt-match-only
+        attribution. That's a real degradation worth surfacing, not a bug to
+        crash on.
+
+        Fed from `classify` with the slug it resolved and the verdict it
+        reached. Any sighting of the subagent slug records that reality
+        matches P1 and suppresses the canary for good. Otherwise the only
+        event counted is the direct evidence of drift: a request `classify`
+        attributed to a sub-agent via the pending-prompt match (its step 4,
+        reached only when the slug is neither the subagent slug nor a
+        main-thread slug) — i.e. a request that should have carried the
+        subagent slug and didn't. Main-thread, small-fast and unmatched
+        unknown-slug requests are not evidence either way, so a Task run in
+        the background while the main thread keeps working, or a refused
+        request re-run through the filter once per retry attempt, cannot
+        trip it. A Task that dies inside Claude Code before any sub-agent
+        request reaches the bridge is cleared from `_pending_subagents` in
+        `_handle_user`, so nothing can match its prompt afterwards.
+
+        `_SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD` tolerates the documented race
+        where the subagent env var hasn't propagated to a sub-agent's very
+        first call; the next such request warns.
+        """
+        if slug == self._models.subagent:
+            self._subagent_slug_seen = True
+            return
+        if (
+            context.kind != "subagent"
+            or self._subagent_slug_seen
+            or self._subagent_slug_drift_warned
+        ):
+            return
+
+        self._subagent_requests_missing_slug += 1
+        if self._subagent_requests_missing_slug >= _SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD:
+            self._subagent_slug_drift_warned = True
+            logger.warning(
+                f"{self._subagent_requests_missing_slug} claude code subagent "
+                "requests were attributed by prompt match without carrying the "
+                f"expected subagent model slug {self._models.subagent!r} — "
+                "subagent attribution is running on prompt-match fallback; CC "
+                "version drift or slug rejection likely"
+            )
 
     @staticmethod
     def _first_user_text(input_messages: list[ChatMessage]) -> str | None:
@@ -294,7 +563,9 @@ class LiveConsumer(ModelEventSink):
             if not tool_use_id:
                 continue
             # Clear pending-subagent entry (no-op for non-Task tool_results).
-            self._pending_subagents.pop(tool_use_id, None)
+            prompt = self._pending_subagents.pop(tool_use_id, None)
+            if prompt is not None:
+                self._detached_prompts[tool_use_id] = prompt
             agent = self._open_agents.pop(tool_use_id, None)
             if agent is None:
                 continue

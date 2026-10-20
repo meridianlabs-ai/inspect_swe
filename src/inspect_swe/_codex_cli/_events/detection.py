@@ -40,6 +40,9 @@ class SpawnedAgent:
     reasoning_effort: str | None
     task_name: str | None = None
     """Multi-Agent V2 task name (e.g. "write_fizzbuzz"); None under V1."""
+    declared_type: str | None = None
+    """The `agent_type` argument as given; None when the spawn omits it
+    (Codex then inherits the parent's type or uses its default)."""
 
     @property
     def name(self) -> str:
@@ -105,6 +108,9 @@ def find_spawned_agents(tool_calls: list[ToolCall] | None) -> list[SpawnedAgent]
                 message=message,
                 reasoning_effort=str(reasoning) if reasoning else None,
                 task_name=str(task_name) if task_name else None,
+                declared_type=str(args["agent_type"])
+                if args.get("agent_type")
+                else None,
             )
         )
     return result
@@ -152,6 +158,20 @@ def spawn_result(message: ChatMessageTool) -> SpawnResult | None:
                 nickname=nickname if isinstance(nickname, str) and nickname else None,
             )
     return None
+
+
+def spawn_failed(message: ChatMessageTool) -> bool:
+    """Whether a `spawn_agent` tool result reports that no agent was spawned.
+
+    A successful spawn returns a JSON object under both V1 and V2 (see
+    `spawn_result`). Codex reports a failed one -- e.g. "Reasoning effort
+    `low` is not supported for model ..." -- as plain text. Only a result
+    that isn't a JSON object (or carries a tool error) counts, so an
+    unrecognized success format never reads as a failure.
+    """
+    if message.function != SPAWN_AGENT:
+        return False
+    return message.error is not None or not isinstance(_loads(message.text), dict)
 
 
 def completed_thread_ids(input_messages: list[ChatMessage]) -> set[str]:
