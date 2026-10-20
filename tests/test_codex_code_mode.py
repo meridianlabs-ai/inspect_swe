@@ -1,6 +1,5 @@
 """Unit tests for the Codex code-mode check on bridged tools (no Docker)."""
 
-import json
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -238,10 +237,25 @@ def test_alignment_uses_a_custom_catalog(
         # a TOML string keeps a quote character inside it
         ('"/tmp/catalog.json\'"', "/tmp/catalog.json'"),
         ("'/tmp/catalog.json\"'", '/tmp/catalog.json"'),
-        # a value that is not TOML has every quote trimmed from its ends
-        ("/tmp/catalog.json'", "/tmp/catalog.json"),
+        # TOML escapes
+        (r'"/tmp/\u6a21\u578b.json"', "/tmp/模型.json"),
+        (r'"/tmp/\"c\".json"', '/tmp/"c".json'),
+        (r"'/tmp/c\d.json'", r"/tmp/c\d.json"),
+        # multi-line strings, which can end in a quote or start with a newline
+        ("'''/tmp/catalog.json''''", "/tmp/catalog.json'"),
+        ('"""/tmp/catalog.json""""', '/tmp/catalog.json"'),
+        ("'''\n/tmp/catalog.json'''", "/tmp/catalog.json"),
+        ('"""\n/tmp/catalog.json"""', "/tmp/catalog.json"),
+        # a comment after the string, and space around it
+        ('"/tmp/catalog.json" # catalog', "/tmp/catalog.json"),
+        (' "/tmp/catalog.json" ', "/tmp/catalog.json"),
         # TOML allows a tab in a string
         ('"/tmp/catalog\tjson\'"', "/tmp/catalog\tjson'"),
+        # a value that is not TOML has every quote trimmed from its ends
+        ("/tmp/catalog.json'", "/tmp/catalog.json"),
+        ("'/tmp/catalog.json'\"", "/tmp/catalog.json"),
+        ('"/tmp/a\nb\'"', "/tmp/a\nb"),
+        ("'/tmp/a\x01b\"'", "/tmp/a\x01b"),
     ],
 )
 def test_alignment_reads_the_file_codex_reads(
@@ -249,7 +263,7 @@ def test_alignment_reads_the_file_codex_reads(
 ) -> None:
     decoy = '{"models": [{"slug": "gpt-5.7", "priority": 0}]}'
     candidates = ["/tmp/catalog.json", "/tmp/catalog.json'", '/tmp/catalog.json"']
-    candidates += [file, file.strip("\"'")]
+    candidates += [file, path.strip(), path.strip().strip("\"'"), path[1:-1]]
     sandbox = _Sandbox(
         {name: CUSTOM_CATALOG if name == file else decoy for name in candidates}
     )
@@ -302,36 +316,25 @@ def test_alignment_falls_back_to_the_release_catalog_when_unreadable(
 @pytest.mark.parametrize(
     "path",
     [
-        # TOML escapes
-        json.dumps("/tmp/模型.json"),
-        r'"/tmp/\"c\".json"',
-        # multi-line strings, which can end in a quote or start with a newline
-        "'''/tmp/catalog.json''''",
-        '"""/tmp/catalog.json""""',
-        "'''\n/tmp/catalog.json'''",
-        '"""\n/tmp/catalog.json"""',
-        # text after the closing quote
-        "'/tmp/catalog.json'\"",
-        '"/tmp/catalog.json" # catalog',
-        # control characters TOML rejects, so Codex trims the quotes instead
-        '"/tmp/a\nb\'"',
-        "'/tmp/a\nb\"'",
-        '"/tmp/a\rb\'"',
-        "'/tmp/a\x01b\"'",
-        '"/tmp/a\x7fb\'"',
+        # TOML values that are not strings
+        "1",
+        "true",
+        '["/tmp/catalog.json"]',
+        '{ path = "/tmp/catalog.json" }',
+        # TOML 1.1 escapes, which tomllib reads only from Python 3.15
+        r'"/tmp/\x41.json"',
+        r'"/tmp/\e.json"',
     ],
 )
-def test_alignment_reads_only_plain_quoted_values(
+def test_alignment_falls_back_for_values_that_name_no_file(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, path: str
 ) -> None:
-    """Other quoted values are not read, even if a file they could name exists."""
-    names = ["/tmp/catalog.json", "/tmp/catalog.json'", '/tmp/catalog.json"']
-    names += ["/tmp/模型.json", '/tmp/"c".json', path.strip("\"'"), path[1:-1]]
+    """No file is guessed for these values, even if one they could name exists."""
+    names = ["/tmp/catalog.json", path.strip("\"'"), path[1:-1]]
     sandbox = _Sandbox({name: CUSTOM_CATALOG for name in names})
     overrides = {"model_catalog_json": path}
     assert _align(monkeypatch, "gpt-5.9", overrides, sandbox) == "gpt-5.5"
-    assert "one pair of quotes without escapes" in caplog.text
-    assert sandbox.reads == 0
+    assert "could not read model_catalog_json" in caplog.text
 
 
 def test_alignment_falls_back_for_a_dotted_key(

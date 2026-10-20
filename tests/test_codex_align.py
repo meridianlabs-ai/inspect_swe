@@ -77,22 +77,26 @@ class _CaptureFirstRequest:
 
 
 def _run_codex(
-    model: str, custom_catalog: dict[str, Any] | None = None
+    model: str,
+    custom_catalog: dict[str, Any] | None = None,
+    catalog_value: str | None = None,
 ) -> _CaptureFirstRequest:
-    log, capture = _run_codex_log(model, custom_catalog)
+    log, capture = _run_codex_log(model, custom_catalog, catalog_value)
     assert capture.tool_names is not None, "Codex made no bridged request"
     return capture
 
 
 def _run_codex_log(
-    model: str, custom_catalog: dict[str, Any] | None = None
+    model: str,
+    custom_catalog: dict[str, Any] | None = None,
+    catalog_value: str | None = None,
 ) -> tuple[EvalLog, _CaptureFirstRequest]:
     capture = _CaptureFirstRequest(respond=custom_catalog is not None)
     files = config_overrides = None
     version = "auto"
     if custom_catalog is not None:
         files = {_CATALOG_FILE: json.dumps(custom_catalog)}
-        config_overrides = {"model_catalog_json": f'"{_CATALOG_FILE}"'}
+        config_overrides = {"model_catalog_json": catalog_value or f'"{_CATALOG_FILE}"'}
         version = _CODEX_VERSION
     task = Task(
         dataset=[Sample(input="Print the word DONE and then stop.", files=files)],
@@ -206,6 +210,18 @@ def test_codex_align_custom_catalog(
     assert _offers_apply_patch(capture.tool_names or []), (
         f"expected the custom entry's apply_patch, got: {capture.tool_names}"
     )
+
+
+@pytest.mark.slow
+@skip_if_no_docker
+def test_codex_align_custom_catalog_toml_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Codex decodes the TOML escape too, so both read the custom catalog
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    value = json.dumps(_CATALOG_FILE).replace("models", "\\u006dodels")
+    capture = _run_codex("openai/gpt-9.9", _custom_catalog(), value)
+    assert capture.system_prompt and _CUSTOM_MARKER in capture.system_prompt
 
 
 @pytest.mark.slow
