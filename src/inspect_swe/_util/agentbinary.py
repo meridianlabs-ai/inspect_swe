@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Literal, NamedTuple
 
+import anyio
 from inspect_ai.util import SandboxEnvironment, concurrency
 from inspect_ai.util import sandbox as sandbox_env
 
@@ -234,7 +235,11 @@ async def ensure_agent_binary_installed(
                 # the entrypoint is chmod'd as a belt-and-suspenders measure
                 archive_path = f"{install_path}.tar.gz"
                 if source.package_to_tar_gz is not None:
-                    binary_bytes = source.package_to_tar_gz(binary_bytes)
+                    # cpu-bound (seconds for a large archive): keep it off the
+                    # event loop so other samples keep running
+                    binary_bytes = await anyio.to_thread.run_sync(
+                        source.package_to_tar_gz, binary_bytes
+                    )
                 await sandbox.write_file(archive_path, binary_bytes)
                 await sandbox_exec(
                     sandbox,

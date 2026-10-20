@@ -1,5 +1,6 @@
 import inspect
 import json
+import re
 import shlex
 from logging import getLogger
 from pathlib import Path
@@ -67,6 +68,10 @@ DSH_PROVIDER = "deepseek-official"
 DSH_DEFAULT_CONTEXT_WINDOW = 1_000_000
 
 logger = getLogger(__name__)
+
+# dsh's mcp-client namespaces tools as mcp__<serverName>__<tool> and only
+# accepts these server names
+_MCP_SERVER_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 
 # GenerateFilter is a union of Model-first and (deprecated) str-first callables;
 # the bridge dispatches on the user filter's first-parameter annotation. Our
@@ -337,6 +342,7 @@ def deepseek_harness(
             agent_prompt = prompt
             attempt_count = 0
             prompt_file = f"{dsh_home}/prompt.txt"
+            events_file = f"{dsh_home}/events.jsonl"
 
             while True:
                 agent_cmd = cmd.copy()
@@ -353,13 +359,17 @@ def deepseek_harness(
                     )
 
                 # the task is read from stdin (no positional task), which
-                # keeps a prompt starting with "-" from parsing as an option
+                # keeps a prompt starting with "-" from parsing as an option.
+                # the event stream goes to a file: it opens with the one
+                # `session` event, which a long run would push out of the
+                # bounded captured stdout.
                 await sbox.write_file(prompt_file, agent_prompt)
                 result = await sbox.exec_remote(
                     cmd=[
                         "bash",
                         "-c",
-                        f'exec "$@" < {shlex.quote(prompt_file)}',
+                        f'exec "$@" < {shlex.quote(prompt_file)} '
+                        f"> {shlex.quote(events_file)}",
                         "bash",
                     ]
                     + agent_cmd,
@@ -372,11 +382,23 @@ def deepseek_harness(
                     stream=False,
                 )
 
+                # first line (session) and the stream's tail (turn end, errors)
+                events_result = await sbox.exec(
+                    [
+                        "sh",
+                        "-c",
+                        'head -n 1 "$1"; tail -n 20 "$1"',
+                        "sh",
+                        events_file,
+                    ],
+                    user=user,
+                )
+                events = _parse_events(events_result.stdout)
+
                 if debug:
-                    debug_output.append(result.stdout)
+                    debug_output.append(events_result.stdout)
                     debug_output.append(result.stderr)
 
-                events = _parse_events(result.stdout)
                 session_id = _session_id(events) or session_id
                 if session_id is not None:
                     store().set(SESSION_ID, session_id)
@@ -417,6 +439,11 @@ def deepseek_harness(
 
 
 def _validate_mcp_server(server: MCPServerConfig) -> None:
+    if not _MCP_SERVER_NAME_RE.fullmatch(server.name):
+        raise ValueError(
+            f"MCP server {server.name!r}: deepseek_harness requires server names "
+            "of 1-32 letters, digits, '_' or '-'."
+        )
     if server.tools != "all":
         raise ValueError(
             f"MCP server {server.name!r}: deepseek_harness does not support "

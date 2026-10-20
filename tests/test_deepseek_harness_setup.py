@@ -255,6 +255,10 @@ def test_profile_patch_inserts_mcp_servers() -> None:
 
 def test_validate_mcp_server_rejects_tool_filter_and_sse() -> None:
     _validate_mcp_server(MCPServerConfigStdio(name="ok", command="srv"))
+    with pytest.raises(ValueError, match="server names"):
+        _validate_mcp_server(MCPServerConfigStdio(name="my.tools", command="srv"))
+    with pytest.raises(ValueError, match="server names"):
+        _validate_mcp_server(MCPServerConfigStdio(name="x" * 33, command="srv"))
     with pytest.raises(ValueError, match="tool filtering"):
         _validate_mcp_server(
             MCPServerConfigStdio(name="filtered", command="srv", tools=["a"])
@@ -347,32 +351,93 @@ def test_restore_reasoning_recovers_original_block_and_drops_placeholder() -> No
     assert content == [original]
 
 
-def test_restore_reasoning_without_original_keeps_readable_text() -> None:
+def test_restore_reasoning_leaves_unmatched_text_alone() -> None:
     messages: list[ChatMessage] = [
         ChatMessageAssistant(
             content=[
-                ContentText(text="<think>\nmulti\nline\n</think>"),
-                ContentText(text="answer"),
-            ]
+                ContentText(text="<think>no original</think>"),
+                ContentText(text="(no content)"),
+            ],
+            tool_calls=[ToolCall(id="1", function="bash", arguments={})],
         ),
     ]
     restored, changed = _restore(messages, [])
+    assert not changed
+    assert restored[0].content == [
+        ContentText(text="<think>no original</think>"),
+        ContentText(text="(no content)"),
+    ]
+
+
+def test_restore_reasoning_matches_redacted_block_by_flattened_text() -> None:
+    original = ContentReasoning(
+        reasoning="ENCRYPTED", redacted=True, summary="short summary"
+    )
+    messages: list[ChatMessage] = [
+        ChatMessageAssistant(
+            content=[
+                ContentText(text="<think>short summary</think>"),
+                ContentText(text="ok"),
+            ]
+        ),
+    ]
+    restored, changed = _restore(messages, [_model_event([original])])
     assert changed
-    content = restored[0].content
-    assert isinstance(content, list)
-    assert isinstance(content[0], ContentReasoning)
-    assert content[0].reasoning == "\nmulti\nline\n"
-    assert content[0].signature is None
-    assert content[1] == ContentText(text="answer")
+    assert restored[0].content == [original, ContentText(text="ok")]
+
+
+def test_restore_reasoning_skips_ambiguous_text() -> None:
+    first = ContentReasoning(reasoning="ENC-1", redacted=True)
+    second = ContentReasoning(reasoning="ENC-2", redacted=True)
+    messages: list[ChatMessage] = [
+        ChatMessageAssistant(
+            content=[ContentText(text="<think></think>"), ContentText(text="ok")]
+        ),
+    ]
+    restored, changed = _restore(
+        messages, [_model_event([first]), _model_event([second])]
+    )
+    assert not changed
+    assert restored[0].content == [
+        ContentText(text="<think></think>"),
+        ContentText(text="ok"),
+    ]
+
+
+def test_restore_reasoning_rescans_pending_model_events() -> None:
+    original = ContentReasoning(reasoning="late", signature="sig")
+    pending = _model_event([])
+    pending.pending = True
+    events = [pending]
+    fake_transcript = Mock()
+    fake_transcript.events = events
+    restorer = ReasoningRestorer()
+
+    def messages() -> list[ChatMessage]:
+        return [
+            ChatMessageAssistant(
+                content=[ContentText(text="<think>late</think>"), ContentText(text="x")]
+            )
+        ]
+
+    with patch.object(_REASONING_MODULE, "transcript", return_value=fake_transcript):
+        assert not restorer.restore(messages())
+        # the pending call completes; a later scan must still see it
+        events[0] = _model_event([original])
+        restored = messages()
+        assert restorer.restore(restored)
+    assert restored[0].content == [original, ContentText(text="x")]
 
 
 def test_restore_reasoning_keeps_sole_placeholder_and_plain_text() -> None:
+    original = ContentReasoning(reasoning="r", signature="s")
     messages: list[ChatMessage] = [
-        ChatMessageUser(content="<think>user text is untouched</think>"),
+        ChatMessageUser(content="<think>r</think>"),
         ChatMessageAssistant(content=[ContentText(text="(no content)")]),
-        ChatMessageAssistant(content=[ContentText(text="no <think>here</think>")]),
+        ChatMessageAssistant(content=[ContentText(text="no <think>r</think>")]),
     ]
-    restored, changed = _restore(messages, [])
+    restored, changed = _restore(messages, [_model_event([original])])
     assert not changed
+    assert restored[0].content == "<think>r</think>"
     assert restored[1].content == [ContentText(text="(no content)")]
-    assert restored[2].content == [ContentText(text="no <think>here</think>")]
+    assert restored[2].content == [ContentText(text="no <think>r</think>")]
