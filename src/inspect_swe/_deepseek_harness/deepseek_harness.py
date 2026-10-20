@@ -274,13 +274,10 @@ def deepseek_harness(
 
             # per-run profile patch (model route, telemetry, mcp servers)
             patch_file = f"{dsh_home}/inspect.patch.yml"
-            await sbox.write_file(
-                patch_file,
-                _profile_patch(
-                    model=presented_model,
-                    context_window=resolved_context_window,
-                    mcp_servers=all_mcp_servers,
-                ),
+            patch = _profile_patch(
+                model=presented_model,
+                context_window=resolved_context_window,
+                mcp_servers=all_mcp_servers,
             )
 
             prompt, has_assistant_response = build_user_prompt(state.messages)
@@ -326,7 +323,7 @@ def deepseek_harness(
                 "--profile",
                 DSH_PROFILE,
                 "--patch",
-                patch_file,
+                "/dev/fd/3",
                 "--json",
             ]
 
@@ -363,11 +360,17 @@ def deepseek_harness(
                 # the event stream goes to a file: it opens with the one
                 # `session` event, which a long run would push out of the
                 # bounded captured stdout.
+                # the profile patch can carry MCP auth headers, so it is
+                # handed to dsh as an open descriptor and unlinked before
+                # launch rather than left at a path the agent's tools can read
                 await sbox.write_file(prompt_file, agent_prompt)
+                await sbox.write_file(patch_file, patch)
                 result = await sbox.exec_remote(
                     cmd=[
                         "bash",
                         "-c",
+                        f"exec 3< {shlex.quote(patch_file)} && "
+                        f"rm -f {shlex.quote(patch_file)} && "
                         f'exec "$@" < {shlex.quote(prompt_file)} '
                         f"> {shlex.quote(events_file)}",
                         "bash",
