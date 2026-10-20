@@ -25,7 +25,8 @@ def github_api_headers(url: str) -> dict[str, str]:
     api.github.com only so it is never sent to other hosts (e.g. release-asset
     downloads that redirect to objects.githubusercontent.com).
     """
-    if urlparse(url).hostname == "api.github.com":
+    parsed = urlparse(url)
+    if parsed.scheme == "https" and parsed.hostname == "api.github.com":
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         if token:
             return {"Authorization": f"Bearer {token}"}
@@ -33,13 +34,17 @@ def github_api_headers(url: str) -> dict[str, str]:
 
 
 async def download_file(url: str) -> bytes:
+    headers = github_api_headers(url)
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         attempts = len(_RETRY_DELAYS) + 1
         for attempt in range(attempts):
             try:
-                response = await client.get(
-                    url, follow_redirects=True, headers=github_api_headers(url)
-                )
+                response = await client.get(url, follow_redirects=True, headers=headers)
+                if response.status_code == 401 and headers:
+                    # an expired or revoked token gets 401 even on public
+                    # endpoints; fall back to the unauthenticated request
+                    headers = {}
+                    response = await client.get(url, follow_redirects=True)
                 response.raise_for_status()
                 return response.content
             except (httpx.TransportError, httpx.HTTPStatusError) as ex:

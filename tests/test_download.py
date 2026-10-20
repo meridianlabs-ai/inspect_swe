@@ -276,6 +276,15 @@ def test_github_api_headers_never_sent_to_other_hosts(
     assert github_api_headers("https://evil.example.com/api.github.com/x") == {}
 
 
+def test_github_api_headers_never_sent_over_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect_swe._util.download import github_api_headers
+
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    assert github_api_headers("http://api.github.com/repos/openai/codex") == {}
+
+
 def test_ensure_pip_available_noop_when_present() -> None:
     from inspect_swe._util.agentwheel import _ensure_pip_available
 
@@ -312,6 +321,7 @@ def test_ensure_pip_available_bootstraps_when_missing() -> None:
 
 def _download_with_transport(
     handler: Callable[[httpx.Request], httpx.Response],
+    url: str = "https://example.com/file",
 ) -> bytes:
     """Run download_file against a mock transport with zero retry delays."""
     transport = httpx.MockTransport(handler)
@@ -324,7 +334,7 @@ def _download_with_transport(
         patch("httpx.AsyncClient", client_with_mock_transport),
         patch("inspect_swe._util.download._RETRY_DELAYS", (0.0, 0.0, 0.0)),
     ):
-        return asyncio.run(download_file("https://example.com/file"))
+        return asyncio.run(download_file(url))
 
 
 def test_download_file_retries_transient_errors() -> None:
@@ -369,6 +379,25 @@ def test_download_file_does_not_retry_client_errors() -> None:
     with pytest.raises(httpx.HTTPStatusError):
         _download_with_transport(handler)
     assert calls == 1
+
+
+def test_download_file_retries_unauthenticated_after_bad_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 401 from a bad token falls back to an unauthenticated request."""
+    monkeypatch.setenv("GITHUB_TOKEN", "expired-token")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    auth_headers: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth_headers.append(request.headers.get("Authorization"))
+        if "Authorization" in request.headers:
+            return httpx.Response(401)
+        return httpx.Response(200, content=b"ok")
+
+    url = "https://api.github.com/repos/openai/codex/releases/latest"
+    assert _download_with_transport(handler, url) == b"ok"
+    assert auth_headers == ["Bearer expired-token", None]
 
 
 def test_download_file_raises_after_retries_exhausted() -> None:
