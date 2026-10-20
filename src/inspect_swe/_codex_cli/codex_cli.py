@@ -27,6 +27,7 @@ from inspect_ai.tool import (
     MCPServerConfig,
     MCPServerConfigHTTP,
     Skill,
+    Tool,
     install_skills,
     read_skills,
 )
@@ -36,6 +37,7 @@ from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 from typing_extensions import Unpack
 
 from inspect_swe._util._async import is_callable_coroutine
+from inspect_swe._util.bridged_tools import resolve_bridged_tools
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
@@ -99,7 +101,7 @@ def codex_cli(
     model_config: str | None = None,
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
-    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+    bridged_tools: Sequence[Tool | BridgedToolsSpec] | None = None,
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     mcp_startup_timeout: int | None = MCP_STARTUP_TIMEOUT_SEC,
     web_search: CodexWebSearch = "live",
@@ -149,7 +151,8 @@ def codex_cli(
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
-            tools available to the agent running in the sandbox. In Codex code
+            tools available to the agent running in the sandbox. Plain Tools
+            are grouped into one MCP server named `tools`. In Codex code
             mode (models whose catalog entry sets `tool_mode = "code_mode_only"`)
             the model calls these tools from code it writes rather than
             proposing each call, so the agent raises before launch unless each
@@ -360,6 +363,9 @@ def codex_cli(
                 "config_overrides={'approvals_reviewer': ...}."
             )
 
+    # resolve plain Tools into specs once, so bad input fails at construction
+    bridged_tools_specs = resolve_bridged_tools(bridged_tools)
+
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "codex_cli_model_port"
@@ -389,7 +395,7 @@ def codex_cli(
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,
-                bridged_tools=bridged_tools,
+                bridged_tools=bridged_tools_specs,
                 web_search=effective_web_search != "disabled",
                 model_event_sink=consumer,
                 checkpointer=cp,
@@ -502,7 +508,11 @@ def codex_cli(
             # align Codex's `--model` slug to the real bridged model, and fail
             # before launch if code mode would deny every bridged tool call
             codex_model = await _resolve_codex_model_checked(
-                model, model_config, codex_version, config_overrides, bridged_tools
+                model,
+                model_config,
+                codex_version,
+                config_overrides,
+                bridged_tools_specs,
             )
 
             # determine CODEX_HOME (default to agent working dir)
