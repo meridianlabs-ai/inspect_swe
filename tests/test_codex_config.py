@@ -1,3 +1,4 @@
+import tomllib
 from typing import Any
 
 import pytest
@@ -85,8 +86,7 @@ def test_to_toml_escapes_remaining_control_characters() -> None:
     value = "esc \x1b bell \x07 del \x7f"
     toml = to_toml({"policy": value})
     assert toml == 'policy = "esc \\u001B bell \\u0007 del \\u007F"'
-    # round-trip via the stdlib parser (tomllib requires Python >= 3.11)
-    tomllib = pytest.importorskip("tomllib")
+    # round-trip via the stdlib parser
     assert tomllib.loads(toml) == {"policy": value}
 
 

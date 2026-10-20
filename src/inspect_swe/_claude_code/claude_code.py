@@ -19,6 +19,7 @@ from inspect_ai.tool import (
     MCPServerConfig,
     MCPServerConfigHTTP,
     Skill,
+    Tool,
     install_skills,
     read_skills,
 )
@@ -44,6 +45,7 @@ from inspect_swe._claude_code._events.stream import (
     StderrEvent,
     claude_code_event_stream,
 )
+from inspect_swe._util.bridged_tools import resolve_bridged_tools
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
@@ -122,7 +124,7 @@ def claude_code(
     system_prompt: str | None = None,
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
-    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+    bridged_tools: Sequence[Tool | BridgedToolsSpec] | None = None,
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     disallowed_tools: list[str] | None = None,
     centaur: bool | CentaurOptions = False,
@@ -173,7 +175,8 @@ def claude_code(
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
-            tools available to the agent running in the sandbox.
+            tools available to the agent running in the sandbox. Plain Tools
+            are grouped into one MCP server named `tools`.
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
         disallowed_tools: List of tool names to disallow entirely (disallowing
@@ -307,6 +310,9 @@ def claude_code(
     # reads the session_id cell that execute() rebinds on checkpoint restore.
     pinned_filter = pin_system_prompt_filter(lambda: session_id, filter)
 
+    # resolve plain Tools into specs once, so bad input fails at construction
+    bridged_tools_specs = resolve_bridged_tools(bridged_tools)
+
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "claude_code_model_port"
@@ -348,7 +354,7 @@ def claude_code(
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,
-                bridged_tools=bridged_tools,
+                bridged_tools=bridged_tools_specs,
                 web_search=not web_search_tool_disallowed(
                     disallowed_tools, "WebSearch"
                 ),
