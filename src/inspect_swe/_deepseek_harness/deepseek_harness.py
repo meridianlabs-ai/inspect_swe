@@ -27,6 +27,7 @@ from inspect_ai.model import (
     ModelOutput,
     get_model_info,
 )
+from inspect_ai.model._generate_config import active_generate_config
 from inspect_ai.scorer import score
 from inspect_ai.tool import (
     MCPServerConfig,
@@ -204,6 +205,9 @@ def deepseek_harness(
         ) -> ModelOutput | GenerateInput | None:
             # in place, so the change also lands in the transcript and state
             changed = reasoning_restorer.restore(messages)
+            if _reasoning_unset(model, config):
+                config = config.merge(GenerateConfig(reasoning_effort="high"))
+                changed = True
             if filter is not None:
                 if filter_is_legacy:
                     result = await cast(_StrFilter, filter)(
@@ -409,6 +413,15 @@ def deepseek_harness(
         return bridge.state
 
     return agent_with(execute, name=name, description=description)
+
+
+def _reasoning_unset(model: Model, config: GenerateConfig) -> bool:
+    # dsh requests high effort natively, but the bridge drops its request-level
+    # config; apply that default unless the eval sets reasoning itself
+    return all(
+        c.reasoning_effort is None and c.reasoning_tokens is None
+        for c in (config, model.config, active_generate_config())
+    )
 
 
 def _validate_mcp_server(server: MCPServerConfig) -> None:

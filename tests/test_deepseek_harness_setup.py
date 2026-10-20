@@ -25,6 +25,7 @@ from inspect_swe._deepseek_harness import agentbinary
 from inspect_swe._deepseek_harness.deepseek_harness import (
     _parse_events,
     _profile_patch,
+    _reasoning_unset,
     _resolve_context_window,
     _session_id,
     _turn_end_reason,
@@ -441,3 +442,22 @@ def test_restore_reasoning_keeps_sole_placeholder_and_plain_text() -> None:
     assert restored[0].content == "<think>r</think>"
     assert restored[1].content == [ContentText(text="(no content)")]
     assert restored[2].content == [ContentText(text="no <think>r</think>")]
+
+
+def test_reasoning_default_applies_only_when_unset() -> None:
+    model = Mock()
+    model.config = GenerateConfig()
+    with patch.object(
+        _DSH_MODULE, "active_generate_config", return_value=GenerateConfig()
+    ):
+        assert _reasoning_unset(model, GenerateConfig())
+        assert not _reasoning_unset(model, GenerateConfig(reasoning_tokens=1024))
+        model.config = GenerateConfig(reasoning_effort="low")
+        assert not _reasoning_unset(model, GenerateConfig())
+    model.config = GenerateConfig()
+    with patch.object(
+        _DSH_MODULE,
+        "active_generate_config",
+        return_value=GenerateConfig(reasoning_effort="medium"),
+    ):
+        assert not _reasoning_unset(model, GenerateConfig())
