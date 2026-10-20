@@ -261,6 +261,11 @@ def test_alignment_uses_a_custom_catalog(
         # an escape TOML rejects, and a \x that is not a TOML 1.1 escape
         (r'"/tmp/c\d.json"', r"/tmp/c\d.json"),
         (r'"/tmp/\x4g.json"', r"/tmp/\x4g.json"),
+        # values invalid in TOML 1.1 too, though they hold a TOML 1.1 escape
+        (r'"/tmp/c\d\e.json"', r"/tmp/c\d\e.json"),
+        (r'"/tmp/\x41\d.json"', r"/tmp/\x41\d.json"),
+        (r'"/tmp/\x41.json', r"/tmp/\x41.json"),
+        (r'"/tmp/\e.json" trailing', r'/tmp/\e.json" trailing'),
     ],
 )
 def test_alignment_reads_the_file_codex_reads(

@@ -898,7 +898,23 @@ async def _resolve_codex_model_checked(
 
 
 # a TOML 1.1 escape (\xHH or \e) not preceded by an escaped backslash
-_TOML_1_1_ESCAPE = re.compile(r"(?<!\\)(?:\\\\)*(\\x[0-9A-Fa-f]{2}|\\e)")
+_TOML_1_1_ESCAPE = re.compile(r"(?<!\\)((?:\\\\)*)(\\x[0-9A-Fa-f]{2}|\\e)")
+
+
+def _toml_1_1_escape(value: str) -> str | None:
+    """The first TOML 1.1 escape in a value tomllib rejects only for those.
+
+    The escapes are swapped for a TOML 1.0 one just to check that the rest of
+    the value parses; the result is never used as a path.
+    """
+    escape = _TOML_1_1_ESCAPE.search(value)
+    if escape is None:
+        return None
+    try:
+        tomllib.loads("_x_ = " + _TOML_1_1_ESCAPE.sub(r"\1\\t", value))
+    except tomllib.TOMLDecodeError:
+        return None
+    return escape.group(2)
 
 
 async def _read_model_catalog_json(
@@ -925,11 +941,11 @@ async def _read_model_catalog_json(
     try:
         path = tomllib.loads(f"_x_ = {value}")["_x_"]
     except tomllib.TOMLDecodeError:
-        escape = _TOML_1_1_ESCAPE.search(value) if value.startswith('"') else None
+        escape = _toml_1_1_escape(value)
         if escape:
             logger.warning(
                 f"codex_cli could not read model_catalog_json {value!r}: on "
-                f"Python 3.11-3.14 the TOML 1.1 escape '{escape.group(1)}' is "
+                f"Python 3.11-3.14 the TOML 1.1 escape '{escape}' is "
                 "unsupported, so it chooses --model from the Codex release "
                 "catalog. Use a bare path or a TOML literal string."
             )
