@@ -1,6 +1,5 @@
 """Unit tests for the Codex code-mode check on bridged tools (no Docker)."""
 
-import sys
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -235,45 +234,20 @@ def test_alignment_uses_a_custom_catalog(
 @pytest.mark.parametrize(
     "path,file",
     [
-        # a TOML string keeps a quote character inside it
-        ('"/tmp/catalog.json\'"', "/tmp/catalog.json'"),
-        ("'/tmp/catalog.json\"'", '/tmp/catalog.json"'),
-        # TOML escapes
-        (r'"/tmp/\u6a21\u578b.json"', "/tmp/模型.json"),
-        (r'"/tmp/\"c\".json"', '/tmp/"c".json'),
-        (r"'/tmp/c\d.json'", r"/tmp/c\d.json"),
-        (r'"/tmp/\\x41.json"', r"/tmp/\x41.json"),
-        # multi-line strings, which can end in a quote or start with a newline
-        ("'''/tmp/catalog.json''''", "/tmp/catalog.json'"),
-        ('"""/tmp/catalog.json""""', '/tmp/catalog.json"'),
-        ("'''\n/tmp/catalog.json'''", "/tmp/catalog.json"),
-        ('"""\n/tmp/catalog.json"""', "/tmp/catalog.json"),
-        # a comment after the string, and space around it
-        ('"/tmp/catalog.json" # catalog', "/tmp/catalog.json"),
-        (' "/tmp/catalog.json" ', "/tmp/catalog.json"),
-        # TOML allows a tab in a string
-        ('"/tmp/catalog\tjson\'"', "/tmp/catalog\tjson'"),
-        # a value that is not TOML has every quote trimmed from its ends
-        ("/tmp/catalog.json'", "/tmp/catalog.json"),
-        ("'/tmp/catalog.json'\"", "/tmp/catalog.json"),
-        ('"/tmp/a\nb\'"', "/tmp/a\nb"),
-        ("'/tmp/a\x01b\"'", "/tmp/a\x01b"),
-        # an escape TOML rejects, and a \x that is not a TOML 1.1 escape
-        (r'"/tmp/c\d.json"', r"/tmp/c\d.json"),
-        (r'"/tmp/\x4g.json"', r"/tmp/\x4g.json"),
-        # values invalid in TOML 1.1 too, though they hold a TOML 1.1 escape
-        (r'"/tmp/c\d\e.json"', r"/tmp/c\d\e.json"),
-        (r'"/tmp/\x41\d.json"', r"/tmp/\x41\d.json"),
-        (r'"/tmp/\x41.json', r"/tmp/\x41.json"),
-        (r'"/tmp/\e.json" trailing', r'/tmp/\e.json" trailing'),
+        ("/tmp/catalog.json", "/tmp/catalog.json"),
+        ('"/tmp/catalog.json"', "/tmp/catalog.json"),
+        ("'/tmp/catalog.json'", "/tmp/catalog.json"),
+        (" /tmp/catalog.json ", "/tmp/catalog.json"),
+        (' "/tmp/my catalog.json" ', "/tmp/my catalog.json"),
+        # quotes keep the spaces inside them
+        ('"/tmp/catalog.json "', "/tmp/catalog.json "),
     ],
 )
 def test_alignment_reads_the_file_codex_reads(
     monkeypatch: pytest.MonkeyPatch, path: str, file: str
 ) -> None:
     decoy = '{"models": [{"slug": "gpt-5.7", "priority": 0}]}'
-    candidates = ["/tmp/catalog.json", "/tmp/catalog.json'", '/tmp/catalog.json"']
-    candidates += [file, path.strip(), path.strip().strip("\"'"), path[1:-1]]
+    candidates = ["/tmp/catalog.json", "/tmp/catalog.json ", file, path.strip()]
     sandbox = _Sandbox(
         {name: CUSTOM_CATALOG if name == file else decoy for name in candidates}
     )
@@ -345,31 +319,40 @@ def test_alignment_falls_back_for_values_that_name_no_file(
 
 
 @pytest.mark.parametrize(
-    "path,escape,decoded",
+    "path,decoded",
     [
-        (r'"/tmp/\x41.json"', r"\x41", "/tmp/A.json"),
-        (r'"/tmp/\e.json"', r"\e", "/tmp/\x1b.json"),
-        (r'"/tmp/\\\x41.json"', r"\x41", "/tmp/\\A.json"),
+        # escapes and backslashes
+        (r'"/tmp/\u0063atalog.json"', "/tmp/catalog.json"),
+        (r'"/tmp/\x63atalog.json"', "/tmp/catalog.json"),
+        (r"'/tmp/c\d.json'", r"/tmp/c\d.json"),
+        # quotes inside, unmatched or tripled
+        ('"/tmp/a\'b.json"', "/tmp/a'b.json"),
+        ("/tmp/catalog.json'", "/tmp/catalog.json"),
+        ("\"/tmp/catalog.json'", "/tmp/catalog.json"),
+        ('"/tmp/catalog.json" # catalog', "/tmp/catalog.json"),
+        ("'''/tmp/catalog.json'''", "/tmp/catalog.json"),
+        ('"""\n/tmp/catalog.json"""', "/tmp/catalog.json"),
+        # control characters, which Codex and Python trim differently
+        ('"/tmp/a\tb.json"', "/tmp/a\tb.json"),
+        ("/tmp/catalog.json\x1c", "/tmp/catalog.json\x1c"),
+        ("'/tmp/a\x7fb.json'", "/tmp/a\x7fb.json"),
+        # whitespace Codex trims from a bare path
+        ("/tmp/catalog.json ", "/tmp/catalog.json"),
     ],
 )
-def test_alignment_warns_for_toml_1_1_escapes(
+def test_alignment_refuses_values_that_are_not_a_plain_path(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     path: str,
-    escape: str,
     decoded: str,
 ) -> None:
-    """Codex decodes these; tomllib does so only from Python 3.15."""
-    names = ["/tmp/catalog.json", decoded, path.strip('"'), path[1:-1]]
+    """No file is read for these, even one Codex would read."""
+    names = ["/tmp/catalog.json", decoded, path.strip(), path.strip("\"'")]
     sandbox = _Sandbox({name: CUSTOM_CATALOG for name in names})
     overrides = {"model_catalog_json": path}
-    if sys.version_info >= (3, 15):
-        assert _align(monkeypatch, "gpt-5.9", overrides, sandbox) == "gpt-5.9"
-        assert sandbox.reads == 1
-    else:
-        assert _align(monkeypatch, "gpt-5.9", overrides, sandbox) == "gpt-5.5"
-        assert f"the TOML 1.1 escape '{escape}' is unsupported" in caplog.text
-        assert sandbox.reads == 0
+    assert _align(monkeypatch, "gpt-5.9", overrides, sandbox) == "gpt-5.5"
+    assert "reads only a plain absolute path, optionally quoted" in caplog.text
+    assert sandbox.reads == 0
 
 
 def test_alignment_falls_back_for_a_dotted_key(

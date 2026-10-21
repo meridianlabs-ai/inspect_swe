@@ -214,13 +214,12 @@ def test_codex_align_custom_catalog(
 
 @pytest.mark.slow
 @skip_if_no_docker
-def test_codex_align_custom_catalog_toml_value(
+def test_codex_align_custom_catalog_bare_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Codex decodes the TOML escape too, so both read the custom catalog
+    # Codex reads a bare path as raw text, so both read the custom catalog
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    value = json.dumps(_CATALOG_FILE).replace("models", "\\u006dodels")
-    capture = _run_codex("openai/gpt-9.9", _custom_catalog(), value)
+    capture = _run_codex("openai/gpt-9.9", _custom_catalog(), _CATALOG_FILE)
     assert capture.system_prompt and _CUSTOM_MARKER in capture.system_prompt
 
 

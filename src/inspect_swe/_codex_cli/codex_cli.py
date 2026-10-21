@@ -2,7 +2,7 @@ import json
 import mimetypes
 import re
 import shlex
-import tomllib
+import string
 from logging import getLogger
 from pathlib import Path, PurePosixPath
 from textwrap import dedent
@@ -155,12 +155,9 @@ def codex_cli(
             set. Defaults to `None`, which derives the slug from the real model so
             Codex's prompt/tooling aligns with what's actually running. The
             slug comes from the `model_catalog_json` file in `config_overrides`
-            when set (an absolute path in the sandbox, read as TOML the way
-            Codex reads it), else from the installed release's catalog. On
-            Python 3.11-3.14, TOML 1.1 escapes (`\xHH`, `\e`) are
-            unsupported; alignment warns and uses the release catalog. Use a
-            bare path or a TOML literal string. Pass an explicit slug to
-            override.
+            when set (a plain absolute path in the sandbox, optionally
+            quoted, with no escapes), else from the installed release's
+            catalog. Pass an explicit slug to override.
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
@@ -897,24 +894,10 @@ async def _resolve_codex_model_checked(
     return codex_model
 
 
-# a TOML 1.1 escape (\xHH or \e) not preceded by an escaped backslash
-_TOML_1_1_ESCAPE = re.compile(r"(?<!\\)((?:\\\\)*)(\\x[0-9A-Fa-f]{2}|\\e)")
-
-
-def _toml_1_1_escape(value: str) -> str | None:
-    """The first TOML 1.1 escape in a value tomllib rejects only for those.
-
-    The escapes are swapped for a TOML 1.0 one just to check that the rest of
-    the value parses; the result is never used as a path.
-    """
-    escape = _TOML_1_1_ESCAPE.search(value)
-    if escape is None:
-        return None
-    try:
-        tomllib.loads("_x_ = " + _TOML_1_1_ESCAPE.sub(r"\1\\t", value))
-    except tomllib.TOMLDecodeError:
-        return None
-    return escape.group(2)
+# a path alone or in one pair of quotes, with no quote, backslash or control
+# character: Codex reads it as TOML or as the raw text with quotes trimmed,
+# and either way names the same file
+_PLAIN_PATH = re.compile(r"""(["']?)([^"'\\\x00-\x1f\x7f]*)\1""")
 
 
 async def _read_model_catalog_json(
@@ -922,10 +905,10 @@ async def _read_model_catalog_json(
 ) -> dict[str, Any] | None:
     """The catalog file named by `model_catalog_json`, or `None`.
 
-    Codex uses that file in place of its own catalog. The value is read as
-    Codex reads it, and only an absolute path to a JSON object with a `models`
-    list is read; when it is set but cannot be read, a warning names it and
-    alignment uses the release catalog.
+    Codex uses that file in place of its own catalog. Only a plain absolute
+    path, optionally quoted, to a JSON object with a `models` list is read;
+    when it is set but cannot be read, a warning names it and alignment uses
+    the release catalog.
     """
     overrides = config_overrides or {}
     keys = [key for key in overrides if config_override_sets(key, "model_catalog_json")]
@@ -933,36 +916,28 @@ async def _read_model_catalog_json(
         return None
     # the last -c pair wins, and a dotted key names no file
     value = overrides[keys[-1]] if keys[-1].strip() == "model_catalog_json" else ""
-    # Codex parses the trimmed value as TOML, else trims every quote from its
-    # ends. Its TOML 1.1 parser also reads \xHH and \e escapes, which tomllib
-    # reads only from Python 3.15: a value tomllib rejects for one is not read
-    value = value.strip()
-    path: Any = None
-    try:
-        path = tomllib.loads(f"_x_ = {value}")["_x_"]
-    except tomllib.TOMLDecodeError:
-        escape = _toml_1_1_escape(value)
-        if escape:
-            logger.warning(
-                f"codex_cli could not read model_catalog_json {value!r}: on "
-                f"Python 3.11-3.14 the TOML 1.1 escape '{escape}' is "
-                "unsupported, so it chooses --model from the Codex release "
-                "catalog. Use a bare path or a TOML literal string."
-            )
-            return None
-        path = value.strip("\"'")
+    value = value.strip(string.whitespace)
+    plain = _PLAIN_PATH.fullmatch(value)
+    # Codex trims whitespace from a bare path
+    if plain is None or (not plain[1] and plain[2] != plain[2].strip()):
+        logger.warning(
+            f"codex_cli could not read model_catalog_json {value!r}: it reads "
+            "only a plain absolute path, optionally quoted, so it chooses "
+            "--model from the Codex release catalog."
+        )
+        return None
+    path = plain[2]
     catalog = None
-    if isinstance(path, str) and PurePosixPath(path).is_absolute():
+    if PurePosixPath(path).is_absolute():
         try:
             catalog = json.loads(await sandbox.read_file(path))
         except (OSError, UnicodeDecodeError, ValueError, OutputLimitExceededError):
             pass
     if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
         logger.warning(
-            "codex_cli could not read model_catalog_json "
-            f"{(path if isinstance(path, str) else value)!r} in the sandbox (it "
-            "reads only an absolute path to a JSON object with a models list), "
-            "so it chooses --model from the Codex release catalog."
+            f"codex_cli could not read model_catalog_json {path!r} in the "
+            "sandbox (it reads only an absolute path to a JSON object with a "
+            "models list), so it chooses --model from the Codex release catalog."
         )
         return None
     return catalog
