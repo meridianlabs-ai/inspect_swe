@@ -10,7 +10,10 @@ routing instead of emitting it to the transcript itself. From those events alone
      happens synchronously before the bridge response is returned, so the spans
      are open before any sub-agent can make its first call.
 
-  2. **Attribute** — `on_pending` resolves each call's span by substring-matching
+  2. **Attribute** — `on_start`, once per generate, does steps 3 and 4's
+     bindings and closes from the request's input, then resolves the call's
+     span (which inspect_ai runs the generate under; an inspect_ai without
+     `on_start` leaves this to `on_pending`) by substring-matching
      its user-message text against the open spawn prompts. Codex re-sends a
      sub-agent's spawn prompt as a user message on every request, so this works
      for every call (not just the first). Zero/multiple matches → outer span.
@@ -47,6 +50,7 @@ from inspect_ai.model._chat_message import (
 from inspect_ai.model._model import ModelEventSink
 from inspect_ai.util._span import current_span_id
 
+from ..._util.model_event_sink import mark_started, started
 from .detection import (
     agent_message_recipients,
     completed_thread_ids,
@@ -119,25 +123,22 @@ class CodexConsumer(ModelEventSink):
     # ModelEventSink callbacks (called from the bridge)
     # ------------------------------------------------------------------
 
-    def on_pending(self, event: ModelEvent) -> None:
-        # bind thread ids from any spawn results, then close completed threads
-        # (V1: wait/close status dicts; V2: FINAL_ANSWER agent_messages)
-        self._harvest_bindings(event.input)
-        for thread_id in completed_thread_ids(event.input):
-            self._close_thread(thread_id)
-        for author in final_answer_authors(event.input):
-            self._close_thread(author)
+    def on_start(self, input: list[ChatMessage]) -> str | None:
+        mark_started(self)
+        return self._start(input)
 
-        # attribute this call to a span
-        span_id = self._attribute(event.input)
-        event.span_id = span_id
+    def on_pending(self, event: ModelEvent) -> None:
+        # an inspect_ai without on_start leaves the bookkeeping and placement
+        # to us here, once per attempt
+        if not started(self):
+            event.span_id = self._start(event.input)
 
         # compaction summarization call → emit a marker on the same span
         if is_compaction_request(event.input):
             transcript()._event(
                 CompactionEvent(
                     source="codex_cli",
-                    span_id=span_id,
+                    span_id=event.span_id,
                     metadata={"trigger": "auto"},
                 )
             )
@@ -195,6 +196,17 @@ class CodexConsumer(ModelEventSink):
     # ------------------------------------------------------------------
     # internal
     # ------------------------------------------------------------------
+
+    def _start(self, input_messages: list[ChatMessage]) -> str | None:
+        """Bind and close threads from a request's input, then attribute it to a span."""
+        # bind thread ids from any spawn results, then close completed threads
+        # (V1: wait/close status dicts; V2: FINAL_ANSWER agent_messages)
+        self._harvest_bindings(input_messages)
+        for thread_id in completed_thread_ids(input_messages):
+            self._close_thread(thread_id)
+        for author in final_answer_authors(input_messages):
+            self._close_thread(author)
+        return self._attribute(input_messages)
 
     def _harvest_bindings(self, input_messages: list[ChatMessage]) -> None:
         """Bind thread_id → span from spawn_agent tool results (by tool_call_id)."""
