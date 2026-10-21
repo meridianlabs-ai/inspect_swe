@@ -1,6 +1,7 @@
 """Unit tests for the Codex code-mode check on bridged tools (no Docker)."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
@@ -228,6 +229,14 @@ def test_alignment_uses_a_custom_catalog(
     sandbox = _Sandbox({"/tmp/catalog.json": CUSTOM_CATALOG})
     overrides = {key: path}
     assert _align(monkeypatch, model, overrides, sandbox) == slug
+    assert sandbox.reads == 1
+
+
+def test_alignment_reads_a_path_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Path is read as the -c pair passes it to Codex: str(value)."""
+    sandbox = _Sandbox({"/tmp/catalog.json": CUSTOM_CATALOG})
+    overrides = cast(dict[str, str], {"model_catalog_json": Path("/tmp/catalog.json")})
+    assert _align(monkeypatch, "gpt-5.5", overrides, sandbox) == "gpt-5.9"
     assert sandbox.reads == 1
 
 

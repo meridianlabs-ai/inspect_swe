@@ -925,8 +925,10 @@ async def _read_model_catalog_json(
     keys = [key for key in overrides if config_override_sets(key, "model_catalog_json")]
     if not keys:
         return None
-    # the last -c pair wins, and a dotted key names no file
-    value = overrides[keys[-1]] if keys[-1].strip() == "model_catalog_json" else ""
+    # the last -c pair wins, and a dotted key names no file; str() the value
+    # as the -c pair does, so a Path names its file
+    key = keys[-1]
+    value = str(overrides[key]) if key.strip() == "model_catalog_json" else ""
     value = value.strip(string.whitespace)
     plain = _PLAIN_PATH.fullmatch(value)
     # Codex trims whitespace from a bare path
