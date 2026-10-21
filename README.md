@@ -20,6 +20,8 @@ cd inspect_swe
 pip install -e ".[dev]"
 ```
 
+To build the docs, install `".[dev,doc]"` instead.
+
 Run linting, formatting, and tests via
 
 ```bash
