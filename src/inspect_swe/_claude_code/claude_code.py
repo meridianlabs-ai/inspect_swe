@@ -159,7 +159,7 @@ def claude_code(
 
     The agent can either use a version of Claude Code installed in the sandbox, or can download a version and install it in the sandbox (see docs on `version` option below for details).
 
-    Use `disallowed_tools` to control access to tools. See [Tools available to Claude](https://docs.anthropic.com/en/docs/claude-code/settings#tools-available-to-claude) for the list of built-in tools which can be disallowed.
+    Use `disallowed_tools` to control access to tools. See [Tools available to Claude](https://code.claude.com/docs/en/tools-reference) for the list of built-in tools which can be disallowed.
 
     Use the `attempts` option to enable additional submissions if the initial
     submission(s) are incorrect (by default, no additional attempts are permitted).
