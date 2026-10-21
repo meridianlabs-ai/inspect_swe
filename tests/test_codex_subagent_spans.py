@@ -557,3 +557,50 @@ async def test_generates_through_the_model_start_once_each(monkeypatch: Any) -> 
         [(V1_PROMPT, "agent-call_v1"), ("go", outer), (V1_PROMPT, "agent-call_v1")]
     )
     assert len(started) == 3
+
+
+V1_COMPLETED: dict[str, ChatMessage] = {
+    "wait-agent": ChatMessageTool(
+        content='{"status": {"thread_abc": {"completed": "done"}}}',
+        tool_call_id="call_wait",
+        function="wait_agent",
+    ),
+    "notification": ChatMessageUser(
+        content='<subagent_notification>{"agent_path": "thread_abc", '
+        '"status": {"completed": "done"}}</subagent_notification>'
+    ),
+}
+
+
+@pytest.mark.parametrize("carrier", V1_COMPLETED)
+@pytest.mark.parametrize("on_start", [True, False], ids=["on-start", "on-pending"])
+def test_a_v1_thread_bound_and_completed_in_one_request_closes_its_span_once(
+    monkeypatch: Any, on_start: bool, carrier: str
+) -> None:
+    consumer, stub = _consumer(monkeypatch)
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v1_spawn_call("call_v1", V1_PROMPT)],
+        )
+    )
+    # the parent's request carries the spawn result (binding thread_abc) and
+    # the thread's completion: closing it needs the binding first
+    input: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _spawn_result_tool_message("call_v1", '{"agent_id":"thread_abc"}'),
+        V1_COMPLETED[carrier],
+    ]
+
+    def generate() -> None:
+        span_id = consumer.on_start(input) if on_start else None
+        # two attempts: the provider fails once and is retried
+        for _ in range(2):
+            event = _model_event(input)
+            if on_start:
+                event.span_id = span_id
+            consumer.on_pending(event)
+            consumer.on_complete(event)
+
+    contextvars.copy_context().run(generate)
+    assert [e.id for e in stub.span_ends()] == ["agent-call_v1"]

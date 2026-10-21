@@ -106,6 +106,14 @@ def test_on_start_attributes_as_on_pending_did(monkeypatch: Any) -> None:
 def test_on_pending_leaves_the_span_on_start_chose(monkeypatch: Any) -> None:
     consumer, _, stub = _spawned(monkeypatch)
     input = REQUESTS["sub-agent"]
+    attributed: list[list[ChatMessage]] = []
+    attribute = consumer._attribute
+
+    def counted(input: list[ChatMessage]) -> str | None:
+        attributed.append(input)
+        return attribute(input)
+
+    monkeypatch.setattr(consumer, "_attribute", counted)
 
     def generate() -> list[ModelEvent]:
         span_id = consumer.on_start(input)
@@ -131,6 +139,8 @@ def test_on_pending_leaves_the_span_on_start_chose(monkeypatch: Any) -> None:
 
     attempts = contextvars.copy_context().run(generate)
     assert [e.span_id for e in attempts] == ["agent-toolu_1"] * 2
+    # attributed once, by on_start, not again by either attempt's on_pending
+    assert len(attributed) == 1
     assert all(event in stub.events for event in attempts)
 
 
