@@ -20,6 +20,8 @@ reference: inspect_swe
 ### resolve_agent_version
 ### download_wheels_tarball
 ### AgentBinary
+### AgentBinaryInstall
+### AgentBinaryOrigin
 ### SandboxPlatform
 
 ## ACP

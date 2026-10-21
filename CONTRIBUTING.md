@@ -50,6 +50,22 @@ collected via:
 pytest --co
 ```
 
+## Documentation
+
+The docs packages (including Quarto) are in the `[doc]` extra, which `[dev]` does
+not include. `make sync` installs it. With pip, install it alongside `[dev]`:
+
+```bash
+pip install -e ".[dev,doc]"
+```
+
+Then preview the docs:
+
+```bash
+cd docs
+quarto preview
+```
+
 ## Commit messages and releases
 
 We use [Conventional Commits](https://www.conventionalcommits.org/). Because we

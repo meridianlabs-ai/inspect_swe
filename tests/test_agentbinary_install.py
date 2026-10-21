@@ -132,12 +132,11 @@ def test_download_caches_package_archive_verbatim(tmp_path: Path) -> None:
     source = _package_source(tmp_path, resolved)
 
     with patch.object(agentbinary, "download_file", AsyncMock(return_value=data)):
-        downloaded, out = anyio.run(
-            download_agent_binary_async, source, "9.9.8", "linux-arm64"
-        )
+        result = anyio.run(download_agent_binary_async, source, "9.9.8", "linux-arm64")
 
-    assert downloaded == data
-    assert out.package is True
+    assert result.data == data
+    assert result.resolved.package is True
+    assert result.from_cache is False
     assert source.cached_package_path is not None
     cache = source.cached_package_path("9.9.8", "linux-arm64")
     assert cache.read_bytes() == data
@@ -148,10 +147,9 @@ def test_download_caches_package_archive_verbatim(tmp_path: Path) -> None:
         "download_file",
         AsyncMock(side_effect=AssertionError("should not download")),
     ):
-        cached, out = anyio.run(
-            download_agent_binary_async, source, "9.9.8", "linux-arm64"
-        )
-    assert cached == data
+        result = anyio.run(download_agent_binary_async, source, "9.9.8", "linux-arm64")
+    assert result.data == data
+    assert result.from_cache is True
 
 
 def test_package_without_entrypoint_raises(tmp_path: Path) -> None:
