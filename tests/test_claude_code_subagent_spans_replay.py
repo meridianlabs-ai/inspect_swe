@@ -22,7 +22,10 @@ from inspect_ai.event._model import ModelEvent
 from inspect_ai.model import GenerateConfig, ModelOutput
 from inspect_ai.model._chat_message import ChatMessage, ChatMessageAssistant
 from inspect_swe._claude_code._events import live_consumer as consumer_module
-from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+from inspect_swe._claude_code._events.live_consumer import (
+    BridgeOnlyLiveConsumer,
+    LiveConsumer,
+)
 from pydantic import TypeAdapter
 
 TRACES = Path(__file__).parent / "fixtures" / "claude_code_traces"
@@ -106,16 +109,16 @@ def _replay(
     return recorded, replayed
 
 
-@pytest.mark.parametrize(
-    "trace", sorted(TRACES.glob("cli-*.jsonl")), ids=lambda p: p.stem
-)
+@pytest.mark.parametrize("trace", sorted(TRACES.glob("*.jsonl")), ids=lambda p: p.stem)
 def test_recorded_run_replays_the_same(
     monkeypatch: pytest.MonkeyPatch, trace: Path
 ) -> None:
     stub = _TranscriptStub()
     monkeypatch.setattr(consumer_module, "transcript", lambda: stub)
     monkeypatch.setattr(consumer_module, "current_span_id", lambda: "outer")
-    consumer = LiveConsumer()
+    consumer = (
+        BridgeOnlyLiveConsumer() if trace.stem.startswith("acp-") else LiveConsumer()
+    )
     recorded, replayed = _replay(consumer, stub, trace)
     assert any(e[0] == "call" and e[1] != "outer" for e in recorded)
     # every call in the same span, and the same spans opened (under the same
@@ -127,5 +130,5 @@ def test_recorded_run_replays_the_same(
 
 
 def test_background_traces_keep_their_notifications() -> None:
-    for trace in TRACES.glob("cli-*background*.jsonl"):
+    for trace in TRACES.glob("*background*.jsonl"):
         assert "<task-notification>" in trace.read_text(), trace.name

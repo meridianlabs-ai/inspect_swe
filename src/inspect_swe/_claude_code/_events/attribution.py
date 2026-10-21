@@ -195,8 +195,9 @@ def _match_prompt(
             return False
         running = agent.open_run is not None
         if text.startswith(p):
-            # a finished agent only matches a call that shows a resume
-            return running or boundaries >= 1
+            # a finished agent only matches a call that shows a resume, or
+            # one its last run may still make
+            return running or boundaries >= 1 or agent.may_continue
         return not compacted and p in text and running
 
     candidates = [a for a in agents if matches(a)]
@@ -215,7 +216,8 @@ def _match_prompt(
     # the same prompt: an agent whose current run fits the call, then one the
     # call resumes; still tied is ambiguous
     def fit(agent: SubAgent) -> int:
-        if agent.open_run is not None and boundaries == agent.started - 1:
+        current = agent.open_run is not None or agent.may_continue
+        if current and boundaries == agent.started - 1:
             return 2
         return 1 if boundaries >= agent.started else 0
 

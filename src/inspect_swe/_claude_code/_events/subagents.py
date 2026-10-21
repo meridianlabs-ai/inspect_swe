@@ -46,6 +46,11 @@ class Run:
     # whose late notifications must not close this one
     run_id: str | None = None
     stale_run_ids: set[str] = field(default_factory=set)
+    # closed when the sub-agent gave its final reply, before anything
+    # confirmed the run was over (only `BridgeOnlyLiveConsumer` closes runs
+    # this way). Calls can still follow in the run (a blocking Stop hook, a
+    # compaction), and stay in its span
+    ended_by_reply: bool = False
 
 
 @dataclass(eq=False)
@@ -105,6 +110,12 @@ class SubAgent:
     def open_run(self) -> Run | None:
         latest = self.latest
         return latest if latest is not None and latest.open else None
+
+    @property
+    def may_continue(self) -> bool:
+        """Its latest run ended with its own reply, and may still make calls."""
+        latest = self.latest
+        return latest is not None and not latest.open and latest.ended_by_reply
 
     def run_number(self, number: int) -> Run | None:
         """Its `number`-th run that happened."""

@@ -33,12 +33,16 @@ Two responsibilities, both driven from the same `LiveConsumer` instance:
    system events. `task_started` binds task ids and run ids, and only opens
    a span for a resumed run that the bridge has not shown us yet.
 
+With no stream-json (ACP), `BridgeOnlyLiveConsumer` closes spans from what
+the bridge sees instead.
+
 The sub-agents and runs we track, and their invariants, are in `subagents`;
 what Claude Code's messages look like is in `shapes`.
 """
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
 
@@ -48,6 +52,8 @@ from inspect_ai.log import transcript
 from inspect_ai.model._chat_message import (
     ChatMessage,
     ChatMessageAssistant,
+    ChatMessageTool,
+    ChatMessageUser,
 )
 from inspect_ai.model._model import ModelEventSink
 from inspect_ai.model._model_output import StopReason
@@ -55,9 +61,12 @@ from inspect_ai.util._span import current_span_id
 
 from .attribution import resolve
 from .shapes import (
+    ASYNC_LAUNCHED,
+    FORK_STARTED,
     agent_id_in,
     async_launch_task_id,
     block_text,
+    first_user_message,
     is_compaction_request,
     send_message_succeeded,
     summary_body,
@@ -235,7 +244,7 @@ class LiveConsumer(ModelEventSink):
             to = self._agents.find((tc.arguments or {}).get("to"), parent_span_id)
             if to is None:
                 continue
-            if to.open_run is not None:
+            if to.open_run is not None or to.may_continue:
                 # still running (the message is delivered in-run), or its
                 # end hasn't reached us yet
                 to.pending_send = tc.id
@@ -399,9 +408,17 @@ class LiveConsumer(ModelEventSink):
                 agent.pending_send_parent = None
 
     def _notified(
-        self, tool_use_id: str | None, task_id: str | None, run_id: str | None = None
+        self,
+        tool_use_id: str | None,
+        task_id: str | None,
+        run_id: str | None = None,
+        closed_is_stale: bool = False,
     ) -> None:
-        """A background agent's run finished: close its span."""
+        """A background agent's run finished: close its span.
+
+        With no run ids to tell runs apart, `closed_is_stale` ignores a
+        notification naming a span key we already closed.
+        """
         named = self._agents.run(tool_use_id)
         agent = named.agent if named is not None else self._agents.by_agent_id(task_id)
         if agent is None:
@@ -413,6 +430,8 @@ class LiveConsumer(ModelEventSink):
             return
         if self._was_owed(agent, tool_use_id, run_id):
             return  # for an earlier run we rolled past
+        if named is not None and not named.open and closed_is_stale:
+            return  # a run we already closed
         run = agent.open_run
         if run is None or run_id in run.stale_run_ids:
             return
@@ -606,3 +625,147 @@ class LiveConsumer(ModelEventSink):
                 },
             )
         )
+
+
+@dataclass
+class _Notifications:
+    """Notifications a `BridgeOnlyLiveConsumer` expects for a sub-agent."""
+
+    # still to come for runs their own reply closed
+    pending: int = 0
+    # runs closed that way before we knew the agent was in the background
+    # (its launch acknowledgement reached the parent late)
+    early_reply_closes: int = 0
+
+
+class BridgeOnlyLiveConsumer(LiveConsumer):
+    """`LiveConsumer` for Claude Code with no stream-json output (ACP).
+
+    Closes sub-agent spans from what the bridge sees: a run's own final
+    reply, or the parent's next request showing the Task/Agent result
+    (foreground) or a `<task-notification>` (background).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._notifications: dict[str, _Notifications] = {}
+        # (conversation, index, role, tool call id, text) of parent messages
+        # already acted on; a retried request (e.g. after a refusal) repeats
+        # them
+        self._handled: set[tuple[int, int, str, str, int]] = set()
+
+    def reset(self) -> None:
+        super().reset()
+        self._notifications.clear()
+        self._handled.clear()
+
+    def _expected(self, agent: SubAgent) -> _Notifications:
+        return self._notifications.setdefault(agent.origin, _Notifications())
+
+    def on_pending(self, event: ModelEvent) -> None:
+        with _tracking("parent input"):
+            self._close_from_input(event.input)
+        super().on_pending(event)
+
+    def on_complete(self, event: ModelEvent) -> None:
+        super().on_complete(event)
+        with _tracking("final reply"):
+            self._close_finished_run(event)
+
+    def _close_finished_run(self, event: ModelEvent) -> None:
+        """Close a sub-agent's span when its run ends.
+
+        A run ends with a text-only `end_turn` reply. Without this, a
+        background agent's span would wait for the parent's next request to
+        show the notification, which in an idle interactive session can be
+        much later. A resume later opens the next run lazily. A compaction
+        summary is a text-only reply too, but not the end of the run.
+        """
+        msg = event.output.message if event.output and event.output.choices else None
+        if msg is None or msg.tool_calls or event.output.stop_reason != "stop":
+            return
+        if is_compaction_request(event.input):
+            return
+        for run in self._agents.open_runs():
+            if run.span_id == event.span_id:
+                self._close(run)
+                run.ended_by_reply = True
+                if run.agent.background:
+                    self._expected(run.agent).pending += 1
+                else:
+                    self._expected(run.agent).early_reply_closes += 1
+
+    def _mark_background(self, agent: SubAgent) -> None:
+        if self._learned_background(agent):
+            expected = self._expected(agent)
+            expected.pending += expected.early_reply_closes
+            expected.early_reply_closes = 0
+
+    def _close_from_input(self, input_messages: list[ChatMessage]) -> None:
+        """Close sub-agents whose completion the calling agent is now seeing.
+
+        Only messages after the caller's last assistant turn are new; earlier
+        ones were handled when they first arrived (and a resumed agent's old
+        notification must not close its new run). A retried request repeats
+        them, so each is handled once. A foreground agent finishes with its
+        Task/Agent tool result; a background one with a `<task-notification>`.
+        """
+        # agent ids from Task/Agent results anywhere in history (SendMessage
+        # names the agent by id, possibly after its span closed)
+        for msg in input_messages:
+            if isinstance(msg, ChatMessageTool):
+                agent_id = agent_id_in(msg.text)
+                if agent_id:
+                    self._bind_agent_id(self._agents.get(msg.tool_call_id), agent_id)
+
+        last_assistant = max(
+            (
+                i
+                for i, m in enumerate(input_messages)
+                if isinstance(m, ChatMessageAssistant)
+            ),
+            default=-1,
+        )
+        # the first user message tells conversations apart (and changes when
+        # one compacts, which restarts its indices)
+        first_user = first_user_message(input_messages)
+        first = hash(first_user.text) if first_user else 0
+        for i in range(last_assistant + 1, len(input_messages)):
+            msg = input_messages[i]
+            handled = (
+                first,
+                i,
+                msg.role,
+                str(getattr(msg, "tool_call_id", "")),
+                hash(msg.text),
+            )
+            if handled in self._handled:
+                continue
+            self._handled.add(handled)
+            if isinstance(msg, ChatMessageTool):
+                self._tool_result(str(msg.tool_call_id), msg)
+            elif isinstance(msg, ChatMessageUser):
+                for tool_use_id, task_id in task_notifications(msg.text):
+                    self._input_notification(tool_use_id, task_id)
+
+    def _tool_result(self, tool_use_id: str, msg: ChatMessageTool) -> None:
+        text = msg.text.lstrip()
+        launched = self._agents.get(tool_use_id)
+        if launched is not None and text.startswith(ASYNC_LAUNCHED):
+            # also when the run it acknowledges already ended
+            self._mark_background(launched)
+        block = {"content": msg.text, "is_error": msg.error is not None}
+        run = self._agents.open_run(tool_use_id)
+        if run is None or run.via_send:
+            if not send_message_succeeded(None, block):
+                self._send_failed(tool_use_id)
+        elif not text.startswith((FORK_STARTED, ASYNC_LAUNCHED)):
+            self._close(run)
+
+    def _input_notification(self, tool_use_id: str | None, task_id: str | None) -> None:
+        agent = self._agents.by_agent_id(task_id)
+        if agent is not None and self._expected(agent).pending > 0:
+            # for a run its own reply already closed
+            self._expected(agent).pending -= 1
+            return
+        self._notified(tool_use_id, task_id, closed_is_stale=True)

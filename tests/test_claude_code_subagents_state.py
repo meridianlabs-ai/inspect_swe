@@ -40,9 +40,12 @@ def test_an_undone_run_keeps_its_span_number_but_is_not_a_run() -> None:
     agents.add(agent)
     first = agents.new_run(agent, "toolu_1")
     first.open = False
+    first.ended_by_reply = True
     failed = agents.new_run(agent, "send_1")
+    assert not agent.may_continue
     failed.open, failed.undone = False, True
-    assert (agent.started, agent.latest) == (1, first)  # the latest again
+    assert (agent.started, agent.latest) == (1, first)
+    assert agent.may_continue  # the run before is the latest again
     third = agents.new_run(agent, "toolu_1")
     assert (third.span_id, third.number) == ("agent-toolu_1-run3", 2)
     assert agents.run("toolu_1") is third  # a reused key names its latest run
