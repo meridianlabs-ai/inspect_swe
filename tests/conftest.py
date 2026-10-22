@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, List, Literal, TypeVar, cast
 from unittest.mock import MagicMock
@@ -410,3 +411,19 @@ def _package_dirs_stay_out_of_the_real_home() -> Iterator[None]:
 def pytest_unconfigure(config: pytest.Config) -> None:
     if _HOME_ISOLATION_ROOT is not None:
         shutil.rmtree(_HOME_ISOLATION_ROOT, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _subagent_tracking_failures_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sub-agent span tracking logs its own failures; in tests, raise them.
+
+    Otherwise a crash that falls back to the outer span passes for a call
+    correctly attributed to it.
+    """
+    from inspect_swe._claude_code._events import live_consumer
+
+    @contextmanager
+    def raising(what: str) -> Iterator[None]:
+        yield
+
+    monkeypatch.setattr(live_consumer, "_tracking", raising)

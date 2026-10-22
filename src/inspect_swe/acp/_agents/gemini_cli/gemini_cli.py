@@ -100,11 +100,7 @@ class GeminiCli(ACPAgent):
             # Install skills.
             if self._resolved_skills:
                 GEMINI_SKILLS = ".gemini/skills"
-                skills_dir = (
-                    join_path(self.cwd, GEMINI_SKILLS)
-                    if self.cwd is not None
-                    else GEMINI_SKILLS
-                )
+                skills_dir = join_path(self.cwd, GEMINI_SKILLS)
                 await install_skills(self._resolved_skills, sbox, self.user, skills_dir)
 
             # Environment variables (matching non-ACP gemini_cli agent).
