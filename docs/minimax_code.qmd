@@ -1,0 +1,63 @@
+---
+title: MiniMax Code
+agent: minimax_code
+agent_provider: "MiniMax"
+agent_name: "MiniMax Code"
+agent_url: "https://github.com/MiniMax-AI/minimax-code"
+---
+
+{{< include _snippets/agent_intro.md >}}
+
+## Options
+
+The following options are supported for customizing the behavior of the agent:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Additional system prompt to append to the task prompt. |
+| `centaur` | Run in [Centaur Mode](#centaur-mode), which makes MiniMax Code available to an Inspect `human_cli()` agent rather than running it unattended. |
+| `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
+| `model` | Model name to use for the Inspect bridge (defaults to the task's main model). |
+| `max_context_size` | Context size to advertise to MiniMax Code when model metadata is unavailable. |
+| `model_aliases` | Map model names requested by MiniMax Code to Inspect models. |
+| `filter` | Filter for intercepting bridged model requests. |
+| `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
+| `cwd` | Working directory for MiniMax Code. |
+| `env` | Environment variables to set for MiniMax Code. |
+| `user` | User to execute MiniMax Code as. |
+| `sandbox` | Optional sandbox environment name for unattended runs. Centaur mode requires the default sandbox (omit this option). |
+| `version` | MiniMax Code npm package version to use (see [Installation](#installation)). |
+| `debug` | Trace MiniMax Code's stdout and stderr. |
+
+: {tbl-colwidths=\[25,75\]}
+
+For example:
+
+```python
+{{< meta agent >}}(
+    version="0.4.12",
+    system_prompt="You are an ace system researcher."
+)
+```
+
+## Installation
+
+MiniMax Code is bundled on the host from the public `@minimax-ai/code` npm package and extracted into the sandbox. Automatic installation requires npm on the host and a glibc-based Linux sandbox. Host install scripts are disabled; the adapter downloads the matching official `better-sqlite3` prebuild and checks that it can load inside the sandbox. Node.js 22.19.0 is used to match the native module ABI, even when a different Node version is already installed. The SQLite prebuild in MiniMax Code 0.4.12 requires glibc 2.29 or later.
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `"auto"` | Use `mcode` and Node.js from the sandbox PATH if present; otherwise install the latest published npm version. |
+| `"sandbox"` | Require `mcode` and Node.js on the sandbox PATH, without downloading anything. The image must provide a compatible installation. |
+| `"stable"` | Resolve and install the latest stable npm version. |
+| `"latest"` | Resolve and install the latest published npm version. |
+| `"x.x.x"` | Install a specific `@minimax-ai/code` version. |
+
+: {tbl-colwidths=\[25,75\]}
+
+MiniMax Code's OpenAI Responses-compatible provider is configured to use the Inspect model bridge. The MiniMax account or API key is therefore not used for evaluation runs.
+
+Prompts are sent through stdin, and subsequent turns and scored retries resume the latest MiniMax Code session in the same working directory. Keep the sandbox and working directory consistent when calling the agent again. MCP servers and skills are not currently exposed by this adapter.
+
+{{< include _snippets/agent_centaur.md >}}
+
+{{< include _snippets/agent_troubleshooting.md >}}
