@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.72...0.3.0) (2026-10-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* require Python 3.11 and test on Python 3.14 ([#194](https://github.com/meridianlabs-ai/inspect_swe/issues/194))
+
+### Features
+
+* record the agent binary each sample ran in the eval log ([#183](https://github.com/meridianlabs-ai/inspect_swe/issues/183)) ([192654a](https://github.com/meridianlabs-ai/inspect_swe/commit/192654a7e081b34ee3a518fdcc364ee114ce2db9))
+* require Python 3.11 and test on Python 3.14 ([#194](https://github.com/meridianlabs-ai/inspect_swe/issues/194)) ([86cd990](https://github.com/meridianlabs-ai/inspect_swe/commit/86cd990387d93052ed1c14762056e85dee703321))
+
+
+### Bug Fixes
+
+* codex_cli picks its Codex model slug from a custom model_catalog_json ([#185](https://github.com/meridianlabs-ai/inspect_swe/issues/185)) ([7453133](https://github.com/meridianlabs-ai/inspect_swe/commit/7453133a381e1519ddd1e393569c59f1b67ef7b1))
+* interactive Claude Code, Codex and Gemini CLI agents serve every model call with their own model ([#182](https://github.com/meridianlabs-ai/inspect_swe/issues/182)) ([862bc85](https://github.com/meridianlabs-ai/inspect_swe/commit/862bc8522fb5b75bd1b48154e68e87b4b44ff4b5))
+
 ## [0.2.72](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.71...0.2.72) (2026-10-20)
 
 
