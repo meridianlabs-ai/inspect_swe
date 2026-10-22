@@ -15,7 +15,7 @@ The following options are supported for customizing the behavior of the agent:
 | Option | Description |
 |------------------------------------|------------------------------------|
 | `system_prompt` | Additional system prompt to append to default system prompt. |
-| `model_config` | Codex model slug used to select the system prompt and tool set. Defaults to `None`, which derives the slug from the model used by the agent so Codex's prompt/tooling aligns with what's actually running. |
+| `model_config` | Codex model slug used to select the system prompt and tool set. Defaults to `None`, which derives the slug from the model used by the agent so Codex's prompt/tooling aligns with what's actually running. The slug comes from the file named by `model_catalog_json` in `config_overrides` when set, else from the catalog of the installed Codex release. `model_catalog_json` must be an absolute path to a file in the sandbox. Give a plain path, alone or in quotes, with no backslashes, quote characters or control characters inside. For any other value, or a file that cannot be read, alignment warns and uses the release catalog. |
 | `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
 | `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
