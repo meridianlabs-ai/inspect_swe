@@ -20,22 +20,29 @@ Fixture shapes below are copied from a real gpt-5.6-sol eval log
 (codex 0.147.0, 2026-08-07).
 """
 
+import contextvars
 from typing import Any
 
+import anyio
+import pytest
 from inspect_ai._util.content import ContentText
-from inspect_ai.event import SpanBeginEvent, SpanEndEvent
+from inspect_ai.event import CompactionEvent, SpanBeginEvent, SpanEndEvent
 from inspect_ai.event._model import ModelEvent
-from inspect_ai.model import GenerateConfig, ModelOutput
+from inspect_ai.log._transcript import Transcript, init_transcript, transcript
+from inspect_ai.model import GenerateConfig, ModelOutput, get_model
 from inspect_ai.model._chat_message import (
     ChatMessage,
     ChatMessageAssistant,
     ChatMessageTool,
     ChatMessageUser,
 )
+from inspect_ai.model._model import use_model_event_sink
 from inspect_ai.tool import ToolCall
+from inspect_ai.util._span import current_span_id, span
 from inspect_swe._codex_cli._events import consumer as consumer_module
 from inspect_swe._codex_cli._events.consumer import CodexConsumer
 from inspect_swe._codex_cli._events.detection import (
+    COMPACTION_MARKER,
     agent_message_recipients,
     final_answer_authors,
     find_spawned_agents,
@@ -345,3 +352,255 @@ def test_consumer_v1_prompt_attribution_unchanged(monkeypatch: Any) -> None:
     child_call = _model_event([ChatMessageUser(content=prompt)])
     consumer.on_pending(child_call)
     assert child_call.span_id == span
+
+
+# ---------------------------------------------------------------------------
+# 7. consumer: on_start (inspect_ai with ModelEventSink.on_start)
+# ---------------------------------------------------------------------------
+
+
+def _spawned_consumers(
+    monkeypatch: Any,
+) -> tuple[CodexConsumer, CodexConsumer, _TranscriptStub]:
+    """Two consumers that have each seen a parent spawn write_fizzbuzz (V2) and a V1 agent."""
+    stub = _TranscriptStub()
+    monkeypatch.setattr(consumer_module, "transcript", lambda: stub)
+    consumers = CodexConsumer(), CodexConsumer()
+    for consumer in consumers:
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[
+                    _v2_spawn_call("call_fb", "write_fizzbuzz"),
+                    _v1_spawn_call("call_v1", V1_PROMPT),
+                ],
+            )
+        )
+    return consumers[0], consumers[1], stub
+
+
+V1_PROMPT = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+
+REQUESTS: dict[str, list[ChatMessage]] = {
+    "v2-recipient": [_agent_message_user("/root", "/root/write_fizzbuzz")],
+    "v1-prompt": [ChatMessageUser(content=V1_PROMPT)],
+    "outer": [ChatMessageUser(content="go")],
+}
+
+
+def test_on_start_attributes_as_on_pending_did(monkeypatch: Any) -> None:
+    starting, legacy, stub = _spawned_consumers(monkeypatch)
+    fb_span, v1_span = (e.id for e in stub.span_begins()[:2])
+    # outside any span the outer span is None
+    expected = {"v2-recipient": fb_span, "v1-prompt": v1_span, "outer": None}
+    for name, input in REQUESTS.items():
+        event = _model_event(input)
+        contextvars.copy_context().run(legacy.on_pending, event)
+        assert event.span_id == expected[name], name
+        assert (
+            contextvars.copy_context().run(starting.on_start, input) == (expected[name])
+        ), name
+
+
+def test_on_pending_leaves_the_span_on_start_chose(monkeypatch: Any) -> None:
+    consumer, _, stub = _spawned_consumers(monkeypatch)
+    input = REQUESTS["v2-recipient"]
+
+    def generate() -> ModelEvent:
+        span_id = consumer.on_start(input)
+        # meanwhile the parent sees the child's FINAL_ANSWER, closing its span,
+        # so attributing again would give the outer span
+        consumer.on_start(
+            [
+                ChatMessageUser(content="go"),
+                _agent_message_user(
+                    "/root/write_fizzbuzz", "/root", "FINAL_ANSWER", "done"
+                ),
+            ]
+        )
+        # inspect_ai creates the event under the span on_start returned
+        event = _model_event(input)
+        event.span_id = span_id
+        consumer.on_pending(event)
+        return event
+
+    event = contextvars.copy_context().run(generate)
+    assert event.span_id == stub.span_begins()[0].id
+    assert event in stub.events
+
+
+def test_without_on_start_on_pending_attributes_as_before(monkeypatch: Any) -> None:
+    consumer, _, stub = _spawned_consumers(monkeypatch)
+    event = _model_event(REQUESTS["v2-recipient"])
+    event.span_id = "the bridge's span"
+    contextvars.copy_context().run(consumer.on_pending, event)
+    assert event.span_id == stub.span_begins()[0].id
+
+
+def test_on_start_binds_and_closes_once_per_generate_across_retries(
+    monkeypatch: Any,
+) -> None:
+    consumer, _, stub = _spawned_consumers(monkeypatch)
+    fb_span = stub.span_begins()[0].id
+    contextvars.copy_context().run(
+        consumer.on_start, REQUESTS["v2-recipient"]
+    )  # binds /root/write_fizzbuzz
+    calls: list[str] = []
+    for method in ("_harvest_bindings", "_attribute", "_close_thread"):
+        original = getattr(consumer, method)
+
+        def counted(*args: Any, _name: str = method, _original: Any = original) -> Any:
+            calls.append(_name)
+            return _original(*args)
+
+        monkeypatch.setattr(consumer, method, counted)
+
+    # the parent's request carries the child's FINAL_ANSWER; its provider
+    # attempt fails once and is retried
+    input: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _agent_message_user("/root/write_fizzbuzz", "/root", "FINAL_ANSWER", "done"),
+    ]
+
+    def generate() -> None:
+        span_id = consumer.on_start(input)
+        for _ in range(2):
+            event = _model_event(input)
+            event.span_id = span_id
+            consumer.on_pending(event)
+            consumer.on_complete(event)
+
+    contextvars.copy_context().run(generate)
+    assert calls == ["_harvest_bindings", "_close_thread", "_attribute"]
+    assert [e.id for e in stub.span_ends()] == [fb_span]
+
+
+@pytest.mark.parametrize("on_start", [True, False], ids=["on-start", "on-pending"])
+def test_the_compaction_marker_is_emitted_on_the_call_s_span(
+    monkeypatch: Any, on_start: bool
+) -> None:
+    consumer, _, stub = _spawned_consumers(monkeypatch)
+    input: list[ChatMessage] = [
+        _agent_message_user("/root", "/root/write_fizzbuzz"),
+        ChatMessageUser(content=f"{COMPACTION_MARKER}\nSummarize."),
+    ]
+
+    def generate() -> ModelEvent:
+        event = _model_event(input)
+        if on_start:
+            event.span_id = consumer.on_start(input)
+        consumer.on_pending(event)
+        return event
+
+    event = contextvars.copy_context().run(generate)
+    [marker] = [e for e in stub.events if isinstance(e, CompactionEvent)]
+    assert marker.span_id == event.span_id == stub.span_begins()[0].id
+
+
+def test_a_concurrent_request_s_on_start_does_not_mark_another_request(
+    monkeypatch: Any,
+) -> None:
+    # each request is generated in its own task (its own context): one that
+    # called on_start leaves another's placement to its on_pending
+    consumer, _, stub = _spawned_consumers(monkeypatch)
+    fb_span = stub.span_begins()[0].id
+    started, other = contextvars.copy_context(), contextvars.copy_context()
+    span_id = started.run(consumer.on_start, REQUESTS["v2-recipient"])
+    elsewhere = _model_event(REQUESTS["v2-recipient"])
+    other.run(consumer.on_pending, elsewhere)
+    assert elsewhere.span_id == span_id == fb_span
+
+    placed = _model_event(REQUESTS["v2-recipient"])
+    placed.span_id = "left alone"
+    started.run(consumer.on_pending, placed)
+    assert placed.span_id == "left alone"
+
+
+@pytest.mark.anyio
+async def test_generates_through_the_model_start_once_each(monkeypatch: Any) -> None:
+    # inspect_ai's own generate(): through on_start when it has one, else on_pending
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    started: list[list[ChatMessage]] = []
+    start = consumer._start
+
+    def counted(input: list[ChatMessage]) -> str | None:
+        started.append(input)
+        return start(input)
+
+    monkeypatch.setattr(consumer, "_start", counted)
+    model = get_model("mockllm/model")
+
+    async def generate(input: list[ChatMessage]) -> None:
+        with use_model_event_sink(consumer):
+            await model.generate(input)
+
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_v1_spawn_call("call_v1", V1_PROMPT)],
+            )
+        )
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(generate, REQUESTS["v1-prompt"])
+            tg.start_soon(generate, REQUESTS["outer"])
+        await generate(REQUESTS["v1-prompt"])
+
+    placed = [
+        (e.input[-1].text, e.span_id)
+        for e in transcript().events
+        if isinstance(e, ModelEvent)
+    ]
+    assert sorted(placed) == sorted(
+        [(V1_PROMPT, "agent-call_v1"), ("go", outer), (V1_PROMPT, "agent-call_v1")]
+    )
+    assert len(started) == 3
+
+
+V1_COMPLETED: dict[str, ChatMessage] = {
+    "wait-agent": ChatMessageTool(
+        content='{"status": {"thread_abc": {"completed": "done"}}}',
+        tool_call_id="call_wait",
+        function="wait_agent",
+    ),
+    "notification": ChatMessageUser(
+        content='<subagent_notification>{"agent_path": "thread_abc", '
+        '"status": {"completed": "done"}}</subagent_notification>'
+    ),
+}
+
+
+@pytest.mark.parametrize("carrier", V1_COMPLETED)
+@pytest.mark.parametrize("on_start", [True, False], ids=["on-start", "on-pending"])
+def test_a_v1_thread_bound_and_completed_in_one_request_closes_its_span_once(
+    monkeypatch: Any, on_start: bool, carrier: str
+) -> None:
+    consumer, stub = _consumer(monkeypatch)
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v1_spawn_call("call_v1", V1_PROMPT)],
+        )
+    )
+    # the parent's request carries the spawn result (binding thread_abc) and
+    # the thread's completion: closing it needs the binding first
+    input: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _spawn_result_tool_message("call_v1", '{"agent_id":"thread_abc"}'),
+        V1_COMPLETED[carrier],
+    ]
+
+    def generate() -> None:
+        span_id = consumer.on_start(input) if on_start else None
+        # two attempts: the provider fails once and is retried
+        for _ in range(2):
+            event = _model_event(input)
+            if on_start:
+                event.span_id = span_id
+            consumer.on_pending(event)
+            consumer.on_complete(event)
+
+    contextvars.copy_context().run(generate)
+    assert [e.id for e in stub.span_ends()] == ["agent-call_v1"]

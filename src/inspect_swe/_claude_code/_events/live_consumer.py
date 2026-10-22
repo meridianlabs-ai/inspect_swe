@@ -4,8 +4,11 @@ Two responsibilities, both driven from the same `LiveConsumer` instance:
 
 1. **`ModelEventSink`** — installed on the agent bridge so the bridge hands
    us every `ModelEvent` for routing instead of emitting it to the transcript
-   itself. We attribute each event to the correct agent span at `on_pending`
-   time, then forward to the transcript with the attributed span_id.
+   itself. We attribute each generate to the correct agent span in
+   `on_start`, which inspect_ai calls once per generate and runs the generate
+   under (so a live sentinel follows the same span as the log), then forward
+   each event to the transcript in `on_pending`. An inspect_ai without
+   `on_start` never calls it, and we attribute in `on_pending` instead.
 
    **Attribution mechanism (substring match against pending sub-agents)**:
 
@@ -67,6 +70,7 @@ from inspect_ai.model._model import ModelEventSink
 from inspect_ai.model._model_output import StopReason
 from inspect_ai.util._span import current_span_id
 
+from ..._util.model_event_sink import mark_started, started
 from .toolview import tool_view
 
 logger = getLogger(__name__)
@@ -89,7 +93,8 @@ class _OpenAgent:
 class LiveConsumer(ModelEventSink):
     """Sink + JSONL consumer.
 
-    The bridge calls `on_pending` / `on_complete` for every `ModelEvent`.
+    The bridge calls `on_start` once per generate (on an inspect_ai with it)
+    and `on_pending` / `on_complete` for every `ModelEvent`.
     The runner loop calls `process_jsonl_line` for every JSONL line printed
     by Claude Code.
     """
@@ -151,8 +156,14 @@ class LiveConsumer(ModelEventSink):
     # ModelEventSink callbacks (called from the bridge)
     # ------------------------------------------------------------------
 
+    def on_start(self, input: list[ChatMessage]) -> str | None:
+        mark_started(self)
+        return self._attribute(input)
+
     def on_pending(self, event: ModelEvent) -> None:
-        event.span_id = self._attribute(event.input)
+        # an inspect_ai without on_start leaves the placement to us here
+        if not started(self):
+            event.span_id = self._attribute(event.input)
         self._emitted_events.add(id(event))
         transcript()._event(event)
 
