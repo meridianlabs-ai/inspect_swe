@@ -516,6 +516,8 @@ def test_a_concurrent_request_s_on_start_does_not_mark_another_request(
     assert placed.span_id == "left alone"
 
 
+# mockllm inherits inspect_ai's asyncio-backed connection limiter
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
 @pytest.mark.anyio
 async def test_generates_through_the_model_start_once_each(monkeypatch: Any) -> None:
     # inspect_ai's own generate(): through on_start when it has one, else on_pending

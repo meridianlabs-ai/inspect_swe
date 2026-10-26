@@ -163,6 +163,8 @@ def test_a_concurrent_request_s_on_start_does_not_mark_another_request(
     assert elsewhere.span_id == "agent-toolu_1"
 
 
+# mockllm inherits inspect_ai's asyncio-backed connection limiter
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
 @pytest.mark.anyio
 async def test_generates_through_the_model_are_attributed_once_each(
     monkeypatch: Any,
