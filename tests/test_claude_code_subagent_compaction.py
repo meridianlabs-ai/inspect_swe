@@ -8,6 +8,7 @@ from inspect_ai.event import CompactionEvent, Event
 from inspect_ai.event._model import ModelEvent
 from inspect_ai.model._chat_message import ChatMessageAssistant
 from inspect_swe._claude_code._events import live_consumer as consumer_module
+from inspect_swe._claude_code._events.bridge_only import BridgeOnlyLiveConsumer
 from inspect_swe._claude_code._events.live_consumer import (
     LiveConsumer,
 )
@@ -37,7 +38,9 @@ def _agent_events(
     stub = _KeepingStub()
     monkeypatch.setattr(consumer_module, "transcript", lambda: stub)
     monkeypatch.setattr(consumer_module, "current_span_id", lambda: "outer")
-    consumer = LiveConsumer()
+    consumer = (
+        BridgeOnlyLiveConsumer() if trace.stem.startswith("acp-") else LiveConsumer()
+    )
     _replay(consumer, stub, trace)  # type: ignore[arg-type]
     by_span: dict[str, list[Event]] = {}
     for e in stub.kept:

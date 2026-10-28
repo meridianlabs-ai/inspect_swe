@@ -5,7 +5,7 @@ sub-agent's span: from the `x-claude-code-agent-id` request header when
 inspect_ai exposes it, else from the call's history (`attribution`). Spans
 open when a call's output launches a sub-agent, before its first call can
 arrive. `process_jsonl_line` closes them from Claude Code's stream-json
-output.
+output; `bridge_only.BridgeOnlyLiveConsumer` closes them from bridge traffic.
 """
 
 from collections.abc import Iterator, Mapping
