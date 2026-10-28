@@ -108,10 +108,7 @@ class CodexCli(ACPAgent):
 
             # Resolve CODEX_HOME (mirrors the non-ACP codex_cli agent).
             if self._home_dir is None:
-                working_dir = await sandbox_exec(
-                    sbox, "pwd", user=self.user, cwd=self.cwd
-                )
-                codex_home = join_path(working_dir, ".codex")
+                codex_home = join_path(self.cwd, ".codex")
             else:
                 codex_home = await sandbox_exec(
                     sbox,
@@ -119,7 +116,7 @@ class CodexCli(ACPAgent):
                     user=self.user,
                     cwd=self.cwd,
                 )
-            await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=self.user)
+            await _mkdir(sbox, codex_home, self.user)
 
             # Write system prompt to AGENTS.md (Codex convention).
             resolved_prompt = self._resolve_system_prompt(state)
@@ -187,9 +184,7 @@ class CodexCli(ACPAgent):
         """Determine where to write AGENTS.md."""
         if self._home_dir is not None:
             return join_path(codex_home, "AGENTS.md")
-        elif self.cwd is not None:
-            return join_path(self.cwd, "AGENTS.md")
-        return "AGENTS.md"
+        return join_path(self.cwd, "AGENTS.md")
 
     async def _config_toml_path(
         self,
@@ -199,9 +194,16 @@ class CodexCli(ACPAgent):
         """Determine where to write config.toml."""
         if self._home_dir is not None:
             return join_path(codex_home, "config.toml")
-        directory = ".codex" if self.cwd is None else join_path(self.cwd, ".codex")
-        await sandbox_exec(sbox, cmd=f"mkdir -p {directory}", user=self.user)
+        directory = join_path(self.cwd, ".codex")
+        await _mkdir(sbox, directory, self.user)
         return join_path(directory, "config.toml")
+
+
+async def _mkdir(sbox: SandboxEnvironment, directory: str, user: str | None) -> None:
+    """`mkdir -p` without a shell, so any path works."""
+    result = await sbox.exec(["mkdir", "-p", directory], user=user)
+    if not result.success:
+        raise RuntimeError(f"Error creating directory {directory}: {result.stderr}")
 
 
 # ---------------------------------------------------------------------------

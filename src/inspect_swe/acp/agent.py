@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import anyio
+import anyio.lowlevel
 from acp import PROTOCOL_VERSION
 from acp.client.connection import ClientSideConnection
 from acp.schema import HttpMcpServer
@@ -19,6 +20,7 @@ from inspect_ai.log._samples import sample_active
 from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, get_model
 from inspect_ai.tool import MCPServerConfig, MCPServerConfigHTTP, Tool
 from inspect_ai.util import ExecRemoteProcess
+from inspect_ai.util import sandbox as sandbox_env
 from typing_extensions import TypedDict, Unpack
 
 from inspect_swe._util.bridged_tools import resolve_bridged_tools
@@ -26,6 +28,7 @@ from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
 )
+from inspect_swe._util.sandbox import resolve_agent_cwd
 
 from .client import ACPError, acp_connection, format_acp_failure
 
@@ -61,7 +64,10 @@ class ACPAgentParams(TypedDict, total=False):
         system_prompt: Appended to the agent's default system prompt.
         retry_refusals: Number of times to retry on model refusals.
         model_map: Canonical model name -> Model or model name overrides.
-        cwd: Working directory inside the sandbox.
+        cwd: Working directory inside the sandbox, where the session runs and
+            skills, ACP Codex's `AGENTS.md` and `.codex/` are written. Defaults
+            to the sandbox's working directory, or the user's home if that is
+            `/`. Pass `"/home/user"` for the previous default.
         env: Extra environment variables for the agent process.
         user: User to execute the agent as in the sandbox.
         sandbox: Sandbox environment name.
@@ -115,7 +121,9 @@ class ACPAgent(Agent):
         self.mcp_servers: list[MCPServerConfig] = kwargs.get("mcp_servers") or []
         self.system_prompt = kwargs.get("system_prompt")
         self.retry_refusals = kwargs.get("retry_refusals")
-        self.cwd = kwargs.get("cwd") or "/home/user"
+        # resolved against the sandbox when the agent starts
+        self._cwd_arg = kwargs.get("cwd") or None  # "" too: resolve it
+        self.cwd: str = self._cwd_arg or ""  # "" until the agent is called
         self.env: dict[str, str] = kwargs.get("env") or {}
         self.user = kwargs.get("user")
         self.sandbox = kwargs.get("sandbox")
@@ -199,8 +207,10 @@ class ACPAgent(Agent):
     async def __call__(
         self, state: AgentState, *args: Any, **kwargs: Any
     ) -> AgentState:
-        self.ready = anyio.Event()
         try:
+            self.cwd = await resolve_agent_cwd(
+                sandbox_env(self.sandbox), self.user, self._cwd_arg
+            )
             async with self._start_agent(state) as (proc, bridge):
                 try:
                     all_configs: list[MCPServerConfigHTTP] = [
@@ -252,11 +262,16 @@ class ACPAgent(Agent):
 
                         try:
                             self.ready.set()
+                            # let woken callers see the session before teardown
+                            await anyio.lowlevel.checkpoint()
                             # Block until either the caller cancels the task or
                             # the ACP adapter process exits.
                             await self._wait_for_active_session(feeder, error_info)
                         finally:
                             self.conn = None
+                            # renewed here, so a caller that waits before the
+                            # next call waits on the new event
+                            self.ready = anyio.Event()
                             self.session_id = None
                 finally:
                     state.messages = bridge.state.messages
