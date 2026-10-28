@@ -37,7 +37,10 @@ from pydantic import Field
 from pydantic_core import to_json
 from typing_extensions import TypedDict, Unpack
 
-from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+from inspect_swe._claude_code._events.live_consumer import (
+    LiveConsumer,
+    bridge_header_args,
+)
 from inspect_swe._claude_code._events.stream import (
     ExitEvent,
     JsonlEvent,
@@ -360,6 +363,7 @@ def claude_code(
                 ),
                 model_event_sink=consumer,
                 checkpointer=cp,
+                **bridge_header_args(),
             ) as bridge,
         ):
             if cp.attempt == "resume_for_scoring":
