@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.3.0](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.72...0.3.0) (2026-10-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* require Python 3.11 and test on Python 3.14 ([#194](https://github.com/meridianlabs-ai/inspect_swe/issues/194))
+
+### Features
+
+* a live sentinel follows Claude Code and Codex sub-agents into their own conversations ([#206](https://github.com/meridianlabs-ai/inspect_swe/issues/206)) ([661d6bf](https://github.com/meridianlabs-ai/inspect_swe/commit/661d6bf47e5a2892a652f7f00dc11a943fce8387))
+* record the agent binary each sample ran in the eval log ([#183](https://github.com/meridianlabs-ai/inspect_swe/issues/183)) ([192654a](https://github.com/meridianlabs-ai/inspect_swe/commit/192654a7e081b34ee3a518fdcc364ee114ce2db9))
+* require Python 3.11 and test on Python 3.14 ([#194](https://github.com/meridianlabs-ai/inspect_swe/issues/194)) ([86cd990](https://github.com/meridianlabs-ai/inspect_swe/commit/86cd990387d93052ed1c14762056e85dee703321))
+
+
+### Bug Fixes
+
+* codex_cli picks its Codex model slug from a custom model_catalog_json ([#185](https://github.com/meridianlabs-ai/inspect_swe/issues/185)) ([7453133](https://github.com/meridianlabs-ai/inspect_swe/commit/7453133a381e1519ddd1e393569c59f1b67ef7b1))
+* interactive Claude Code, Codex and Gemini CLI agents serve every model call with their own model ([#182](https://github.com/meridianlabs-ai/inspect_swe/issues/182)) ([862bc85](https://github.com/meridianlabs-ai/inspect_swe/commit/862bc8522fb5b75bd1b48154e68e87b4b44ff4b5))
+* **mini_swe_agent:** agent fails to install on Alpine (musl) sandboxes ([#195](https://github.com/meridianlabs-ai/inspect_swe/issues/195)) ([7804cf7](https://github.com/meridianlabs-ai/inspect_swe/commit/7804cf7417999fcb743c48722e679ed3b5fe4d8d))
+* send GITHUB_TOKEN on GitHub API requests to avoid rate limits ([#199](https://github.com/meridianlabs-ai/inspect_swe/issues/199)) ([714c1c1](https://github.com/meridianlabs-ai/inspect_swe/commit/714c1c15ea43cb70b060d46ab51ac242e2ab31d0))
+
 ## [0.2.72](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.71...0.2.72) (2026-10-20)
 
 
