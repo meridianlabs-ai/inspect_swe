@@ -16,11 +16,22 @@ from typing import Any
 
 from inspect_ai.agent import BridgedToolsSpec
 
+from inspect_swe._util.bridged_tools import DEFAULT_BRIDGED_TOOLS_NAME
+
 from .model_catalog import codex_catalog_tool_mode
 
 # config_overrides keys that can change the tool mode or which tools are
 # direct: a caller who sets any of them has configured Codex deliberately
 _SKIP_KEYS = ("features", "model_catalog_json", "profile")
+
+
+def config_override_sets(key: str, name: str) -> bool:
+    """Whether a `config_overrides` key sets `name` or a key inside it.
+
+    Codex trims each `-c` key, and a dotted key sets a field of a table.
+    """
+    key = key.strip()
+    return key == name or key.startswith(f"{name}.")
 
 
 def check_codex_code_mode_bridged_tools(
@@ -41,7 +52,7 @@ def check_codex_code_mode_bridged_tools(
         bridged_tools: The agent's bridged tool specs.
     """
     if release_catalog is None or any(
-        key.strip() == skip or key.strip().startswith(f"{skip}.")
+        config_override_sets(key, skip)
         for key in config_overrides or {}
         for skip in _SKIP_KEYS
     ):
@@ -64,7 +75,9 @@ def check_codex_code_mode_bridged_tools(
         'tool_mode = "code_mode_only"): the model calls MCP tools from the code '
         "it writes instead of proposing each call, so the bridge denies every "
         f"call to bridged server(s) {names}. Set require_proposal=False on the "
-        "existing BridgedToolsSpec for each of them. Approval policies then "
+        "existing BridgedToolsSpec for each of them (plain Tools passed in "
+        f"bridged_tools are served as '{DEFAULT_BRIDGED_TOOLS_NAME}': wrap them "
+        "in a BridgedToolsSpec to set it). Approval policies then "
         "review only the exec call that runs the code, not the tool calls made "
         "from it."
     )

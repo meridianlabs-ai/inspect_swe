@@ -44,6 +44,14 @@ def investigator() -> Task:
 
 The `name` field identifies the MCP server and will be visible to the agent as a tool prefix. You can specify multiple `BridgedToolsSpec` instances to create separate MCP servers for different tool groups.
 
+You can also pass plain tools, which are grouped into a single MCP server named `tools`:
+
+``` python
+{{< meta agent >}}(bridged_tools=[search_database()])
+```
+
+Plain tools can be mixed with `BridgedToolsSpec` instances (no spec can then be named `tools`). Use a `BridgedToolsSpec` when you want to choose the server name or set other options such as `require_proposal`.
+
 See the [Bridged Tools](https://inspect.aisi.org.uk/agent-bridge.html#bridged-tools) documentation for more details on the architecture and how tool execution flows between host and sandbox.
 
 ### Sandbox prerequisite

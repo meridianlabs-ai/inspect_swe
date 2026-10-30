@@ -6,6 +6,7 @@ in `inspect_swe._codex_cli.model_catalog`.
 
 from typing import Any
 
+import pytest
 from inspect_swe._codex_cli.model_catalog import (
     _GENERIC_FALLBACK_SLUG,
     codex_catalog_tool_mode,
@@ -155,6 +156,20 @@ def test_catalog_present_sub_boundary_model_forces_generic_fallback() -> None:
         assert not any(
             _GENERIC_FALLBACK_SLUG.startswith(m["slug"]) for m in CATALOG["models"]
         )
+
+
+@pytest.mark.parametrize("captor", [_GENERIC_FALLBACK_SLUG, "inspect"])
+@pytest.mark.parametrize("name", ["gpt-5.2", "gpt-5.3-codex"])
+def test_generic_fallback_refuses_a_catalog_entry_that_matches_it(
+    captor: str, name: str
+) -> None:
+    # a custom catalog entry the sentinel matches would bind its tools again
+    catalog = {"models": [*CATALOG["models"], {"slug": captor}]}
+    with pytest.raises(ValueError, match=f"entry '{captor}' matches that slug"):
+        _slug(name, catalog=catalog)
+    # an explicit model_config, and models that do not need the fallback, run
+    assert _slug(name, catalog=catalog, override="gpt-5.2") == "gpt-5.2"
+    assert _slug("gpt-5.5", catalog=catalog) == "gpt-5.5"
 
 
 def test_catalog_present_entry_without_search_stays_native() -> None:

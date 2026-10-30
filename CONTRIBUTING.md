@@ -4,7 +4,7 @@ Thanks for your interest in contributing to Inspect SWE, a suite of software eng
 
 ## Development setup
 
-Inspect SWE requires Python 3.10 or later. Clone the repository and install it in
+Inspect SWE requires Python 3.11 or later. Clone the repository and install it in
 editable mode with the `[dev]` optional dependencies:
 
 ```bash
@@ -48,6 +48,22 @@ collected via:
 
 ```bash
 pytest --co
+```
+
+## Documentation
+
+The docs packages (including Quarto) are in the `[doc]` extra, which `[dev]` does
+not include. `make sync` installs it. With pip, install it alongside `[dev]`:
+
+```bash
+pip install -e ".[dev,doc]"
+```
+
+Then preview the docs:
+
+```bash
+cd docs
+quarto preview
 ```
 
 ## Commit messages and releases
