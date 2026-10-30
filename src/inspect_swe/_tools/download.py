@@ -5,6 +5,7 @@ from typing import Literal, NamedTuple, get_args
 from .._claude_code.agentbinary import claude_code_binary_source
 from .._codex_cli.agentbinary import codex_cli_binary_source
 from .._kimi_code.agentbinary import kimi_code_binary_source
+from .._omp.agentbinary import omp_binary_source
 from .._opencode.agentbinary import opencode_binary_source
 from .._util._async import run_coroutine
 from .._util.agentbinary import (
@@ -18,7 +19,7 @@ from .._util.sandbox import SandboxPlatform
 class AgentBinary(NamedTuple):
     """Agent binary."""
 
-    agent: Literal["claude_code", "codex_cli", "kimi_code", "opencode"]
+    agent: Literal["claude_code", "codex_cli", "kimi_code", "omp", "opencode"]
     """Agent type."""
 
     version: str
@@ -54,7 +55,7 @@ class AgentBinaries(list[AgentBinary]):
 
 
 def download_agent_binary(
-    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
+    binary: Literal["claude_code", "codex_cli", "kimi_code", "omp", "opencode"],
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform,
 ) -> None:
@@ -65,7 +66,7 @@ def download_agent_binary(
     Use this if you need to ensure that a specific version of an agent binary is downloaded in advance (e.g. if you are going to run your evaluations offline). After downloading, explicit requests for the downloaded version (e.g. `claude_code(version="1.0.98")`) will not require network access.
 
     Args:
-        binary: Type of binary to download
+        binary: Type of binary to download (including "omp" for Oh My Pi).
         version: Version to download ("stable", "latest", or an explicit version number).
         platform: Target platform ("linux-x64", "linux-arm64", "linux-x64-musl", or "linux-arm64-musl")
     """
@@ -75,7 +76,8 @@ def download_agent_binary(
 
 
 def cached_agent_binaries(
-    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"] | None = None,
+    binary: Literal["claude_code", "codex_cli", "kimi_code", "omp", "opencode"]
+    | None = None,
     quiet: bool = False,
 ) -> AgentBinaries:
     """List the agent binaries which have been cached on this system.
@@ -93,6 +95,7 @@ def cached_agent_binaries(
             cached_agent_binaries("claude_code")
             + cached_agent_binaries("codex_cli")
             + cached_agent_binaries("kimi_code")
+            + cached_agent_binaries("omp")
             + cached_agent_binaries("opencode")
         )
 
@@ -141,7 +144,7 @@ def cached_agent_binaries(
 
 
 def resolve_agent_version(
-    agent: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
+    agent: Literal["claude_code", "codex_cli", "kimi_code", "omp", "opencode"],
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform = "linux-x64",
 ) -> str:
@@ -171,7 +174,7 @@ def resolve_agent_version(
 
 
 def _agent_binary_source(
-    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
+    binary: Literal["claude_code", "codex_cli", "kimi_code", "omp", "opencode"],
 ) -> AgentBinarySource:
     match binary:
         case "claude_code":
@@ -180,10 +183,12 @@ def _agent_binary_source(
             return codex_cli_binary_source()
         case "kimi_code":
             return kimi_code_binary_source()
+        case "omp":
+            return omp_binary_source()
         case "opencode":
             return opencode_binary_source()
         case _:
             raise ValueError(
                 f"Unsupported agent binary type: {binary} "
-                "(expected one of claude_code, codex_cli, kimi_code, opencode)"
+                "(expected one of claude_code, codex_cli, kimi_code, omp, opencode)"
             )
