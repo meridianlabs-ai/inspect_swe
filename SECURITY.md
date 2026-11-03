@@ -27,18 +27,21 @@ We only fix security issues in the most recent release of `inspect_swe` on PyPI.
 
 ## Scope
 
-Inspect SWE runs coding agents such as Claude Code and Codex CLI inside an Inspect sandbox. It downloads each agent's binary or package, installs it into the sandbox, and relays the agent's model calls back to Inspect, so the agent sees no model API keys. The agent and everything it runs are untrusted. The sections below describe what we treat as a vulnerability and what we do not.
+Inspect SWE runs coding agents such as Claude Code and Codex CLI inside an Inspect sandbox. It downloads each agent's binary or package, installs it into the sandbox, and relays the agent's model calls back to Inspect through `inspect_ai`'s sandbox agent bridge. By default the model provider keys stay outside the sandbox, and the agent gets only a placeholder key for the relay. The agent and everything it runs are untrusted. The sections below describe what we treat as a vulnerability and what we do not.
 
 ### In scope
 
-- A way for code in the sandbox to run code or read files on the host through Inspect SWE, or to get the host's model API keys or other credentials
-- Inspect SWE installing an agent binary, package or tool that fails its checksum check, or using a cached copy that someone replaced
+- A way for code in the sandbox to run code or read files on the host through Inspect SWE, or to get a model provider key or other credential that Inspect SWE keeps out of the sandbox by default
+- Inspect SWE installing a downloaded agent binary whose checksum doesn't match, for an agent whose binary it verifies on download
 - API keys, tokens, or other secrets written to transcripts, logs, or error messages
 - Flaws in our release process, packaging, or CI that would let someone publish or modify a release
 
 ### Out of scope
 
 - What an agent does inside its sandbox. The sandbox exists to contain it.
+- Credentials you pass to an agent yourself, for example through `env`. Code in the sandbox can read them.
+- Tools you give an agent that run on the host, such as `bridged_tools`. They run with the arguments the agent chooses.
+- The local cache of agent binaries. Anyone who can write to it can already run code as you.
 - Escapes from the sandbox runtime itself, such as Docker or Kubernetes. Report those to that project.
 - Vulnerabilities in the agents themselves (Claude Code, Codex CLI, Gemini CLI and the others) should be reported to their maintainers.
 - Vulnerabilities in `inspect_ai` should be reported under [its security policy](https://github.com/UKGovernmentBEIS/inspect_ai/blob/main/SECURITY.md).
