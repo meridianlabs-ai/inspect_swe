@@ -1,0 +1,4 @@
+build
+# Keep the cap in [build-system] in pyproject.toml.
+hatchling<1.30
+hatch-vcs

@@ -2,7 +2,9 @@
 
 pyproject.toml holds back releases younger than seven days, or six hours for a
 list of model provider SDKs and Inspect packages. Dependabot applies the seven
-days to its uv.lock bumps and leaves that list to uv. CI installs from uv.lock.
+days to its uv.lock bumps and leaves that list to uv. CI installs from uv.lock,
+and the build toolchain from scripts/build-dist/requirements.txt, pinned with
+hashes.
 Testing against the newest releases happens in meridianlabs-ai/canaries,
 outside this repository.
 """
@@ -22,6 +24,7 @@ WORKFLOWS = GITHUB / "workflows"
 SHARED_ACTIONS = "meridianlabs-ai/actions/"
 SHARED_INSTALLERS = ("setup-uv@", "install-python-dependencies@")
 EXEMPT_COOLDOWN = "6 hours"
+BUILD_REQUIREMENTS = "scripts/build-dist/requirements.txt"
 
 
 def uv_config() -> dict[str, Any]:
@@ -158,7 +161,7 @@ def test_python_comes_from_the_shared_actions() -> None:
     assert direct == [], "use meridianlabs-ai/actions/install-python-dependencies"
 
 
-def test_shared_actions_share_one_pinned_commit_and_install_locked() -> None:
+def test_shared_actions_share_one_pinned_commit_and_pin_versions() -> None:
     # One commit for every shared action means one uv.
     shared = [
         (where, step)
@@ -175,9 +178,9 @@ def test_shared_actions_share_one_pinned_commit_and_install_locked() -> None:
         where
         for where, step in shared
         if "install-python-dependencies@" in step["uses"]
-        and step["with"]["versions"] != "locked"
+        and step["with"]["versions"] not in ("locked", "hashed-requirements")
     ]
-    assert unlocked == [], f"use versions: locked in {unlocked}"
+    assert unlocked == [], f"use versions: locked or hashed-requirements in {unlocked}"
 
 
 def test_jobs_that_can_write_use_no_cache() -> None:
@@ -197,16 +200,53 @@ def test_jobs_that_can_write_use_no_cache() -> None:
     assert cached == [], f"use actions-cache: none in {cached}"
 
 
-def test_ruff_action_uses_the_locked_ruff() -> None:
-    # Without a version, ruff-action installs the newest ruff release.
+def test_ruff_comes_from_uv_lock() -> None:
+    # ruff-action installs its own ruff, outside the shared action.
     ruff = [
-        (where, step)
-        for where, step in steps()
-        if step.get("uses", "").startswith("astral-sh/ruff-action@")
+        w for w, s in steps() if s.get("uses", "").startswith("astral-sh/ruff-action@")
     ]
-    assert ruff
-    missing = [w for w, s in ruff if s.get("with", {}).get("version-file") != "uv.lock"]
-    assert missing == [], f"ruff-action needs version-file: uv.lock in {missing}"
+    assert ruff == [], f"run ruff with uv run --no-sync in {ruff}"
+
+
+def test_build_toolchain_is_hashed_wheels() -> None:
+    hashed = [
+        (where, step["with"])
+        for where, step in steps()
+        if step.get("uses", "").startswith(
+            SHARED_ACTIONS + "install-python-dependencies@"
+        )
+        and step["with"]["versions"] == "hashed-requirements"
+    ]
+    assert hashed, "no workflow installs the hashed build toolchain"
+    wrong = [
+        where
+        for where, inputs in hashed
+        if inputs.get("package-format") != "wheels-only"
+        or inputs.get("requirements-file") != BUILD_REQUIREMENTS
+    ]
+    assert wrong == [], f"use wheels-only and {BUILD_REQUIREMENTS} in {wrong}"
+
+
+def test_builds_use_the_installed_toolchain() -> None:
+    # An isolated build resolves its own build backend, outside the hashes.
+    builds = [(w, line) for w, line in run_lines() if re.search(r"-m build\b", line)]
+    assert builds, "no workflow builds the package"
+    isolated = [(w, line) for w, line in builds if "--no-isolation" not in line.split()]
+    assert isolated == [], f"build with --no-isolation in {isolated}"
+    uv_build = [
+        (w, line) for w, line in run_lines() if re.search(r"\buv build\b", line)
+    ]
+    assert uv_build == [], f"uv build resolves the build backend in {uv_build}"
+
+
+def test_build_toolchain_keeps_the_hatchling_cap() -> None:
+    def hatchling(requirements: list[str]) -> str:
+        [cap] = [r for r in requirements if normalize(r).startswith("hatchling")]
+        return cap
+
+    pinned = (REPO / "scripts/build-dist/requirements.in").read_text().splitlines()
+    build_system = tomllib.loads((REPO / "pyproject.toml").read_text())["build-system"]
+    assert hatchling(pinned) == hatchling(build_system["requires"])
 
 
 # pip installs skip uv.lock, so they may only add local packages without
