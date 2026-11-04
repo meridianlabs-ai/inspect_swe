@@ -169,6 +169,3 @@ jobs:
         if: needs.changes.outputs.build == 'true'
         # -I so the import resolves to the installed wheel, not the checkout's src/.
         run: .venv/bin/python -I -c "import inspect_swe; print('Package imported successfully')"
-      - name: Minimize uv cache
-        if: ${{ !cancelled() && needs.changes.outputs.build == 'true' }}
-        run: uv cache prune --ci

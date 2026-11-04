@@ -249,15 +249,14 @@ def test_build_toolchain_keeps_the_hatchling_cap() -> None:
     assert hatchling(pinned) == hatchling(build_system["requires"])
 
 
-# pip installs skip uv.lock, so they may only add local packages without
-# their dependencies.
-def test_pip_installs_are_dependency_free() -> None:
-    unlocked = [
+# pip installs skip uv.lock; installs go through the shared action.
+def test_no_workflow_runs_pip_install() -> None:
+    pip = [
         (where, line)
         for where, line in run_lines()
-        if re.search(r"\bpip3? install\b", line) and "--no-deps" not in line.split()
+        if re.search(r"\bpip3? install\b", line)
     ]
-    assert unlocked == [], "pip installs skip uv.lock; use the shared action"
+    assert pip == [], "pip installs skip uv.lock; use the shared action"
 
 
 def test_no_workflow_opts_out_of_the_cooldown() -> None:
