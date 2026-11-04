@@ -22,6 +22,8 @@ uv sync --extra dev
 
 To build the docs, run `uv sync --extra dev --extra doc` instead.
 
+Run the commands below from the `.venv` that `uv sync` creates: `uv run <command>`, `.venv/bin/<command>`, or `source .venv/bin/activate`.
+
 Run linting, formatting, and tests via
 
 ```bash

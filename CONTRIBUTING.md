@@ -14,6 +14,8 @@ cd inspect_swe
 uv sync --extra dev
 ```
 
+`uv sync` creates `.venv` with the exact versions in `uv.lock`, the `[dev]` extra included, and installs Inspect SWE editable. Run Python commands from it: `uv run <command>`, `.venv/bin/<command>`, or `source .venv/bin/activate`. `uv sync` without `--extra dev` removes the dev tools again.
+
 To enable the pre-commit hooks:
 
 ```bash
