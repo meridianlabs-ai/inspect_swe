@@ -10,6 +10,11 @@ on:
       - "release/**"
   workflow_dispatch:
 
+# Every job here only reads the repo. State that rather than inheriting the
+# repo default.
+permissions:
+  contents: read
+
 jobs:
   # Detect whether anything outside docs changed, so the build matrix can be
   # skipped on documentation-only changes.

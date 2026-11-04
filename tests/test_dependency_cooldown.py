@@ -22,9 +22,6 @@ WORKFLOWS = GITHUB / "workflows"
 SHARED_ACTIONS = "meridianlabs-ai/actions/"
 SHARED_INSTALLERS = ("setup-uv@", "install-python-dependencies@")
 EXEMPT_COOLDOWN = "6 hours"
-# publish.yml still installs with pip. It moves to the shared publish workflow
-# in a separate change; until then it is a known exception.
-EXEMPT_WORKFLOWS = {"publish.yml"}
 
 
 def uv_config() -> dict[str, Any]:
@@ -66,15 +63,23 @@ def dependabot_uv() -> dict[str, Any]:
     return entry
 
 
-def steps() -> list[tuple[str, dict[str, Any]]]:
-    """Every step of every workflow except EXEMPT_WORKFLOWS, with its location."""
+def jobs() -> list[tuple[str, dict[str, Any], Any]]:
+    """Every job of every workflow, with its location and its permissions."""
     return [
-        (f"{path.name}:{name}", step)
+        (
+            f"{path.name}:{name}",
+            job,
+            job.get("permissions", workflow.get("permissions")),
+        )
         for path in sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])
-        if path.name not in EXEMPT_WORKFLOWS
-        for name, job in yaml.safe_load(path.read_text())["jobs"].items()
-        for step in job.get("steps", [])
+        for workflow in [yaml.safe_load(path.read_text())]
+        for name, job in workflow["jobs"].items()
     ]
+
+
+def steps() -> list[tuple[str, dict[str, Any]]]:
+    """Every step of every workflow, with its location."""
+    return [(where, step) for where, job, _ in jobs() for step in job.get("steps", [])]
 
 
 def run_lines() -> list[tuple[str, str]]:
@@ -173,6 +178,23 @@ def test_shared_actions_share_one_pinned_commit_and_install_locked() -> None:
         and step["with"]["versions"] != "locked"
     ]
     assert unlocked == [], f"use versions: locked in {unlocked}"
+
+
+def test_jobs_that_can_write_use_no_cache() -> None:
+    # A cache that a write-capable job restores could run code from a less
+    # trusted run. Jobs without permissions get the read-only repo default.
+    cached = [
+        where
+        for where, job, permissions in jobs()
+        if permissions == "write-all"
+        or "write" in (permissions.values() if isinstance(permissions, dict) else [])
+        for step in job.get("steps", [])
+        if step.get("uses", "").startswith(
+            SHARED_ACTIONS + "install-python-dependencies@"
+        )
+        and step["with"].get("actions-cache") != "none"
+    ]
+    assert cached == [], f"use actions-cache: none in {cached}"
 
 
 def test_ruff_action_uses_the_locked_ruff() -> None:
