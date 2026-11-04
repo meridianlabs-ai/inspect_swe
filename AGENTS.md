@@ -16,7 +16,7 @@ This file provides guidance to AI coding agents working in this repository.
 
 ## Dependencies
 
-- `uv.lock` pins every dependency, and uv only resolves releases at least 7 days old (6 hours for a few listed packages). Read "Dependencies and the cooldown" in [CONTRIBUTING.md](CONTRIBUTING.md) before you change dependencies, `[tool.uv]` or `.github/dependabot.yml`.
+- `uv.lock` pins every dependency except the build toolchain (pinned with hashes in `scripts/build-dist/requirements.txt`), and uv only resolves releases at least 7 days old (6 hours for a few listed packages). Read "Dependencies and the cooldown" in [CONTRIBUTING.md](CONTRIBUTING.md) before you change dependencies, `[tool.uv]` or `.github/dependabot.yml`.
 
 ## Test Suite Topology
 
