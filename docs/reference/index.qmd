@@ -12,6 +12,7 @@ reference: inspect_swe
 ### opencode
 ### mini_swe_agent
 ### antigravity
+### pi
 
 ## Binaries
 
