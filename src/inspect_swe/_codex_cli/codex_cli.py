@@ -727,7 +727,7 @@ def codex_cli(
                     "codex_attempt_count", lambda: attempt_count, 0
                 )
                 while True:
-                    # prompt on stdin (`-`): an argv entry is capped at 128 KiB
+                    # prompt on stdin (`-`): Linux caps one argv entry at 128 KiB
                     agent_cmd = cmd.copy()
                     agent_cmd.append("-")
 

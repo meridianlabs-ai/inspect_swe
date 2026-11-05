@@ -13,7 +13,7 @@ from inspect_ai.log import resolve_sample_attachments
 from inspect_ai.model import ChatMessageUser
 from inspect_swe import codex_cli
 
-from tests.conftest import skip_if_no_docker
+from tests.conftest import assert_eval_completed, skip_if_no_docker
 
 # over the 128 KiB argv entry limit, with characters a shell or an argv parser
 # could alter: quotes, `$`, backticks, non-ASCII, and a leading dash
@@ -25,12 +25,9 @@ PROMPT = '-x "quoted" $HOME `tick` ünïcødé 😀\n\nReply with: done.\n' + "x
 def test_codex_cli_delivers_a_prompt_longer_than_an_argv_entry() -> None:
     task = Task(dataset=[Sample(input=PROMPT)], solver=codex_cli(), sandbox="docker")
 
-    log = eval(task, model="mockllm/model", time_limit=600)[0]
+    log = eval(task, model="mockllm/model", time_limit=300)[0]
 
-    assert log.status == "success", log.error
-    assert log.samples
-    sample = resolve_sample_attachments(log.samples[0])
-    assert sample.error is None
+    sample = resolve_sample_attachments(assert_eval_completed(log)[0])
     sent = [
         message.text
         for event in sample.events
