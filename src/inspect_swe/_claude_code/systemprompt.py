@@ -12,8 +12,9 @@ a launch and its resume:
   regenerated from the CURRENT repo state, so the agent sees its own
   mid-episode edits presented as the starting state -- agents have used
   the contradiction to recognize they are running inside an evaluation;
-- ``--append-system-prompt`` text is only passed on the first launch, so
-  it disappears on resume and the identity line flips.
+- ``--append-system-prompt`` text is not kept in the session; without it a
+  resume drops that text and flips the identity line, so claude_code.py
+  passes it on every launch (verified against Claude Code 2.1.236).
 
 The system prompt heads every request and carries a cache_control
 breakpoint, so any changed byte invalidates the prompt cache for the whole

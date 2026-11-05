@@ -302,7 +302,7 @@ def claude_code(
     session_id = str(uuid.uuid4())
 
     # each --resume rebuilds the system prompt from the current environment
-    # (regenerated git status, dropped --append-system-prompt text), busting
+    # (regenerated git status), busting
     # the prompt cache for the whole conversation prefix and leaking that the
     # session was restarted -- pin the root conversation's system prompt to
     # its first-seen value (see systemprompt.py). Built once per agent
@@ -424,6 +424,22 @@ def claude_code(
                 cmd.append("--disallowed-tools")
                 cmd.append(",".join(disallowed_tools))
 
+            # Claude Code keeps neither system prompt flag in its session, so
+            # every launch, --resume included, passes whichever is set. The caller's system
+            # messages are recorded before the session's first launch: the
+            # bridge then replaces them in state.messages with Claude Code's
+            # own prompt, which must not be appended to itself.
+            appended_key = f"claude_code_appended_system_prompt:{session_id}"
+            appended_system: list[str] | None = store().get(appended_key, None)
+            if appended_system is None:
+                appended_system = [
+                    m.text for m in state.messages if isinstance(m, ChatMessageSystem)
+                ]
+                if system_prompt is not None:
+                    appended_system.append(system_prompt)
+                store().set(appended_key, appended_system)
+            system_args = _system_prompt_args(appended_system, replace_system_prompt)
+
             prompt, has_assistant_response = build_user_prompt(state.messages)
 
             # resolve sandbox
@@ -487,23 +503,6 @@ def claude_code(
                             or attempt_count > 0
                             or uncaught_error_count > 0
                             or cp.attempt == "resume"
-                        )
-
-                        # Replacement flags are per-invocation, so re-send them on
-                        # resume. Appended messages are not re-sent because the bridge
-                        # round-trips them into state.messages and appending them again
-                        # would duplicate the effective prompt.
-                        system_texts = [
-                            m.text
-                            for m in state.messages
-                            if isinstance(m, ChatMessageSystem)
-                        ]
-                        if system_prompt is not None:
-                            system_texts.append(system_prompt)
-                        system_args = _system_prompt_args(
-                            system_texts,
-                            replace_system_prompt,
-                            is_resume=is_resume,
                         )
 
                         # resume previous conversation
@@ -667,13 +666,11 @@ def claude_code(
 def _system_prompt_args(
     system_texts: Sequence[str],
     replace_system_prompt: str | None,
-    *,
-    is_resume: bool,
 ) -> list[str]:
     args: list[str] = []
     if replace_system_prompt is not None:
         args.extend(["--system-prompt", replace_system_prompt])
-    if system_texts and not is_resume:
+    if system_texts:
         args.extend(["--append-system-prompt", "\n\n".join(system_texts)])
 
     return args
