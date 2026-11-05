@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
@@ -8,6 +8,15 @@ resolution-markers = [
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten'",
     "python_full_version < '3.12'",
 ]
+
+[options]
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P7D"
+
+[options.exclude-newer-package]
+anthropic = { timestamp = "0001-01-01T00:00:00Z", span = "PT6H" }
+inspect-ai = { timestamp = "0001-01-01T00:00:00Z", span = "PT6H" }
+openai = { timestamp = "0001-01-01T00:00:00Z", span = "PT6H" }
 
 [[package]]
 name = "agent-client-protocol"
