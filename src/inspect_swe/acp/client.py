@@ -80,7 +80,9 @@ class DefaultClient(Client):
             f"it because no allow option was provided [session={session_id}]: {available}"
         )
 
-    async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
+    async def session_update(
+        self, session_id: str, update: object, **kwargs: Any
+    ) -> None:
         logger.debug("ACP update [%s]: %s", session_id, type(update).__name__)
 
     async def read_text_file(
