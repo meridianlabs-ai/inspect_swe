@@ -13,17 +13,11 @@ from acp import RequestError, connect_to_agent
 from acp.client.connection import ClientSideConnection
 from acp.interfaces import Client
 from acp.schema import (
-    AgentMessageChunk,
-    AgentPlanContentUpdate,
-    AgentPlanRemovedUpdate,
-    AgentPlanUpdate,
-    AgentThoughtChunk,
     AllowedOutcome,
-    AvailableCommandsUpdate,
-    ConfigOptionUpdate,
+    ConnectMcpResponse,
     CreateElicitationResponse,
     CreateTerminalResponse,
-    CurrentModeUpdate,
+    DisconnectMcpResponse,
     ElicitationMode,
     EnvVariable,
     KillTerminalResponse,
@@ -31,13 +25,8 @@ from acp.schema import (
     ReadTextFileResponse,
     ReleaseTerminalResponse,
     RequestPermissionResponse,
-    SessionInfoUpdate,
     TerminalOutputResponse,
-    ToolCallProgress,
-    ToolCallStart,
     ToolCallUpdate,
-    UsageUpdate,
-    UserMessageChunk,
     WaitForTerminalExitResponse,
     WriteTextFileResponse,
 )
@@ -91,24 +80,7 @@ class DefaultClient(Client):
             f"it because no allow option was provided [session={session_id}]: {available}"
         )
 
-    async def session_update(
-        self,
-        session_id: str,
-        update: UserMessageChunk
-        | AgentMessageChunk
-        | AgentThoughtChunk
-        | ToolCallStart
-        | ToolCallProgress
-        | AgentPlanUpdate
-        | AgentPlanContentUpdate
-        | AgentPlanRemovedUpdate
-        | AvailableCommandsUpdate
-        | CurrentModeUpdate
-        | ConfigOptionUpdate
-        | SessionInfoUpdate
-        | UsageUpdate,
-        **kwargs: Any,
-    ) -> None:
+    async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
         logger.debug("ACP update [%s]: %s", session_id, type(update).__name__)
 
     async def read_text_file(
@@ -164,6 +136,32 @@ class DefaultClient(Client):
         raise _unsupported_capability_request("elicitation/create")
 
     async def complete_elicitation(self, elicitation_id: str, **kwargs: Any) -> None:
+        pass
+
+    async def connect_mcp(self, server_id: str, **kwargs: Any) -> ConnectMcpResponse:
+        raise _unsupported_capability_request("mcp/connect")
+
+    async def disconnect_mcp(
+        self, connection_id: str, **kwargs: Any
+    ) -> DisconnectMcpResponse:
+        raise _unsupported_capability_request("mcp/disconnect")
+
+    async def mcp_message(
+        self,
+        connection_id: str,
+        method: str,
+        params: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        raise _unsupported_capability_request("mcp/message")
+
+    async def notify_mcp(
+        self,
+        connection_id: str,
+        method: str,
+        params: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         pass
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
