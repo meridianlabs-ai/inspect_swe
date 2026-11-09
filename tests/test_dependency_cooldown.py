@@ -3,12 +3,13 @@
 pyproject.toml holds back releases younger than seven days, or six hours for a
 list of model provider SDKs and Inspect packages. Dependabot applies the seven
 days to its uv.lock bumps and leaves that list to uv. CI installs from uv.lock,
-and the build toolchain from scripts/build-dist/requirements.txt, pinned with
-hashes.
+except that inspect-ai moves to inspect_ai main's latest commit first, and the
+build toolchain from scripts/build-dist/requirements.txt, pinned with hashes.
 Testing against the newest releases happens in meridianlabs-ai/canaries,
 outside this repository.
 """
 
+import importlib.util
 import pathlib
 import re
 import tomllib
@@ -21,16 +22,42 @@ import yaml
 REPO = pathlib.Path(__file__).parents[1]
 GITHUB = REPO / ".github"
 WORKFLOWS = GITHUB / "workflows"
+UV_SYNC_ACTION = "./.github/actions/uv-sync"
 SHARED_ACTIONS = "meridianlabs-ai/actions/"
 SHARED_INSTALLERS = ("setup-uv@", "install-python-dependencies@")
 EXEMPT_COOLDOWN = "6 hours"
 BUILD_REQUIREMENTS = "scripts/build-dist/requirements.txt"
+RELEASE_BRANCH = "release-please--branches--main"
+INSPECT_AI_MAIN = {
+    "git": "https://github.com/UKGovernmentBEIS/inspect_ai",
+    "branch": "main",
+}
+MATRIX_PYTHON = "${{ matrix.python-version }}"
+LOCKED_JOBS = {
+    "py-ruff": {
+        "python-version": MATRIX_PYTHON,
+        "project-install": "skip",
+        "extras": "dev",
+    },
+    "py-mypy": {"python-version": MATRIX_PYTHON, "extras": "dev"},
+    "py-test": {"python-version": MATRIX_PYTHON, "extras": "dev"},
+    "py-build": {"python-version": MATRIX_PYTHON, "project-install": "skip"},
+}
+
+spec = importlib.util.spec_from_file_location(
+    "inspect_ai_floor", GITHUB / "scripts" / "inspect_ai_floor.py"
+)
+assert spec and spec.loader
+inspect_ai_floor = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(inspect_ai_floor)
+
+
+def pyproject() -> dict[str, Any]:
+    return tomllib.loads((REPO / "pyproject.toml").read_text())
 
 
 def uv_config() -> dict[str, Any]:
-    config: dict[str, Any] = tomllib.loads((REPO / "pyproject.toml").read_text())[
-        "tool"
-    ]["uv"]
+    config: dict[str, Any] = pyproject()["tool"]["uv"]
     return config
 
 
@@ -40,7 +67,7 @@ def normalize(package: str) -> str:
 
 def direct_dependencies() -> set[str]:
     """Packages in the pyproject.toml `dependencies` or the `dev` extra."""
-    project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+    project = pyproject()["project"]
     requirements = project["dependencies"] + project["optional-dependencies"]["dev"]
     return {
         normalize(re.split(r"[^A-Za-z0-9._-]", requirement, maxsplit=1)[0])
@@ -80,19 +107,33 @@ def jobs() -> list[tuple[str, dict[str, Any], Any]]:
     ]
 
 
+def local_actions() -> list[pathlib.Path]:
+    return sorted((GITHUB / "actions").glob("*/action.y*ml"))
+
+
 def steps() -> list[tuple[str, dict[str, Any]]]:
-    """Every step of every workflow, with its location."""
-    return [(where, step) for where, job, _ in jobs() for step in job.get("steps", [])]
+    """Every step of every workflow and local composite action, with its location."""
+    return [
+        (where, step) for where, job, _ in jobs() for step in job.get("steps", [])
+    ] + [
+        (path.parent.name, step)
+        for path in local_actions()
+        for step in yaml.safe_load(path.read_text())["runs"].get("steps", [])
+    ]
 
 
-def run_lines() -> list[tuple[str, str]]:
+def step_lines(steps: list[dict[str, Any]]) -> list[str]:
     # Joins backslash continuations so a command's flags stay on one line.
     return [
-        (where, line.strip())
-        for where, step in steps()
+        line.strip()
+        for step in steps
         for line in step.get("run", "").replace("\\\n", " ").splitlines()
         if line.strip()
     ]
+
+
+def run_lines() -> list[tuple[str, str]]:
+    return [(where, line) for where, step in steps() for line in step_lines([step])]
 
 
 def verify_exclude_newer_package(
@@ -139,9 +180,11 @@ def test_dated_entry_age(age: timedelta, caught: bool) -> None:
 def test_dependabot_cooldown_matches_pyproject() -> None:
     dependabot = dependabot_uv()
     assert dependabot["cooldown"]["default-days"] == 7
+    # CI moves inspect-ai to inspect_ai main, so Dependabot leaves it alone.
+    assert dependabot["ignore"] == [{"dependency-name": "inspect-ai"}]
     # Dependabot's cooldown counts whole days, so it leaves the "6 hours"
     # entries to uv. Dated entries are locked by hand.
-    exempt = exempt_packages(uv_config())
+    exempt = [p for p in exempt_packages(uv_config()) if p != "inspect-ai"]
     assert sorted(dependabot["cooldown"]["exclude"]) == exempt
     # The exempt packages have their own group, listed before the catch-all.
     groups = dependabot["groups"]
@@ -245,18 +288,23 @@ def test_build_toolchain_keeps_the_hatchling_cap() -> None:
         return cap
 
     pinned = (REPO / "scripts/build-dist/requirements.in").read_text().splitlines()
-    build_system = tomllib.loads((REPO / "pyproject.toml").read_text())["build-system"]
+    build_system = pyproject()["build-system"]
     assert hatchling(pinned) == hatchling(build_system["requires"])
 
 
-# pip installs skip uv.lock; installs go through the shared action.
-def test_no_workflow_runs_pip_install() -> None:
-    pip = [
+# pip installs skip uv.lock, so they may only add local packages without their
+# dependencies, or install a hashed lock (`-r` or `uv pip sync`).
+def test_pip_installs_are_dependency_free_or_hashed() -> None:
+    unlocked = [
         (where, line)
         for where, line in run_lines()
-        if re.search(r"\bpip3? install\b", line)
+        if (re.search(r"\bpip3? install\b", line) and "--no-deps" not in line.split())
+        or (
+            re.search(r"\bpip sync\b|\bpip3? install\b.* -r\b", line)
+            and "--require-hashes" not in line.split()
+        )
     ]
-    assert pip == [], "pip installs skip uv.lock; use the shared action"
+    assert unlocked == []
 
 
 def test_no_workflow_opts_out_of_the_cooldown() -> None:
@@ -266,3 +314,98 @@ def test_no_workflow_opts_out_of_the_cooldown() -> None:
         if re.search(r"--exclude-newer(=|\s+)false", line)
     ]
     assert floating == []
+
+
+def test_pyproject_tracks_inspect_ai_main_with_one_floor() -> None:
+    project = pyproject()
+    assert project["tool"]["uv"]["sources"] == {"inspect-ai": INSPECT_AI_MAIN}
+    # release-pin-deps.yml rewrites this one requirement with sed.
+    floors = [d for d in project["project"]["dependencies"] if "inspect-ai>=" in d]
+    assert len(floors) == 1, floors
+
+
+@pytest.mark.parametrize("name,inputs", LOCKED_JOBS.items())
+def test_locked_jobs_install_from_the_lockfile(
+    name: str, inputs: dict[str, str]
+) -> None:
+    job = yaml.safe_load((WORKFLOWS / "build.yaml").read_text())["jobs"][name]
+    installs = [
+        step.get("with", {})
+        for step in job["steps"]
+        if step.get("uses") == UV_SYNC_ACTION
+    ]
+    assert installs == [inputs]
+    assert not [line for line in step_lines(job["steps"]) if line.startswith("uv sync")]
+
+
+def test_uv_sync_action_moves_only_inspect_ai() -> None:
+    # Moving inspect-ai re-locks, which would also absorb a pyproject.toml
+    # change nobody locked, so the committed lock is checked first. The
+    # release PR resolves without sources, and later steps see the committed
+    # uv.lock.
+    action = yaml.safe_load((GITHUB / "actions" / "uv-sync" / "action.yml").read_text())
+    setup, move, install, restore = action["runs"]["steps"]
+    assert setup["uses"].startswith(SHARED_ACTIONS + "setup-uv@")
+    assert setup["with"] == {"python-version": "${{ inputs.python-version }}"}
+    assert move["env"]["HEAD_REF"] == "${{ github.head_ref }}"
+    assert step_lines([move]) == [
+        "uv lock --check",
+        f'if [ "$HEAD_REF" = "{RELEASE_BRANCH}" ]; then',
+        "export UV_NO_SOURCES=1",
+        'echo "UV_NO_SOURCES=1" >> "$GITHUB_ENV"',
+        "fi",
+        "uv lock --upgrade-package inspect-ai",
+    ]
+    assert install["uses"].startswith(SHARED_ACTIONS + "install-python-dependencies@")
+    assert install["with"] == {
+        "versions": "locked",
+        "python-version": "${{ inputs.python-version }}",
+        "extras": "${{ inputs.extras }}",
+        "project-install": "${{ inputs.project-install }}",
+    }
+    assert step_lines([restore]) == ["git checkout -- uv.lock"]
+
+
+def test_release_branch_name_matches_everywhere() -> None:
+    # A misspelt name silently runs the release PR as a dev PR.
+    names = {
+        where: set(re.findall(r"release-please--branches--[\w-]+", text))
+        for where, text in [
+            *[(path.name, path.read_text()) for path in WORKFLOWS.glob("*.y*ml")],
+            ("uv-sync", (GITHUB / "actions" / "uv-sync" / "action.yml").read_text()),
+        ]
+    }
+    assert set().union(*names.values()) == {RELEASE_BRANCH}
+    assert names["uv-sync"] and names["release-pin-deps.yml"]
+
+
+# A bare `uv run` or `uv sync` re-resolves an out-of-date uv.lock and installs
+# the result. `uv run --no-project` ignores the project and uv.lock. `--with`
+# installs unlocked packages whatever the other flags.
+def test_uv_never_relocks() -> None:
+    unlocked = [
+        (where, line)
+        for where, line in run_lines()
+        if re.search(r"\buv (run|sync)\b", line)
+        and (
+            "--with" in line
+            or not {"--locked", "--no-sync", "--no-project"} & set(line.split())
+        )
+    ]
+    assert unlocked == []
+
+
+def test_floor_script_requires_a_released_inspect_ai() -> None:
+    lock = """
+[[package]]
+name = "inspect-ai"
+version = "0.3.287.dev30"
+source = { git = "https://github.com/UKGovernmentBEIS/inspect_ai?branch=main#abc" }
+"""
+    with pytest.raises(ValueError, match="not locked from PyPI"):
+        inspect_ai_floor.locked_inspect_ai(lock)
+    released = lock.replace('version = "0.3.287.dev30"', 'version = "0.3.287"').replace(
+        'git = "https://github.com/UKGovernmentBEIS/inspect_ai?branch=main#abc"',
+        'registry = "https://pypi.org/simple"',
+    )
+    assert inspect_ai_floor.locked_inspect_ai(released) == "0.3.287"
