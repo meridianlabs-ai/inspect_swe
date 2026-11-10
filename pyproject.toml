@@ -44,10 +44,11 @@ dev = [
     # inspect-swe-nightly-tests.yml) installs this extra from uv.lock and
     # runs pytest with -n auto and --timeout; google-genai lets the
     # gemini_cli tests run there (with GOOGLE_API_KEY set they fail with
-    # PrerequisiteError without it, rather than skip).
+    # PrerequisiteError without it, or below inspect_ai's 3.0.0 floor in
+    # inspect_ai/model/_providers/providers.py, rather than skip).
     "pytest-timeout",
     "pytest-xdist",
-    "google-genai",
+    "google-genai>=3.0.0",
     # Floors required by inspect_ai's sandbox agent bridge (see
     # inspect_ai/model/_providers/providers.py). Without explicit floors a lock
     # regeneration can resolve below them, and bridge-backed tests then fail
@@ -81,6 +82,7 @@ exclude-newer = "7 days"
 # Inspect package; see CONTRIBUTING.md.
 [tool.uv.exclude-newer-package]
 anthropic = "6 hours"
+google-genai = "6 hours"
 inspect-ai = "6 hours"
 openai = "6 hours"
 

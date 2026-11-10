@@ -41,6 +41,7 @@ updates:
       default-days: 7
       exclude:
         - "anthropic"
+        - "google-genai"
         - "openai"
     ignore:
       - dependency-name: "inspect-ai"
@@ -48,6 +49,7 @@ updates:
       six-hour-cooldown:
         patterns:
           - "anthropic"
+          - "google-genai"
           - "openai"
       python-packages:
         patterns:
