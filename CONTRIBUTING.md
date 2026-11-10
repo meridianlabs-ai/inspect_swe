@@ -42,7 +42,7 @@ Testing against the newest release of every dependency happens in the nightly ca
 
 Development and CI track inspect_ai's `main` branch. `[tool.uv.sources]` in `pyproject.toml` points `inspect-ai` at its git repository, and `uv.lock` records a commit. Only uv reads `[tool.uv.sources]`: the published package requires the `inspect-ai>=` floor in `[project]`.
 
-- CI moves inspect-ai to the latest `main` commit before every install (`.github/actions/uv-sync`), so it always tests against inspect_ai main. Every other package stays at its locked version.
+- CI moves inspect-ai to the latest `main` commit before every install (`.github/actions/uv-sync`), so it always tests against inspect_ai main. Other packages keep their locked versions unless inspect_ai main needs newer ones.
 - `uv sync --extra dev` installs the commit in `uv.lock`. To move to the latest `main` commit, run `uv sync --upgrade-package inspect-ai --extra dev`. Committing the updated `uv.lock` is optional.
 - On the release PR, CI ignores the git source and installs the newest inspect-ai release that has cleared its cooldown, so the release is tested against the inspect_ai users will get. `.github/workflows/release-pin-deps.yml` raises the floor to that release. Main keeps the git source.
 
