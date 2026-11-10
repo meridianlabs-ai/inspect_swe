@@ -161,6 +161,11 @@ class CodexConsumer(ModelEventSink):
         # so a new answer repeating an old one's text still closes the thread.
         self._compactions: dict[str, str] = {}
 
+        # requester paths whose compaction request was seen and whose next
+        # request hasn't been: that request's history is the compacted one,
+        # so its summary is a new boundary even if its text repeats the last.
+        self._compacting: set[str] = set()
+
     @property
     def outer_span_id(self) -> str | None:
         """Span for main-agent attribution, resolved at emission time.
@@ -190,6 +195,7 @@ class CodexConsumer(ModelEventSink):
         self._resumes.clear()
         self._final_answers.clear()
         self._compactions.clear()
+        self._compacting.clear()
 
     # ------------------------------------------------------------------
     # ModelEventSink callbacks (called from the bridge)
@@ -506,9 +512,26 @@ class CodexConsumer(ModelEventSink):
         answers = final_answers(input_messages)
         requester = self._requester_path(input_messages)
         summary_at = compaction_summary_index(input_messages)
+        compacting = is_compaction_request(input_messages)
+        # the requester's first request after its compaction request carries
+        # the compacted history; a summary there is a new boundary whatever
+        # its text (two compactions can summarize alike). Without the
+        # compaction request seen, a summary unlike the last one is the sign
+        compacted = (
+            requester is not None and requester in self._compacting and not compacting
+        )
+        if compacted and requester is not None:
+            self._compacting.discard(requester)
         if requester is not None and summary_at is not None:
             summary = input_messages[summary_at].text
-            if self._compactions.get(requester) != summary:
+            # the model hasn't answered since a compaction replaced the
+            # history, so an assistant turn after the summary means this
+            # history wasn't replaced (e.g. the compaction failed)
+            fresh = compacted and not any(
+                isinstance(msg, ChatMessageAssistant)
+                for msg in input_messages[summary_at + 1 :]
+            )
+            if fresh or self._compactions.get(requester) != summary:
                 self._compactions[requester] = summary
                 # answers the compaction kept precede its summary; any after
                 # it reached the requester since, whatever their text
@@ -516,6 +539,8 @@ class CodexConsumer(ModelEventSink):
                 for key in self._final_answers:
                     if key[1] == requester:
                         self._final_answers[key] = kept.get(key, Counter())
+        if compacting and requester is not None:
+            self._compacting.add(requester)
         for key in self._final_answers:
             # answers the requester received that its history no longer has
             if key[1] == requester:

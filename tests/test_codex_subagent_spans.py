@@ -2900,3 +2900,85 @@ def test_v2_continuation_stays_open_when_compaction_keeps_the_old_answer(
         consumer.classify(model, request, [])
         assert [a.span_id for a in consumer._agents.values()] == [continuation]
     assert len(stub.span_ends()) == ends
+
+
+def _resumed_worker_after_a_summarized_answer(
+    monkeypatch: Any,
+) -> tuple[CodexConsumer, _TranscriptStub, Model, list[ChatMessage], str]:
+    """Root compacted once (summary S), then got the worker's no-id `Done.`.
+
+    The worker's span closed on that answer and a followup resumed it; returns
+    the consumer, root's history `[S, Done.]` and the continuation span.
+    """
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    to_worker: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    consumer.classify(model, to_worker, [])
+    consumer.classify(
+        model, [ChatMessageUser(content=f"{COMPACTION_MARKER} first")], []
+    )
+    history: list[ChatMessage] = [
+        ChatMessageUser(content=_compaction_summary("Summary.")),
+        _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "Done."),
+    ]
+    consumer.classify(model, history, [])
+    assert not consumer._agents
+    consumer.classify(model, to_worker, [])  # followup: continuation opens
+    [continuation] = [a.span_id for a in consumer._agents.values()]
+    return consumer, stub, model, history, continuation
+
+
+def test_v2_continuation_closes_after_a_compaction_with_an_identical_summary(
+    monkeypatch: Any,
+) -> None:
+    # root compacts again and the new summary has the same text; the resumed
+    # worker again answers `Done.` with no raw id. The compaction request was
+    # seen, so the summary in root's next history is a new boundary
+    consumer, stub, model, history, continuation = (
+        _resumed_worker_after_a_summarized_answer(monkeypatch)
+    )
+    compaction = ChatMessageUser(content=f"{COMPACTION_MARKER} second")
+    consumer.classify(model, [*history, compaction], [])
+    consumer.classify(
+        model,
+        [
+            ChatMessageUser(content=_compaction_summary("Summary.")),
+            _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "Done."),
+        ],
+        [],
+    )
+    assert stub.span_ends()[-1].id == continuation
+    assert not consumer._agents
+
+    consumer.classify(model, [_agent_message_user("/root", "/root/worker")], [])
+    [resumed] = [a.span_id for a in consumer._agents.values()]
+    assert resumed != continuation
+
+
+def test_v2_continuation_stays_open_when_history_re_carries_the_summary(
+    monkeypatch: Any,
+) -> None:
+    # neither an ordinary request re-carrying the summary and the old answer,
+    # nor the first request after a compaction that didn't replace the history
+    # (root's earlier turns still follow the summary), closes the continuation
+    consumer, stub, model, history, continuation = (
+        _resumed_worker_after_a_summarized_answer(monkeypatch)
+    )
+    ends = len(stub.span_ends())
+    worked: list[ChatMessage] = [
+        *history,
+        ChatMessageAssistant(content="checking the worker's result"),
+        ChatMessageUser(content="continue"),
+    ]
+    consumer.classify(model, worked, [])
+    compaction = ChatMessageUser(content=f"{COMPACTION_MARKER} second")
+    consumer.classify(model, [*worked, compaction], [])
+    consumer.classify(model, [*worked, ChatMessageUser(content="more")], [])
+    assert [a.span_id for a in consumer._agents.values()] == [continuation]
+    assert len(stub.span_ends()) == ends
