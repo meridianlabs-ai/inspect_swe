@@ -206,12 +206,18 @@ def completed_thread_ids(input_messages: list[ChatMessage]) -> set[str]:
 
 
 def is_compaction_request(input_messages: list[ChatMessage]) -> bool:
-    """Whether this request is a (local) compaction summarization call."""
-    return any(
-        isinstance(msg, ChatMessageUser)
-        and msg.text.lstrip().startswith(COMPACTION_MARKER)
-        for msg in input_messages
+    """Whether this request is a (local) compaction summarization call.
+
+    Codex appends the compaction prompt as the turn's latest user message, so
+    only that message is checked: an earlier user message that merely starts
+    with the marker text (e.g. a task about the prompt itself) stays in the
+    history of ordinary requests and does not make them compaction calls.
+    """
+    latest = next(
+        (msg for msg in reversed(input_messages) if isinstance(msg, ChatMessageUser)),
+        None,
     )
+    return latest is not None and latest.text.lstrip().startswith(COMPACTION_MARKER)
 
 
 # ---------------------------------------------------------------------------

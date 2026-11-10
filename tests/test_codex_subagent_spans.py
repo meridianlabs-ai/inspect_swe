@@ -2259,3 +2259,70 @@ def test_v2_continuation_closes_on_a_new_answer_after_root_compaction(
     _finish_v2(consumer, "/root/worker")
     assert stub.span_ends()[-1].id == continuation
     assert not consumer._agents
+
+
+# ---------------------------------------------------------------------------
+# 18. review pass 2: historical marker, rewritten spawner path, nested requests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_historical_compaction_marker_does_not_disable_root_steering() -> None:
+    """A root conversation that merely quotes the compaction prompt earlier.
+
+    Only the latest user message can be Codex's compaction instruction, so
+    the continuation is root's (and passes the steering gate), and no
+    compaction marker is recorded for it.
+    """
+    from inspect_ai.agent import is_root_agent
+
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    seen: list[AgentBridgeContext | None] = []
+    gate: list[bool] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        seen.append(current_agent_bridge_context())
+        gate.append(is_root_agent())
+        return None
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+    input: list[ChatMessage] = [
+        ChatMessageUser(
+            content=f"{COMPACTION_MARKER}\n"
+            "Explain how this prompt is detected in the Codex codebase."
+        ),
+        ChatMessageAssistant(content="It is matched by its first line."),
+        ChatMessageUser(content="Thanks, now continue with the task."),
+        _agent_message_user("/root/helper", "/root", "MESSAGE", "status"),
+    ]
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        await bridge_generate(
+            bridge,
+            get_model("mockllm/model"),
+            input,
+            [],
+            None,
+            GenerateConfig(),
+            "gpt-5.6-sol",
+        )
+
+    assert seen == [AgentBridgeContext("root")]
+    assert gate == [True]
+    events = transcript().events
+    assert not [e for e in events if isinstance(e, CompactionEvent)]
+    [event] = [e for e in events if isinstance(e, ModelEvent)]
+    assert event.span_id == outer
