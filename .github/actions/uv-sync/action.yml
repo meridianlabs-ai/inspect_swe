@@ -3,9 +3,9 @@ description: >-
   Installs uv and Python, fails on a uv.lock that is out of date with
   pyproject.toml, moves inspect-ai to inspect_ai main's latest commit, and
   installs. Other packages keep their locked versions unless inspect_ai main
-  needs newer ones. On the Release Please release PR, inspect-ai is the newest
-  release that clears its cooldown instead, so the release is tested against
-  the inspect_ai it will require.
+  requires different ones. On the Release Please release PR, inspect-ai is
+  the newest release that clears its cooldown instead, so the release is
+  tested against the inspect_ai it will require.
 
 inputs:
   python-version:

@@ -236,10 +236,12 @@ def test_jobs_that_can_write_use_no_cache() -> None:
         or "write" in (permissions.values() if isinstance(permissions, dict) else [])
         for step in job.get("steps", [])
         if step.get("uses") == UV_SYNC_ACTION
-        or step.get("uses", "").startswith(
-            SHARED_ACTIONS + "install-python-dependencies@"
+        or (
+            step.get("uses", "").startswith(
+                SHARED_ACTIONS + "install-python-dependencies@"
+            )
+            and step["with"].get("actions-cache") != "none"
         )
-        and step["with"].get("actions-cache") != "none"
     ]
     assert cached == [], (
         f"use actions-cache: none (not {UV_SYNC_ACTION}, which always uses "
