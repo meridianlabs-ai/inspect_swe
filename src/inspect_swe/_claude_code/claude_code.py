@@ -356,7 +356,10 @@ def claude_code(
                 model_aliases=models.aliases,
                 forward_generation_config=transparent_proxy,
                 filter=classify_filter(
-                    pinned_filter, consumer.classify, consumer.on_filter_output
+                    pinned_filter,
+                    consumer.classify,
+                    consumer.on_filter_output,
+                    consumer,
                 ),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,

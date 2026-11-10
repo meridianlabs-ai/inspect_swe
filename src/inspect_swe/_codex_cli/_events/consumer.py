@@ -64,6 +64,7 @@ from inspect_ai.util._span import current_span_id
 
 from ..._util.model_event_sink import (
     Decision,
+    in_filter_generation,
     mark_started,
     remember_decision,
     remembered_decision,
@@ -221,15 +222,17 @@ class CodexConsumer(ModelEventSink):
 
             # a filter may have rewritten the input this generate saw: the
             # requesting agent's path is the one `classify` read off the
-            # request as it reached the bridge
+            # request as it reached the bridge. A user filter's own generation
+            # reaches Codex only if the filter returns it (`on_filter_output`)
             decided = remembered_decision(self)
-            self._register_delegation(
-                msg,
-                event.span_id or self.outer_span_id,
-                decided.requester_path
-                if decided is not None
-                else self._requester_path(event.input),
-            )
+            if not in_filter_generation(self):
+                self._register_delegation(
+                    msg,
+                    event.span_id or self.outer_span_id,
+                    decided.requester_path
+                    if decided is not None
+                    else self._requester_path(event.input),
+                )
 
         if id(event) in self._emitted_events:
             self._emitted_events.discard(id(event))

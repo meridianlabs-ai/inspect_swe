@@ -89,6 +89,7 @@ from inspect_ai.util._span import current_span_id
 
 from ..._util.model_event_sink import (
     Decision,
+    in_filter_generation,
     mark_started,
     remember_decision,
     remembered_decision,
@@ -262,7 +263,10 @@ class LiveConsumer(ModelEventSink):
             # synchronously, before the bridge response is sent back to
             # Claude Code. By the time any sub-agent makes its first bridge
             # call, both `_open_agents` and `_pending_subagents` are ready.
-            self._register_tasks(msg, event.span_id or self.outer_span_id)
+            # A user filter's own generation reaches Claude Code only if the
+            # filter returns it, which `on_filter_output` tracks.
+            if not in_filter_generation(self):
+                self._register_tasks(msg, event.span_id or self.outer_span_id)
 
         if id(event) in self._emitted_events:
             self._emitted_events.discard(id(event))

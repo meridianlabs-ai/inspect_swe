@@ -404,7 +404,7 @@ def codex_cli(
                 ),
                 forward_generation_config=transparent_proxy,
                 filter=classify_filter(
-                    filter, consumer.classify, consumer.on_filter_output
+                    filter, consumer.classify, consumer.on_filter_output, consumer
                 ),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,

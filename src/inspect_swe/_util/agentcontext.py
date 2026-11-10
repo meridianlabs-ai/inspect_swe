@@ -16,6 +16,8 @@ from inspect_ai.agent import (
     current_bridge_request,
     set_agent_bridge_context,
 )
+from inspect_ai.event import ModelEvent
+from inspect_ai.log._transcript import transcript
 from inspect_ai.model import (
     ChatMessage,
     GenerateConfig,
@@ -24,9 +26,10 @@ from inspect_ai.model import (
     Model,
     ModelOutput,
 )
+from inspect_ai.model._model import ModelEventSink, use_model_event_sink
 from inspect_ai.tool import ToolChoice, ToolInfo
 
-from .model_event_sink import preserve_decision
+from .model_event_sink import filter_generation, preserve_decision
 
 logger = getLogger(__name__)
 
@@ -115,6 +118,51 @@ def slug_map_classifier(
     return _classify
 
 
+class _FilterGenerationSink:
+    """Route a user filter's own generation to the bridge's sink.
+
+    The bridge installs its `ModelEventSink` only around its own generation,
+    after the filter, so a filter that generates (and returns that output)
+    would record its `ModelEvent`, and give a live sentinel its conversation,
+    in the outer span rather than the agent the filter was told about.
+    Installed around the user filter, this forwards that generation to the
+    sink, which places it like the bridge's own (`on_start`, from the
+    filter-time decision), and marks its `on_complete` as a filter's
+    generation (`filter_generation`): only an output the filter returns
+    reaches the agent, and `on_filter_output` tracks delegation in that one.
+
+    A nested bridged request the filter makes is its own request: one that
+    installs its own sink is unaffected, and any other generation under
+    another request is recorded in the current span as without a sink.
+    """
+
+    def __init__(self, inner: ModelEventSink, request: object) -> None:
+        self.inner = inner
+        self.request = request
+
+    def _ours(self) -> bool:
+        return current_bridge_request() is self.request
+
+    def on_start(self, input: list[ChatMessage]) -> str | None:
+        on_start = getattr(self.inner, "on_start", None)
+        if not self._ours() or on_start is None:
+            return None
+        return cast(str | None, on_start(input))
+
+    def on_pending(self, event: ModelEvent) -> None:
+        if self._ours():
+            self.inner.on_pending(event)
+        else:
+            transcript()._event(event)
+
+    def on_complete(self, event: ModelEvent) -> None:
+        if self._ours():
+            with filter_generation(self.inner):
+                self.inner.on_complete(event)
+        else:
+            transcript()._event_updated(event)
+
+
 def is_legacy_str_filter(fn: GenerateFilter) -> bool:
     """True when `fn`'s first parameter is annotated `str` (legacy dispatch).
 
@@ -131,6 +179,7 @@ def classify_filter(
     user_filter: GenerateFilter | None,
     classify: AgentContextClassifier,
     on_filter_output: Callable[[list[ChatMessage], ModelOutput], None] | None = None,
+    sink: ModelEventSink | None = None,
 ) -> ModelFilter:
     """Wrap a user-supplied bridge filter so it runs with the agent context set.
 
@@ -151,6 +200,11 @@ def classify_filter(
     the output before it is returned, for agents whose attribution tracks
     state from model outputs. Its failures are logged and swallowed the same
     way.
+
+    `sink` is the bridge's `ModelEventSink`, if it has one: a generation the
+    user filter runs itself is routed to it (`_FilterGenerationSink`), so its
+    `ModelEvent` is placed in the span the filter's context names, as the
+    bridge's own generation would be.
     """
     user_is_legacy = user_filter is not None and is_legacy_str_filter(user_filter)
     if user_is_legacy:
@@ -186,7 +240,13 @@ def classify_filter(
 
         # a user filter may run a nested bridged request in this task, whose
         # classifier records its own placement: keep this request's
-        with preserve_decision():
+        request = current_bridge_request()
+        filter_sink = (
+            _FilterGenerationSink(sink, request)
+            if sink is not None and request is not None
+            else None
+        )
+        with preserve_decision(), use_model_event_sink(filter_sink):
             if user_is_legacy:
                 result = await cast(StrFilter, user_filter)(
                     model.name, messages, tools, tool_choice, config

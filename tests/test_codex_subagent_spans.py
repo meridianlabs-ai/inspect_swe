@@ -2554,3 +2554,103 @@ async def test_nested_bridge_request_restores_outer_span_decision(agent: str) ->
         if isinstance(e, ModelEvent) and e.input[-1].text == _SUMMARY
     ]
     assert outer_event.span_id == "agent-child"
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("returned", [True, False])
+@pytest.mark.parametrize("agent", ["codex_cli", "claude_code"])
+async def test_filter_generation_lands_in_the_classified_sub_agent_span(
+    agent: str, returned: bool
+) -> None:
+    """A user filter that generates itself is placed like the bridge's generation.
+
+    The filter is told the request is the child's, and its own `model.generate`
+    lands in the child's span. Its output delegates to a grandchild: when the
+    filter returns it, that delegation opens one span (under the child); when
+    the filter discards it and the bridge generates instead, the agent never
+    saw the delegation, so no span opens.
+    """
+    from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+    from inspect_swe._claude_code.model import resolve_claude_code_models
+
+    init_transcript(Transcript())
+    prompt = "Investigate the failing integration test and report the root cause."
+    consumer: CodexConsumer | LiveConsumer
+    if agent == "codex_cli":
+        consumer = CodexConsumer()
+        spawn = _v2_spawn_call("child", "child")
+        grandchild = _v2_spawn_call("grand", "grand")
+        child_input: list[ChatMessage] = [_agent_message_user("/root", "/root/child")]
+        slug = "gpt-5.6-sol"
+        expected = AgentBridgeContext("subagent", subagent_id="/root/child")
+    else:
+        models = resolve_claude_code_models("mockllm/model", None)
+        consumer = LiveConsumer(models)
+        spawn = ToolCall(
+            id="child",
+            function="Task",
+            arguments={"prompt": prompt, "subagent_type": "Explore"},
+        )
+        grandchild = ToolCall(
+            id="grand",
+            function="Task",
+            arguments={"prompt": "Read the test logs.", "subagent_type": "Explore"},
+        )
+        child_input = [ChatMessageUser(content=prompt)]
+        slug = models.subagent
+        expected = AgentBridgeContext(
+            "subagent", subagent_id="child", subagent_type="Explore"
+        )
+    model = get_model(
+        "mockllm/model",
+        custom_outputs=[
+            ModelOutput.from_message(
+                ChatMessageAssistant(content="delegating", tool_calls=[grandchild])
+            ),
+            ModelOutput.from_content("mockllm", "bridge generation"),
+        ],
+    )
+    seen: list[AgentBridgeContext | None] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        seen.append(current_agent_bridge_context())
+        output = await model.generate(
+            input=messages, tools=tools, tool_choice=tool_choice, config=config
+        )
+        return output if returned else None
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output, consumer
+        ),
+        model_event_sink=consumer,
+    )
+    async with span("outer", type="agent"):
+        consumer.on_complete(
+            _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+        )
+        await bridge_generate(
+            bridge, model, child_input, [], None, GenerateConfig(), slug
+        )
+        consumer.reset()
+
+    assert seen == [expected]
+    events = transcript().events
+    generated = [e for e in events if isinstance(e, ModelEvent) and e.output.choices]
+    assert [e.span_id for e in generated] == (
+        ["agent-child"] if returned else ["agent-child", "agent-child"]
+    )
+    grand_begins = [
+        e for e in events if isinstance(e, SpanBeginEvent) and e.id == "agent-grand"
+    ]
+    if returned:
+        assert [e.parent_id for e in grand_begins] == ["agent-child"]
+    else:
+        assert grand_begins == []

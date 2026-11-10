@@ -21,6 +21,13 @@ decision is keyed on the sink and on the bridge's own per-request
 shares the task. A user filter may itself run a nested bridged request in the
 same task; `preserve_decision` (around the user filter, in `classify_filter`)
 restores the enclosing request's decision when that filter returns.
+
+`filter_generation` / `in_filter_generation`: a user filter may generate on its
+own; `classify_filter` routes that generation to the sink so it is placed like
+the bridge's own, and marks the sink's `on_complete` for it. Its output reaches
+the agent only if the filter returns it, so the sink leaves delegation tracking
+to `on_filter_output` there rather than registering tool calls the agent may
+never see.
 """
 
 from collections.abc import Iterator
@@ -44,6 +51,10 @@ class Decision:
     requester_path: str | None = None
     """Codex: the V2 path of the agent that made the request, when known."""
 
+
+_filter_generation: ContextVar[object | None] = ContextVar(
+    "inspect_swe_model_event_sink_filter_generation", default=None
+)
 
 _decided: ContextVar[tuple[object, object, Decision] | None] = ContextVar(
     "inspect_swe_model_event_sink_decided", default=None
@@ -96,3 +107,18 @@ def preserve_decision() -> Iterator[None]:
         yield
     finally:
         _decided.reset(token)
+
+
+@contextmanager
+def filter_generation(sink: object) -> Iterator[None]:
+    """Mark `sink`'s callbacks in the block as for a user filter's own generation."""
+    token = _filter_generation.set(sink)
+    try:
+        yield
+    finally:
+        _filter_generation.reset(token)
+
+
+def in_filter_generation(sink: object) -> bool:
+    """Whether `sink` is completing a generation the user's filter ran itself."""
+    return _filter_generation.get() is sink
