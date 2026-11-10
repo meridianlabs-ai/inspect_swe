@@ -21,15 +21,33 @@ Fixture shapes below are copied from a real gpt-5.6-sol eval log
 """
 
 import contextvars
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import anyio
 import pytest
 from inspect_ai._util.content import ContentText
+from inspect_ai.agent import (
+    AgentBridgeContext,
+    AgentState,
+    current_agent_bridge_context,
+)
+from inspect_ai.agent._bridge.context import bridged_request_scope
+from inspect_ai.agent._bridge.types import AgentBridge
+from inspect_ai.agent._bridge.util import bridge_generate
 from inspect_ai.event import CompactionEvent, SpanBeginEvent, SpanEndEvent
 from inspect_ai.event._model import ModelEvent
 from inspect_ai.log._transcript import Transcript, init_transcript, transcript
-from inspect_ai.model import GenerateConfig, ModelOutput, get_model
+from inspect_ai.model import (
+    GenerateConfig,
+    GenerateInput,
+    Model,
+    ModelOutput,
+    get_model,
+)
+from inspect_ai.model import _model as model_module
 from inspect_ai.model._chat_message import (
     ChatMessage,
     ChatMessageAssistant,
@@ -37,7 +55,7 @@ from inspect_ai.model._chat_message import (
     ChatMessageUser,
 )
 from inspect_ai.model._model import use_model_event_sink
-from inspect_ai.tool import ToolCall
+from inspect_ai.tool import ToolCall, ToolCallError, ToolChoice, ToolInfo
 from inspect_ai.util._span import current_span_id, span
 from inspect_swe._codex_cli._events import consumer as consumer_module
 from inspect_swe._codex_cli._events.consumer import CodexConsumer
@@ -46,8 +64,10 @@ from inspect_swe._codex_cli._events.detection import (
     agent_message_recipients,
     final_answer_authors,
     find_spawned_agents,
+    spawn_failed,
     spawn_result,
 )
+from inspect_swe._util.agentcontext import classify_filter
 
 # ---------------------------------------------------------------------------
 # fixtures (shapes from a real codex 0.147.0 / gpt-5.6-sol run)
@@ -139,6 +159,29 @@ def _consumer(monkeypatch: Any) -> tuple[CodexConsumer, _TranscriptStub]:
     stub = _TranscriptStub()
     monkeypatch.setattr(consumer_module, "transcript", lambda: stub)
     return CodexConsumer(), stub
+
+
+def _proven_root_request(text: str = "go") -> list[ChatMessage]:
+    """A root request that proves it is root: an inbound message to /root.
+
+    A request with no agent_message is also taken as root's; this shape
+    exists so section 13's tests about other requesters are not about that
+    fallback.
+    """
+    return [
+        ChatMessageUser(content=text),
+        _agent_message_user("/root/helper", "/root", "MESSAGE", "status"),
+    ]
+
+
+def _deliver_v2_spawn_results(consumer: CodexConsumer, paths: dict[str, str]) -> None:
+    """Root's next request, carrying each spawn's result (which binds its path)."""
+    messages: list[ChatMessage] = [ChatMessageUser(content="go")]
+    messages.extend(
+        _spawn_result_tool_message(call_id, json.dumps({"task_name": path}))
+        for call_id, path in paths.items()
+    )
+    consumer.on_pending(_model_event(messages))
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +398,1156 @@ def test_consumer_v1_prompt_attribution_unchanged(monkeypatch: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. consumer: on_start (inspect_ai with ModelEventSink.on_start)
+# 7. classify(): filter-time agent context from the same attribution maps
+# ---------------------------------------------------------------------------
+
+
+def test_classify_root_before_any_spawn(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+
+    result = consumer.classify(
+        get_model("mockllm/model"), [ChatMessageUser(content="plain task")], []
+    )
+
+    assert result == AgentBridgeContext("root")
+
+
+def test_classify_bound_subagent(monkeypatch: Any) -> None:
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        _proven_root_request("go"),
+        tool_calls=[_v2_spawn_call("call_pr", "write_primes")],
+    )
+    consumer.on_complete(parent)
+    pr_span = stub.span_begins()[0].id
+
+    # first call from the sub-agent's thread: binds by recipient basename
+    # ("write_primes") the same way on_pending's _attribute() would.
+    child_messages: list[ChatMessage] = [
+        _agent_message_user("/root", "/root/write_primes")
+    ]
+    result = consumer.classify(get_model("mockllm/model"), child_messages, [])
+
+    assert result == AgentBridgeContext("subagent", subagent_id="/root/write_primes")
+    # the binding stuck (not a one-off side effect of classify alone) —
+    # a later call resolves to the same span without re-deriving it.
+    assert consumer._attribute(child_messages) == pr_span
+
+
+def test_classify_compaction_as_utility(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+
+    messages: list[ChatMessage] = [
+        ChatMessageUser(
+            content=f"{COMPACTION_MARKER}\nSummarize the conversation so far."
+        )
+    ]
+    result = consumer.classify(get_model("mockllm/model"), messages, [])
+
+    assert result == AgentBridgeContext("utility")
+
+
+def test_classify_guardian_slug_as_utility(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+
+    messages: list[ChatMessage] = [ChatMessageUser(content="review this diff")]
+    with bridged_request_scope("codex-auto-review"):
+        result = consumer.classify(get_model("mockllm/model"), messages, [])
+
+    assert result == AgentBridgeContext("utility")
+
+
+def test_classify_ambiguous_span_is_still_subagent(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+
+    # two unbound spawns sharing the same task name -> a recipient basename
+    # match can't disambiguate between them, so the span stays unresolved ...
+    parent = _model_event(
+        [ChatMessageUser(content="spawn two same-named agents")],
+        tool_calls=[
+            _v2_spawn_call("call_1", "write_fizzbuzz"),
+            _v2_spawn_call("call_2", "write_fizzbuzz"),
+        ],
+    )
+    consumer.on_complete(parent)
+
+    messages: list[ChatMessage] = [_agent_message_user("/root", "/root/write_fizzbuzz")]
+    result = consumer.classify(get_model("mockllm/model"), messages, [])
+
+    # ... but a non-root recipient still identifies the kind
+    assert consumer._attribute(messages) == consumer.outer_span_id
+    assert result == AgentBridgeContext("subagent", subagent_id="/root/write_fizzbuzz")
+
+
+def test_classify_v2_followup_after_final_answer_is_subagent(
+    monkeypatch: Any,
+) -> None:
+    """V2: a child resumed by followup_task after its FINAL_ANSWER.
+
+    The FINAL_ANSWER closes the child's span, so no span state identifies the
+    child's next request; its inbound agent_message recipient still does.
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        _proven_root_request("go"),
+        tool_calls=[_v2_spawn_call("call_w", "worker")],
+    )
+    consumer.on_complete(parent)
+    consumer.on_pending(_model_event([_agent_message_user("/root", "/root/worker")]))
+
+    final = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "done")
+    root_messages: list[ChatMessage] = [ChatMessageUser(content="go"), final]
+    assert consumer.classify(get_model("mockllm/model"), root_messages, []) == (
+        AgentBridgeContext("root")
+    )
+    assert not consumer._agents
+
+    followup: list[ChatMessage] = [
+        _agent_message_user("/root", "/root/worker"),
+        _agent_message_user("/root", "/root/worker", "MESSAGE", "one more thing"),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), followup, [])
+
+    assert result == AgentBridgeContext("subagent", subagent_id="/root/worker")
+
+    # same with another sub-agent still open (was "unknown")
+    other = _model_event(
+        root_messages, tool_calls=[_v2_spawn_call("call_o", "other_task")]
+    )
+    consumer.on_complete(other)
+    assert consumer._agents
+    result = consumer.classify(get_model("mockllm/model"), followup, [])
+
+    assert result == AgentBridgeContext("subagent", subagent_id="/root/worker")
+
+
+def test_classify_root_while_subagents_open(monkeypatch: Any) -> None:
+    """A genuine root-thread request while a sub-agent is open.
+
+    Fixture evidence (see `test_consumer_attributes_subagent_call_by_recipient`
+    and `test_consumer_closes_span_on_final_answer` above): when a sub-agent
+    sends the *parent* a message, the bridge produces a ChatMessageUser whose
+    agent_message item has recipient "/root" — that is the only positive
+    "this call belongs to root" signal these fixtures carry once agents are
+    open (root's own plain-text turns look identical whether or not
+    sub-agents are open, so they can't serve as that signal). `classify`
+    must special-case recipients == {"/root"} to "root"; without it, an
+    open sub-agent set would otherwise push this call to "unknown".
+    """
+    consumer, _ = _consumer(monkeypatch)
+
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v2_spawn_call("call_pr", "write_primes")],
+    )
+    consumer.on_complete(parent)
+
+    root_messages: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _agent_message_user("/root/write_primes", "/root", "MESSAGE", "status update"),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), root_messages, [])
+
+    assert result == AgentBridgeContext("root")
+
+
+def test_classify_matches_span_attribution(monkeypatch: Any) -> None:
+    """Shared-resolver invariant: classify() agrees with _attribute()'s span.
+
+    For any request _attribute() resolves to a sub-agent span, classify()
+    reports "subagent", and here (every call attributable) the converse
+    holds too — classify is a thin reclassification of the same maps
+    _attribute uses. The one addition is a non-root recipient with no
+    resolvable span (see the follow-up and ambiguous tests), where the kind
+    is known but the span isn't.
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        _proven_root_request("spawn two agents"),
+        tool_calls=[
+            _v2_spawn_call("call_fb", "write_fizzbuzz"),
+            _v2_spawn_call("call_pr", "write_primes"),
+        ],
+    )
+    consumer.on_complete(parent)
+
+    requests: list[list[ChatMessage]] = [
+        [_agent_message_user("/root", "/root/write_fizzbuzz")],
+        [_agent_message_user("/root", "/root/write_primes")],
+        [
+            ChatMessageUser(content="spawn two agents"),
+            _agent_message_user("/root/write_primes", "/root"),
+        ],
+    ]
+    for messages in requests:
+        is_subagent_span = consumer._attribute(messages) != consumer.outer_span_id
+        kind = consumer.classify(get_model("mockllm/model"), messages, []).kind
+        assert (kind == "subagent") == is_subagent_span
+
+
+def test_classify_then_on_pending_is_idempotent(monkeypatch: Any) -> None:
+    """The bridge runs classify() then on_pending() for the same request.
+
+    This is the actual production call sequence, not just each method
+    exercised in isolation. Both derive the request's span
+    via `_attribute`; the first call from a sub-agent's thread binds it
+    (mutating `_thread_index` and the matched `_OpenAgent.thread_id`) as a
+    side effect of `_attribute_by_recipient`'s basename match. `on_pending`'s
+    own `_attribute` pass over the *same* event must resolve to that already-
+    bound span (not re-derive, and potentially disagree with, the binding)
+    and must not mutate that state any further.
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        _proven_root_request("go"),
+        tool_calls=[_v2_spawn_call("call_pr", "write_primes")],
+    )
+    consumer.on_complete(parent)
+    pr_span = stub.span_begins()[0].id
+
+    # first call from the sub-agent's thread -- unbound until classify()
+    # resolves it via recipient basename matching.
+    child_call = _model_event([_agent_message_user("/root", "/root/write_primes")])
+
+    classified = consumer.classify(get_model("mockllm/model"), child_call.input, [])
+    assert classified == AgentBridgeContext(
+        "subagent", subagent_id="/root/write_primes"
+    )
+
+    thread_index_after_classify = dict(consumer._thread_index)
+    agents_after_classify = {
+        call_id: (agent.thread_id, agent.span_id)
+        for call_id, agent in consumer._agents.items()
+    }
+
+    consumer.on_pending(child_call)
+
+    # on_pending's own _attribute() pass agreed with classify()'s implied span.
+    assert child_call.span_id == pr_span
+
+    # ... and the second pass left the binding state exactly as classify()
+    # left it -- no re-derivation, no drift.
+    assert dict(consumer._thread_index) == thread_index_after_classify
+    assert {
+        call_id: (agent.thread_id, agent.span_id)
+        for call_id, agent in consumer._agents.items()
+    } == agents_after_classify
+
+
+# ---------------------------------------------------------------------------
+# 8. classify(): thread-close signals in the request itself
+# ---------------------------------------------------------------------------
+
+
+def _v1_completion_carrier(kind: str, thread_id: str) -> ChatMessage:
+    """The two V1 carriers of a `completed` status for a thread (detection.py)."""
+    if kind == "wait_agent":
+        return ChatMessageTool(
+            content=json.dumps({"status": {thread_id: {"completed": "done"}}}),
+            tool_call_id="call_wait",
+            function="wait_agent",
+        )
+    return ChatMessageUser(
+        content="<subagent_notification>"
+        + json.dumps({"agent_path": thread_id, "status": {"completed": "done"}})
+        + "</subagent_notification>"
+    )
+
+
+@pytest.mark.parametrize("carrier", ["wait_agent", "subagent_notification"])
+def test_classify_root_after_v1_completion_in_request(
+    monkeypatch: Any, carrier: str
+) -> None:
+    """V1: the last open sub-agent completes; root's next request proves it.
+
+    The bridge runs classify() before on_pending(), so classify must apply
+    the request's own completion signal before deciding whether any
+    sub-agent is still open. Without that, a genuine root request whose
+    input closes the last thread is stamped "unknown" (no agent_message
+    recipient under V1, `_agents` still non-empty).
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    parent = _model_event(
+        [ChatMessageUser(content="go")],
+        tool_calls=[_v1_spawn_call("call_1", prompt)],
+    )
+    consumer.on_complete(parent)
+    span = stub.span_begins()[0].id
+
+    child_call = _model_event([ChatMessageUser(content=prompt)])
+    consumer.on_pending(child_call)
+    assert child_call.span_id == span
+
+    # root's next request: full history (spawn result binds the thread id)
+    # plus the completion of that thread.
+    root_messages: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _spawn_result_tool_message(
+            "call_1", '{"agent_id":"thread_abc","nickname":"Explorer"}'
+        ),
+        _v1_completion_carrier(carrier, "thread_abc"),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), root_messages, [])
+
+    assert result == AgentBridgeContext("root")
+    assert [e.id for e in stub.span_ends()] == [span]
+
+    # on_pending over the same request must not close the span twice
+    consumer.on_pending(_model_event(root_messages))
+    assert [e.id for e in stub.span_ends()] == [span]
+    assert not consumer._agents and not consumer._thread_index
+
+
+def test_classify_closes_span_on_v2_final_answer(monkeypatch: Any) -> None:
+    """V2: a FINAL_ANSWER in root's request closes the child's span at filter time.
+
+    The following on_pending over the same request must not close it again.
+    (Classification itself was already "root" here via the `/root`
+    recipient rescue; this pins the span-close timing and single emission.)
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    parent = _model_event(
+        _proven_root_request("go"),
+        tool_calls=[_v2_spawn_call("call_pr", "write_primes")],
+    )
+    consumer.on_complete(parent)
+    pr_span = stub.span_begins()[0].id
+
+    child_call = _model_event([_agent_message_user("/root", "/root/write_primes")])
+    consumer.on_pending(child_call)
+    assert child_call.span_id == pr_span
+
+    root_messages: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _agent_message_user(
+            "/root/write_primes", "/root", "FINAL_ANSWER", "all primes written"
+        ),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), root_messages, [])
+
+    assert result == AgentBridgeContext("root")
+    assert [e.id for e in stub.span_ends()] == [pr_span]
+    assert not consumer._agents
+
+    consumer.on_pending(_model_event(root_messages))
+    assert [e.id for e in stub.span_ends()] == [pr_span]
+
+
+# ---------------------------------------------------------------------------
+# 9. V1: a spawner whose own prompt contains the delegated text
+# ---------------------------------------------------------------------------
+
+
+def test_classify_v1_spawner_is_not_its_own_subagent(monkeypatch: Any) -> None:
+    """V1: root delegates a sentence copied from its own task prompt.
+
+    Root's next request carries that sentence (in its task prompt) and so
+    substring-matches the open spawn. It also carries the spawn call and its
+    result, which a V1 child's thread never does: the requester is the
+    spawner, so the spawn is no candidate. With nothing else open root
+    classifies "unknown" for the delegation window, never "subagent".
+    """
+    consumer, stub = _consumer(monkeypatch)
+
+    delegated = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    task = ChatMessageUser(content=f"Two steps. First, {delegated}. Then test it.")
+    spawn = _v1_spawn_call("call_1", delegated)
+    consumer.on_complete(_model_event([task], tool_calls=[spawn]))
+    span = stub.span_begins()[0].id
+
+    root_messages: list[ChatMessage] = [
+        task,
+        ChatMessageAssistant(content="", tool_calls=[spawn]),
+        _spawn_result_tool_message(
+            "call_1", '{"agent_id":"thread_abc","nickname":"Explorer"}'
+        ),
+    ]
+    result = consumer.classify(get_model("mockllm/model"), root_messages, [])
+
+    assert result == AgentBridgeContext("unknown")
+    root_call = _model_event(root_messages)
+    consumer.on_pending(root_call)
+    assert root_call.span_id == consumer.outer_span_id
+
+    # the child itself still matches
+    child_messages: list[ChatMessage] = [ChatMessageUser(content=delegated)]
+    assert consumer.classify(get_model("mockllm/model"), child_messages, []) == (
+        AgentBridgeContext("subagent", subagent_id="call_1", subagent_type="explore")
+    )
+    assert consumer._attribute(child_messages) == span
+
+
+# ---------------------------------------------------------------------------
+# 10. a filter that returns its own ModelOutput
+# ---------------------------------------------------------------------------
+
+
+async def test_filter_returned_spawn_registers_subagent(monkeypatch: Any) -> None:
+    """A filter that generates itself bypasses the bridge's ModelEventSink.
+
+    Driven through the real bridge_generate with the same filter wiring
+    codex_cli() installs: the spawn_agent call in the filter's own output
+    must still open the sub-agent, so the child's V1 request classifies
+    "subagent" rather than "root".
+    """
+    consumer, stub = _consumer(monkeypatch)
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    model = get_model("mockllm/model")
+
+    kinds: list[str] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        context = current_agent_bridge_context()
+        kinds.append(context.kind if context is not None else "none")
+        if messages[-1].text == "go":
+            spawn = _v1_spawn_call("call_1", prompt)
+            return ModelOutput.from_message(
+                ChatMessageAssistant(content="", tool_calls=[spawn])
+            )
+        return ModelOutput.from_content(model.name, "done")
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+    for text in ("go", prompt):
+        messages: list[ChatMessage] = [ChatMessageUser(content=text)]
+        await bridge_generate(bridge, model, messages, [], None, GenerateConfig(), None)
+
+    assert kinds == ["root", "subagent"]
+    assert [e.id for e in stub.span_begins()] == ["agent-call_1"]
+
+
+class _BridgeCaptured(Exception):
+    pass
+
+
+async def test_codex_cli_wires_filter_output_tracking(monkeypatch: Any) -> None:
+    """codex_cli() hands the bridge a filter that reports outputs to its sink."""
+    from inspect_swe._codex_cli import codex_cli as codex_cli_module
+
+    _, stub = _consumer(monkeypatch)
+    captured: dict[str, Any] = {}
+
+    def fake_bridge(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        raise _BridgeCaptured()
+
+    @asynccontextmanager
+    async def fake_checkpointer() -> AsyncIterator[None]:
+        yield None
+
+    monkeypatch.setattr(codex_cli_module, "checkpointer", fake_checkpointer)
+    monkeypatch.setattr(codex_cli_module, "sandbox_agent_bridge", fake_bridge)
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        return ModelOutput.from_message(
+            ChatMessageAssistant(
+                content="", tool_calls=[_v1_spawn_call("call_1", prompt)]
+            )
+        )
+
+    agent = codex_cli_module.codex_cli(filter=user_filter)
+    with pytest.raises(_BridgeCaptured):
+        await agent(AgentState(messages=[]))
+
+    sink = captured["model_event_sink"]
+    await captured["filter"](
+        get_model("mockllm/model"),
+        [ChatMessageUser(content="go")],
+        [],
+        None,
+        GenerateConfig(),
+    )
+    assert list(sink._agents) == ["call_1"]
+
+
+# ---------------------------------------------------------------------------
+# 11. a failed spawn closes its span
+# ---------------------------------------------------------------------------
+
+
+def test_failed_spawn_retry_child_classifies_subagent(monkeypatch: Any) -> None:
+    """Live shape (codex + gpt-5-mini, 2026-10-12).
+
+    The first spawn_agent is rejected for its reasoning_effort, and the model
+    retries with the same prompt. The failed spawn must not stay open, or the
+    real child matches two spawns and classifies "unknown".
+    """
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    prompt = "Run `uname -a` on the host and return the exact stdout."
+    task = ChatMessageUser(content="go")
+
+    failed = ToolCall(
+        id="call_1",
+        function="spawn_agent",
+        arguments={"message": prompt, "reasoning_effort": "low"},
+    )
+    consumer.on_complete(_model_event([task], tool_calls=[failed]))
+
+    retry = _v1_spawn_call("call_2", prompt)
+    root_messages: list[ChatMessage] = [
+        task,
+        ChatMessageAssistant(content="", tool_calls=[failed]),
+        _spawn_result_tool_message(
+            "call_1",
+            "Reasoning effort `low` is not supported for model `gpt-5-mini`. "
+            "Supported reasoning efforts: medium, high",
+        ),
+    ]
+    assert consumer.classify(model, root_messages, []) == AgentBridgeContext("root")
+    assert [e.id for e in stub.span_ends()] == ["agent-call_1"]
+    consumer.on_complete(_model_event(root_messages, tool_calls=[retry]))
+
+    child: list[ChatMessage] = [ChatMessageUser(content=prompt)]
+    assert consumer.classify(model, child, []) == AgentBridgeContext(
+        "subagent", subagent_id="call_2", subagent_type="explore"
+    )
+    assert consumer._attribute(child) == "agent-call_2"
+
+
+def test_unrecognized_json_spawn_result_keeps_span_open(monkeypatch: Any) -> None:
+    """Only a non-JSON (or errored) result counts as a failed spawn."""
+    consumer, stub = _consumer(monkeypatch)
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    spawn = _v1_spawn_call("call_1", prompt)
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+    )
+    consumer.classify(
+        get_model("mockllm/model"),
+        [
+            ChatMessageUser(content="go"),
+            ChatMessageAssistant(content="", tool_calls=[spawn]),
+            _spawn_result_tool_message("call_1", '{"thread": "new-format"}'),
+        ],
+        [],
+    )
+    assert not stub.span_ends()
+    assert "call_1" in consumer._agents
+
+
+# 12. sub-agent identity (subagent_id / subagent_type)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_v2_subagent_ids_are_distinct_and_stable(monkeypatch: Any) -> None:
+    """V2: the id is the agent's path, the same on every one of its requests.
+
+    The type comes from the spawn's `agent_type` and survives the close that
+    a FINAL_ANSWER triggers, so a followup_task turn still reports it.
+    """
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+
+    explorer = _v2_spawn_call("call_a", "explore_repo")
+    assert explorer.arguments is not None
+    explorer.arguments["agent_type"] = "explorer"
+    consumer.on_complete(
+        _model_event(
+            _proven_root_request("go"),
+            tool_calls=[explorer, _v2_spawn_call("call_b", "write_tests")],
+        )
+    )
+
+    a_first: list[ChatMessage] = [_agent_message_user("/root", "/root/explore_repo")]
+    b_first: list[ChatMessage] = [_agent_message_user("/root", "/root/write_tests")]
+    a_later = a_first + [ChatMessageAssistant(content="looking around")]
+    expected_a = AgentBridgeContext(
+        "subagent", subagent_id="/root/explore_repo", subagent_type="explorer"
+    )
+    expected_b = AgentBridgeContext("subagent", subagent_id="/root/write_tests")
+    assert consumer.classify(model, a_first, []) == expected_a
+    assert consumer.classify(model, b_first, []) == expected_b
+    assert consumer.classify(model, a_later, []) == expected_a
+
+    # FINAL_ANSWER closes explore_repo; a followup turn keeps id and type
+    final = _agent_message_user("/root/explore_repo", "/root", "FINAL_ANSWER", "ok")
+    consumer.classify(model, [ChatMessageUser(content="go"), final], [])
+    followup = a_first + [
+        _agent_message_user("/root", "/root/explore_repo", "MESSAGE", "and tests?")
+    ]
+    assert consumer.classify(model, followup, []) == expected_a
+
+
+def test_classify_v1_subagent_ids_are_spawn_call_ids(monkeypatch: Any) -> None:
+    """V1: the id is the spawn call id, unchanged once the thread id binds."""
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+
+    prompt_a = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    prompt_b = "write a primes program and save it to /tmp/primes.py"
+    spawn_a = _v1_spawn_call("call_a", prompt_a)
+    spawn_b = ToolCall(
+        id="call_b", function="spawn_agent", arguments={"message": prompt_b}
+    )
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[spawn_a, spawn_b])
+    )
+
+    a: list[ChatMessage] = [ChatMessageUser(content=prompt_a)]
+    b: list[ChatMessage] = [ChatMessageUser(content=prompt_b)]
+    expected_a = AgentBridgeContext(
+        "subagent", subagent_id="call_a", subagent_type="explore"
+    )
+    # no agent_type argument: Codex picks one, so the type is unknown
+    expected_b = AgentBridgeContext("subagent", subagent_id="call_b")
+    assert consumer.classify(model, a, []) == expected_a
+    assert consumer.classify(model, b, []) == expected_b
+
+    # root's next request binds thread ids; the children's ids don't change
+    consumer.classify(
+        model,
+        [
+            ChatMessageUser(content="go"),
+            ChatMessageAssistant(content="", tool_calls=[spawn_a, spawn_b]),
+            _spawn_result_tool_message("call_a", '{"agent_id":"thread_a"}'),
+            _spawn_result_tool_message("call_b", '{"agent_id":"thread_b"}'),
+        ],
+        [],
+    )
+    assert consumer.classify(model, a, []) == expected_a
+    assert consumer.classify(model, b, []) == expected_b
+
+
+def test_classify_root_and_utility_carry_no_identity(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    root = consumer.classify(model, [ChatMessageUser(content="go")], [])
+    with bridged_request_scope("codex-auto-review"):
+        utility = consumer.classify(model, [ChatMessageUser(content="review")], [])
+    for context in (root, utility):
+        assert (context.subagent_id, context.subagent_type) == (None, None)
+
+
+def test_classify_v1_resumed_agent_does_not_borrow_a_later_id(
+    monkeypatch: Any,
+) -> None:
+    """A completed V1 agent resumed by send_input runs under its old prompt.
+
+    A later spawn with the same prompt is the only open match for its
+    requests too, so neither gets an id.
+    """
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    first = _v1_spawn_call("call_1", prompt)
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[first])
+    )
+    root: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        ChatMessageAssistant(content="", tool_calls=[first]),
+        _spawn_result_tool_message("call_1", '{"agent_id":"thread_1"}'),
+        _v1_completion_carrier("wait_agent", "thread_1"),
+    ]
+    consumer.classify(model, root, [])
+    assert not consumer._agents
+    coder = _v1_spawn_call("call_2", prompt)
+    assert coder.arguments is not None
+    coder.arguments["agent_type"] = "coder"
+    consumer.on_complete(_model_event(root, tool_calls=[coder]))
+
+    # neither the new spawn's id nor its type ("coder") is proven for this
+    # request, which may be the resumed explorer: like any V1 request that
+    # carries a finished spawn's prompt, it is "unknown" (it could be root's)
+    child: list[ChatMessage] = [ChatMessageUser(content=prompt)]
+    assert consumer.classify(model, child, []) == AgentBridgeContext("unknown")
+
+
+def test_spawn_failed_shapes() -> None:
+    assert spawn_failed(_spawn_result_tool_message("c", "Unsupported model"))
+    errored = _spawn_result_tool_message("c", '{"agent_id": "t"}')
+    errored.error = ToolCallError("unknown", "boom")
+    assert spawn_failed(errored)
+    assert not spawn_failed(_spawn_result_tool_message("c", '{"agent_id": "t"}'))
+    assert not spawn_failed(
+        ChatMessageTool(content="oops", tool_call_id="c", function="wait_agent")
+    )
+
+
+def test_bound_spawn_is_never_closed_as_failed(monkeypatch: Any) -> None:
+    """Once its thread is bound, an agent exists: a later odd result can't close it."""
+    consumer, stub = _consumer(monkeypatch)
+    spawn = _v2_spawn_call("call_w", "worker")
+    consumer.on_complete(_model_event(_proven_root_request(), tool_calls=[spawn]))
+    consumer.classify(
+        get_model("mockllm/model"),
+        [_agent_message_user("/root", "/root/worker")],
+        [],
+    )
+    consumer.classify(
+        get_model("mockllm/model"),
+        [
+            ChatMessageUser(content="go"),
+            ChatMessageAssistant(content="", tool_calls=[spawn]),
+            _spawn_result_tool_message("call_w", "not json"),
+        ],
+        [],
+    )
+    assert not stub.span_ends()
+
+
+def test_classify_v1_resumed_agent_with_nothing_open_is_never_root(
+    monkeypatch: Any,
+) -> None:
+    """send_input to a completed V1 agent, with no other spawn open.
+
+    The resumed agent's request carries its spawn prompt and no
+    agent_message, so it can't be identified, but it must not read as root.
+    """
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    prompt = "write a fizzbuzz program and save it to /tmp/fizzbuzz.py"
+    spawn = _v1_spawn_call("call_1", prompt)
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+    )
+    child: list[ChatMessage] = [ChatMessageUser(content=prompt)]
+    assert consumer.classify(model, child, []).kind == "subagent"
+
+    root: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        ChatMessageAssistant(content="", tool_calls=[spawn]),
+        _spawn_result_tool_message("call_1", '{"agent_id":"thread_1"}'),
+        _v1_completion_carrier("wait_agent", "thread_1"),
+    ]
+    # the spawner's own request still reads root (it carries the spawn call)
+    assert consumer.classify(model, root, []) == AgentBridgeContext("root")
+    assert not consumer._agents
+
+    resumed = child + [ChatMessageUser(content="Please also add tests")]
+    assert consumer.classify(model, resumed, []) == AgentBridgeContext("unknown")
+
+
+def test_classify_v2_same_basename_under_another_parent_keeps_identity(
+    monkeypatch: Any,
+) -> None:
+    """A finished /root/worker resumes while /root/other spawns its own worker.
+
+    The new spawn's path is /root/other/worker; the resumed agent must keep
+    its own type and must not be bound to the new spawn.
+    """
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+
+    old = _v2_spawn_call("call_old", "worker")
+    other = _v2_spawn_call("call_other", "other")
+    assert old.arguments is not None
+    old.arguments["agent_type"] = "explorer"
+    consumer.on_complete(_model_event(_proven_root_request(), tool_calls=[old, other]))
+    worker_first: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    assert consumer.classify(model, worker_first, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/worker", subagent_type="explorer"
+    )
+    consumer.classify(
+        model,
+        [
+            ChatMessageUser(content="go"),
+            _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "done"),
+        ],
+        [],
+    )
+
+    # /root/other spawns its own "worker" (a coder)
+    other_call = _model_event(
+        [_agent_message_user("/root", "/root/other")],
+        tool_calls=[_v2_spawn_call("call_new", "worker")],
+    )
+    new_spawn = other_call.output.message.tool_calls
+    assert new_spawn is not None and new_spawn[0].arguments is not None
+    new_spawn[0].arguments["agent_type"] = "coder"
+    consumer.on_pending(other_call)
+    consumer.on_complete(other_call)
+
+    # the old worker resumes before the new spawn's result arrives
+    resumed = worker_first + [
+        _agent_message_user("/root", "/root/worker", "MESSAGE", "one more")
+    ]
+    assert consumer.classify(model, resumed, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/worker", subagent_type="explorer"
+    )
+    nested: list[ChatMessage] = [
+        _agent_message_user("/root/other", "/root/other/worker")
+    ]
+    assert consumer.classify(model, nested, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/other/worker", subagent_type="coder"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 13. V2 parent paths come from the spawning request, not the transcript span
+# ---------------------------------------------------------------------------
+
+
+def _finish_v2(consumer: CodexConsumer, path: str) -> None:
+    consumer.classify(
+        get_model("mockllm/model"),
+        [
+            ChatMessageUser(content="go"),
+            _agent_message_user(path, "/root", "FINAL_ANSWER", "done"),
+        ],
+        [],
+    )
+
+
+def _typed_v2_spawn(call_id: str, task_name: str, agent_type: str) -> ToolCall:
+    spawn = _v2_spawn_call(call_id, task_name)
+    assert spawn.arguments is not None
+    spawn.arguments["agent_type"] = agent_type
+    return spawn
+
+
+def _assert_old_and_nested_workers_keep_their_types(consumer: CodexConsumer) -> None:
+    model = get_model("mockllm/model")
+    # the old /root/worker resumes before the nested spawn's result arrives
+    resumed: list[ChatMessage] = [
+        _agent_message_user("/root", "/root/worker"),
+        _agent_message_user("/root", "/root/worker", "MESSAGE", "one more"),
+    ]
+    assert consumer.classify(model, resumed, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/worker", subagent_type="explorer"
+    )
+    nested: list[ChatMessage] = [
+        _agent_message_user("/root/other", "/root/other/worker")
+    ]
+    assert consumer.classify(model, nested, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/other/worker", subagent_type="coder"
+    )
+
+
+def test_v2_resumed_parent_spawn_binds_under_its_own_path(monkeypatch: Any) -> None:
+    """/root/other finishes, is resumed, and spawns "worker" from its continuation."""
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            _proven_root_request("go"),
+            tool_calls=[
+                _typed_v2_spawn("call_w", "worker", "explorer"),
+                _typed_v2_spawn("call_o", "other", "planner"),
+            ],
+        )
+    )
+    for path in ("/root/worker", "/root/other"):
+        consumer.classify(model, [_agent_message_user("/root", path)], [])
+    _finish_v2(consumer, "/root/worker")
+    _finish_v2(consumer, "/root/other")
+    assert not consumer._agents
+
+    resumed_other = _model_event(
+        [
+            _agent_message_user("/root", "/root/other"),
+            _agent_message_user("/root", "/root/other", "MESSAGE", "plan more"),
+        ],
+        tool_calls=[_typed_v2_spawn("call_new", "worker", "coder")],
+    )
+    assert consumer.classify(model, resumed_other.input, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/other", subagent_type="planner"
+    )
+    consumer.on_pending(resumed_other)
+    # its first span closed; the resumed agent continues in a new one
+    continuation = stub.span_begins()[-1]
+    assert continuation.id == resumed_other.span_id == "agent-call_o-resumed-1"
+    assert continuation.name == "other"
+    assert continuation.parent_id == consumer.outer_span_id
+    consumer.on_complete(resumed_other)
+    assert consumer._agents["call_new"].expected_path == "/root/other/worker"
+    assert stub.span_begins()[-1].parent_id == continuation.id
+
+    _assert_old_and_nested_workers_keep_their_types(consumer)
+
+
+def test_v2_never_tracked_parent_spawn_binds_under_its_own_path(
+    monkeypatch: Any,
+) -> None:
+    """Round-1 F4 shape: /root/other was never seen spawning, yet spawns "worker"."""
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            _proven_root_request("go"),
+            tool_calls=[_typed_v2_spawn("call_w", "worker", "explorer")],
+        )
+    )
+    consumer.classify(model, [_agent_message_user("/root", "/root/worker")], [])
+    _finish_v2(consumer, "/root/worker")
+
+    consumer.on_complete(
+        _model_event(
+            [_agent_message_user("/root", "/root/other")],
+            tool_calls=[_typed_v2_spawn("call_new", "worker", "coder")],
+        )
+    )
+    _assert_old_and_nested_workers_keep_their_types(consumer)
+
+
+def test_v2_filter_output_spawn_uses_the_requester_path(monkeypatch: Any) -> None:
+    consumer, _ = _consumer(monkeypatch)
+    consumer.on_filter_output(
+        [_agent_message_user("/root", "/root/other")],
+        ModelOutput.from_message(
+            ChatMessageAssistant(
+                content="", tool_calls=[_typed_v2_spawn("call_new", "worker", "coder")]
+            )
+        ),
+    )
+    assert consumer._agents["call_new"].expected_path == "/root/other/worker"
+
+
+def test_v2_spawn_from_an_unproven_requester_binds_only_from_its_result(
+    monkeypatch: Any,
+) -> None:
+    """Inbound messages to two agents prove no parent: no expected path."""
+    consumer, _ = _consumer(monkeypatch)
+    consumer.on_complete(
+        _model_event(
+            [
+                _agent_message_user("/root", "/root/a"),
+                _agent_message_user("/root", "/root/b"),
+            ],
+            tool_calls=[_v2_spawn_call("call_new", "worker")],
+        )
+    )
+    assert consumer._agents["call_new"].expected_path is None
+
+
+# Codex's local-compaction summary, as the model sees it: `SUMMARY_PREFIX`
+# (codex-rs/prompts/templates/compact/summary_prefix.md) followed by the
+# summary. Codex itself recognizes a summary message by this exact prefix
+# (`is_summary_message` in codex-rs/core/src/compact.rs).
+_CODEX_SUMMARY_PREFIX = (
+    "Another language model started to solve this problem and produced a "
+    "summary of its thinking process. You also have access to the state of the "
+    "tools that were used by that language model. Use this to build on the work "
+    "that has already been done and avoid duplicating work. Here is the summary "
+    "produced by the other language model, use the information in this summary "
+    "to assist with your own analysis:"
+)
+
+
+def _compaction_summary(summary: str = "The worker finished; continue.") -> str:
+    return f"{_CODEX_SUMMARY_PREFIX}\n{summary}"
+
+
+def test_v2_root_spawn_nests_from_the_childs_first_call(monkeypatch: Any) -> None:
+    """Root's early requests carry no agent_message and are still root's.
+
+    The child's first call therefore nests (and carries its type) before
+    root's next request delivers the spawn result; a child spawned in the
+    same response gets the right parent too.
+    """
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_typed_v2_spawn("call_w", "worker", "explorer")],
+        )
+    )
+    w_span = stub.span_begins()[0].id
+    assert consumer._agents["call_w"].expected_path == "/root/worker"
+
+    first = _model_event(
+        [_agent_message_user("/root", "/root/worker")],
+        tool_calls=[_v2_spawn_call("call_g", "grandchild")],
+    )
+    assert consumer.classify(model, first.input, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/worker", subagent_type="explorer"
+    )
+    consumer.on_pending(first)
+    consumer.on_complete(first)
+    assert first.span_id == w_span
+    assert stub.span_begins()[1].parent_id == w_span
+
+
+def test_v2_root_spawn_after_root_compaction_still_nests(monkeypatch: Any) -> None:
+    """Root compacting drops its agent_messages too; its spawns are still root's."""
+    consumer, stub = _consumer(monkeypatch)
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content=_compaction_summary())],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    w_span = stub.span_begins()[0].id
+    first = _model_event([_agent_message_user("/root", "/root/worker")])
+    consumer.on_pending(first)
+    assert first.span_id == w_span
+
+
+def test_v2_closed_path_is_never_rebound_by_expected_path(monkeypatch: Any) -> None:
+    """A finished agent's path binds no later spawn by expected path alone.
+
+    Codex is not known to reuse a path for a new child, so a request under a
+    closed path is the finished agent resumed, and continues in a new span
+    for it. The guard costs a same-named re-spawn only its first-call
+    binding: it still binds from its result, which ends that continuation.
+    """
+    consumer, stub = _consumer(monkeypatch)
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_1", "worker")],
+        )
+    )
+    consumer.on_pending(_model_event([_agent_message_user("/root", "/root/worker")]))
+    _finish_v2(consumer, "/root/worker")
+    assert not consumer._agents
+
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go again")],
+            tool_calls=[_v2_spawn_call("call_2", "worker")],
+        )
+    )
+    second_span = stub.span_begins()[1].id
+    resumed = _model_event([_agent_message_user("/root", "/root/worker")])
+    consumer.on_pending(resumed)
+    continuation = stub.span_begins()[2].id
+    assert resumed.span_id == continuation == "agent-call_1-resumed-1"
+    assert consumer._agents["call_2"].thread_id is None
+
+    _deliver_v2_spawn_results(consumer, {"call_2": "/root/worker"})
+    assert stub.span_ends()[-1].id == continuation
+    later = _model_event([_agent_message_user("/root", "/root/worker")])
+    consumer.on_pending(later)
+    assert later.span_id == second_span
+
+
+# ---------------------------------------------------------------------------
+# 14. a short V1 prompt still guards a resumed child
+# ---------------------------------------------------------------------------
+
+
+def test_classify_v1_short_prompt_resumed_agent_is_never_root(
+    monkeypatch: Any,
+) -> None:
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    spawn = _v1_spawn_call("call_1", "run tests")
+    consumer.on_complete(
+        _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+    )
+    root: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        ChatMessageAssistant(content="", tool_calls=[spawn]),
+        _spawn_result_tool_message("call_1", '{"agent_id":"thread_1"}'),
+        _v1_completion_carrier("wait_agent", "thread_1"),
+    ]
+    assert consumer.classify(model, root, []) == AgentBridgeContext("root")
+    assert not consumer._agents
+
+    resumed: list[ChatMessage] = [
+        ChatMessageUser(content="run tests"),
+        ChatMessageUser(content="Please also check lint"),
+    ]
+    assert consumer.classify(model, resumed, []) == AgentBridgeContext("unknown")
+    # as a substring of other text, a short prompt proves nothing
+    other: list[ChatMessage] = [ChatMessageUser(content="go and run tests later")]
+    assert consumer.classify(model, other, []) == AgentBridgeContext("root")
+
+
+def test_classify_explicit_root_recipient_beats_closed_prompt(
+    monkeypatch: Any,
+) -> None:
+    consumer, _ = _consumer(monkeypatch)
+    consumer._closed_prompts["call_1"] = "run tests"
+    messages: list[ChatMessage] = [
+        ChatMessageUser(content="run tests"),
+        _agent_message_user("/root/x", "/root", "MESSAGE", "status"),
+    ]
+    assert consumer.classify(get_model("mockllm/model"), messages, []) == (
+        AgentBridgeContext("root")
+    )
+
+
+@pytest.mark.parametrize("filtered", [False, True])
+def test_v2_compacted_parent_spawn_binds_only_from_its_result(
+    monkeypatch: Any, filtered: bool
+) -> None:
+    """Codex local compaction drops agent_messages from the parent's history.
+
+    A compacted /root/other spawning "worker" carries no recipient, so its
+    request reads as root's and the spawn expects /root/worker, a path it
+    does not own. The finished /root/worker, resumed, must not bind to it
+    (a closed path is never re-bound by expected path), and the nested
+    spawn binds (and gets its type) from its spawn result.
+    """
+    consumer, _ = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            _proven_root_request(),
+            tool_calls=[_typed_v2_spawn("call_old", "worker", "explorer")],
+        )
+    )
+    consumer.classify(model, [_agent_message_user("/root", "/root/worker")], [])
+    _finish_v2(consumer, "/root/worker")
+    assert not consumer._agents
+
+    compacted: list[ChatMessage] = [ChatMessageUser(content=_compaction_summary())]
+    nested = _typed_v2_spawn("call_nested", "worker", "coder")
+    if filtered:
+        consumer.on_filter_output(
+            compacted,
+            ModelOutput.from_message(
+                ChatMessageAssistant(content="", tool_calls=[nested])
+            ),
+        )
+    else:
+        event = _model_event(compacted, tool_calls=[nested])
+        consumer.on_pending(event)
+        consumer.on_complete(event)
+    assert consumer._agents["call_nested"].expected_path == "/root/worker"
+
+    old: list[ChatMessage] = [
+        _agent_message_user("/root", "/root/worker", "MESSAGE", "continue")
+    ]
+    nested_request: list[ChatMessage] = [
+        _agent_message_user("/root/other", "/root/other/worker")
+    ]
+    assert consumer.classify(model, old, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/worker", subagent_type="explorer"
+    )
+    # the resumed agent did not take the nested spawn's binding
+    assert consumer._agents["call_nested"].thread_id is None
+    assert consumer.classify(model, nested_request, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/other/worker"
+    )
+
+    _deliver_v2_spawn_results(consumer, {"call_nested": "/root/other/worker"})
+    assert consumer.classify(model, nested_request, []) == AgentBridgeContext(
+        "subagent", subagent_id="/root/other/worker", subagent_type="coder"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 15. consumer: on_start (inspect_ai with ModelEventSink.on_start)
 # ---------------------------------------------------------------------------
 
 
@@ -606,3 +1798,1187 @@ def test_a_v1_thread_bound_and_completed_in_one_request_closes_its_span_once(
 
     contextvars.copy_context().run(generate)
     assert [e.id for e in stub.span_ends()] == ["agent-call_v1"]
+
+
+# ---------------------------------------------------------------------------
+# 16. classify() at filter time together with on_start / on_pending
+# ---------------------------------------------------------------------------
+
+
+class _RetryOnce(Exception):
+    pass
+
+
+# whether this inspect_ai calls `ModelEventSink.on_start` (absent at the floor)
+_SINK_HAS_ON_START = hasattr(model_module, "_StartingModelEventSink")
+
+
+# mockllm inherits inspect_ai's asyncio-backed connection limiter
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.anyio
+async def test_bridge_generate_classifies_and_places_each_request_once(
+    monkeypatch: Any,
+) -> None:
+    """The bridge's filter-time classify() and the sink's on_start agree.
+
+    Driven through the real bridge_generate, the same filter wiring
+    codex_cli() installs, and inspect_ai's own generate() (on_start, then
+    on_pending once per attempt): a V2 child's first call (bound by expected
+    path, retried once), a concurrent V1 child and root call, the child's
+    local compaction, and root's request carrying the child's FINAL_ANSWER
+    (retried once). classify() has already synced each request when on_start
+    runs, so each request is attributed once per generate and the child's
+    span closes exactly once.
+    """
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    starts: list[str] = []
+    start = consumer._start
+
+    def counted(input: list[ChatMessage]) -> str | None:
+        starts.append(input[-1].text)
+        return start(input)
+
+    monkeypatch.setattr(consumer, "_start", counted)
+
+    contexts: dict[str, AgentBridgeContext | None] = {}
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        contexts[messages[-1].text] = current_agent_bridge_context()
+        return None
+
+    first_call = REQUESTS["v2-recipient"]
+    compaction: list[ChatMessage] = [
+        _agent_message_user("/root", "/root/write_fizzbuzz"),
+        ChatMessageUser(content=f"{COMPACTION_MARKER}\nSummarize."),
+    ]
+    completion: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _agent_message_user("/root/write_fizzbuzz", "/root", "FINAL_ANSWER", "done"),
+    ]
+    retry_once = {first_call[-1].text, completion[-1].text}
+
+    def outputs(
+        input: list[ChatMessage], *_: Any
+    ) -> ModelOutput:  # one failed attempt for each request in retry_once
+        if input[-1].text in retry_once:
+            retry_once.discard(input[-1].text)
+            raise _RetryOnce()
+        return ModelOutput.from_content("mockllm", "ok")
+
+    model = get_model("mockllm/model", custom_outputs=outputs)
+    monkeypatch.setattr(
+        model.api, "should_retry", lambda ex: isinstance(ex, _RetryOnce)
+    )
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+
+    async def generate(input: list[ChatMessage]) -> None:
+        await bridge_generate(bridge, model, input, [], None, GenerateConfig(), None)
+
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[
+                    _v2_spawn_call("call_fb", "write_fizzbuzz"),
+                    _v1_spawn_call("call_v1", V1_PROMPT),
+                ],
+            )
+        )
+        async with anyio.create_task_group() as tg:
+            for input in (first_call, REQUESTS["v1-prompt"], REQUESTS["outer"]):
+                tg.start_soon(generate, input)
+        await generate(compaction)
+        await generate(completion)
+
+    assert {text: ctx.kind if ctx else None for text, ctx in contexts.items()} == {
+        first_call[-1].text: "subagent",
+        V1_PROMPT: "subagent",
+        "go": "unknown",  # root's own request while sub-agents are open
+        compaction[-1].text: "utility",
+        completion[-1].text: "root",
+    }
+    assert contexts[first_call[-1].text] == AgentBridgeContext(
+        "subagent", subagent_id="/root/write_fizzbuzz"
+    )
+
+    events = transcript().events
+    placed = sorted(
+        (e.input[-1].text, e.span_id) for e in events if isinstance(e, ModelEvent)
+    )
+    assert placed == sorted(
+        [
+            # the retried first call stays on the child's span
+            (first_call[-1].text, "agent-call_fb"),
+            (first_call[-1].text, "agent-call_fb"),
+            (V1_PROMPT, "agent-call_v1"),
+            ("go", outer),
+            (compaction[-1].text, "agent-call_fb"),
+            # the retried completion stays on root's span
+            (completion[-1].text, outer),
+            (completion[-1].text, outer),
+        ]
+    )
+    [marker] = [e for e in events if isinstance(e, CompactionEvent)]
+    assert marker.span_id == "agent-call_fb"
+    ends = [e.id for e in events if isinstance(e, SpanEndEvent)]
+    assert [id for id in ends if id != outer] == ["agent-call_fb"]
+    # once per generate, not once per attempt; an inspect_ai without
+    # `ModelEventSink.on_start` (the 0.3.280 floor) places each attempt from
+    # `on_pending` instead, so the retried requests start twice
+    retried = [] if _SINK_HAS_ON_START else [first_call[-1].text, completion[-1].text]
+    assert sorted(starts) == sorted(
+        [
+            first_call[-1].text,
+            V1_PROMPT,
+            "go",
+            compaction[-1].text,
+            completion[-1].text,
+            *retried,
+        ]
+    )
+
+
+@pytest.mark.parametrize("carrier", V1_COMPLETED)
+def test_classify_then_on_start_closes_a_v1_thread_once(
+    monkeypatch: Any, carrier: str
+) -> None:
+    # classify() closes the completed thread at filter time; on_start's own
+    # sync of the same request (and the retried attempt) must not close it
+    # again, and the request is root's once the thread is closed
+    consumer, stub = _consumer(monkeypatch)
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v1_spawn_call("call_v1", V1_PROMPT)],
+        )
+    )
+    input: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _spawn_result_tool_message("call_v1", '{"agent_id":"thread_abc"}'),
+        V1_COMPLETED[carrier],
+    ]
+
+    def generate() -> list[str | None]:
+        context = consumer.classify(get_model("mockllm/model"), input, [])
+        assert context == AgentBridgeContext("root")
+        span_id = consumer.on_start(input)
+        placed = []
+        for _ in range(2):
+            event = _model_event(input)
+            event.span_id = span_id
+            consumer.on_pending(event)
+            consumer.on_complete(event)
+            placed.append(event.span_id)
+        return placed
+
+    assert contextvars.copy_context().run(generate) == [None, None]
+    assert [e.id for e in stub.span_ends()] == ["agent-call_v1"]
+
+
+# ---------------------------------------------------------------------------
+# 17. filter context and span placement agree (real bridge_generate)
+# ---------------------------------------------------------------------------
+
+
+_SUMMARY = "Summary: the delegated work so far."
+
+
+async def _bridge_request(
+    consumer: CodexConsumer,
+    input: list[ChatMessage],
+    rewrite: list[ChatMessage] | None = None,
+    output: ModelOutput | None = None,
+) -> tuple[AgentBridgeContext | None, ModelEvent]:
+    """One request through the bridge with codex_cli()'s filter wiring.
+
+    The user filter records the context it saw and, when `rewrite` is given,
+    returns a GenerateInput with those messages instead. The model answers
+    with `output` (default: plain text). Returns the context and the
+    request's recorded ModelEvent.
+    """
+    seen: list[AgentBridgeContext | None] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        seen.append(current_agent_bridge_context())
+        if rewrite is None:
+            return None
+        return GenerateInput(
+            input=rewrite, tools=tools, tool_choice=tool_choice, config=config
+        )
+
+    model = get_model(
+        "mockllm/model",
+        custom_outputs=[output or ModelOutput.from_content("mockllm", "ok")],
+    )
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+    await bridge_generate(
+        bridge, model, input, [], None, GenerateConfig(), "gpt-5.6-sol"
+    )
+    [event] = [e for e in transcript().events if isinstance(e, ModelEvent)][-1:]
+    return seen[-1], event
+
+
+def _close_v1(consumer: CodexConsumer, call_id: str, thread_id: str) -> None:
+    """Root's request carrying the spawn result and the thread's completion."""
+    consumer.classify(
+        get_model("mockllm/model"),
+        [
+            ChatMessageUser(content="go"),
+            _spawn_result_tool_message(call_id, json.dumps({"agent_id": thread_id})),
+            ChatMessageTool(
+                content=json.dumps({"status": {thread_id: {"completed": "done"}}}),
+                tool_call_id=f"wait_{call_id}",
+                function="wait_agent",
+            ),
+        ],
+        [],
+    )
+
+
+V1_AMBIGUOUS: dict[str, list[ChatMessage]] = {
+    # send_input to the finished agent A: its thread still carries its prompt
+    "resumed-a": [
+        ChatMessageUser(content=V1_PROMPT),
+        ChatMessageUser(content="one more thing"),
+    ],
+    # root after local compaction: the spawn calls are gone, the prompt isn't
+    "compacted-root": [
+        ChatMessageUser(content=f"Earlier you delegated: {V1_PROMPT}"),
+    ],
+}
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("request_name", V1_AMBIGUOUS)
+async def test_v1_closed_prompt_request_stays_off_a_later_spawn_s_span(
+    request_name: str,
+) -> None:
+    """A finished, B spawned with the same prompt; a request carrying it.
+
+    It may be A's (or root's), so it is "unknown" and stays on the outer span
+    rather than landing in B's.
+    """
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_v1_spawn_call("v1_old", V1_PROMPT)],
+            )
+        )
+        _close_v1(consumer, "v1_old", "thread_old")
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_v1_spawn_call("v1_new", V1_PROMPT)],
+            )
+        )
+        context, event = await _bridge_request(consumer, V1_AMBIGUOUS[request_name])
+    assert context == AgentBridgeContext("unknown")
+    assert event.span_id == outer
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("version", ["v1", "v2"])
+async def test_rewritten_input_keeps_the_span_the_filter_saw(version: str) -> None:
+    """A filter that rewrites a child's request away from what identifies it.
+
+    The generation is placed where the request was classified (the child's
+    span), not re-attributed from the rewritten messages.
+    """
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    async with span("outer", type="agent"):
+        spawn = (
+            _v1_spawn_call("call_child", V1_PROMPT)
+            if version == "v1"
+            else _v2_spawn_call("call_child", "write_fizzbuzz")
+        )
+        consumer.on_complete(
+            _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+        )
+        input: list[ChatMessage] = (
+            [ChatMessageUser(content=V1_PROMPT)]
+            if version == "v1"
+            else [_agent_message_user("/root", "/root/write_fizzbuzz")]
+        )
+        context, event = await _bridge_request(
+            consumer, input, rewrite=[ChatMessageUser(content=_SUMMARY)]
+        )
+    assert context is not None and context.kind == "subagent"
+    assert context.subagent_id == (
+        "call_child" if version == "v1" else "/root/write_fizzbuzz"
+    )
+    assert event.input[-1].text == _SUMMARY
+    assert event.span_id == "agent-call_child"
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_rewritten_root_input_stays_on_root() -> None:
+    """The converse: root's request rewritten to quote the open spawn's prompt."""
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_v1_spawn_call("call_child", V1_PROMPT)],
+            )
+        )
+        context, event = await _bridge_request(
+            consumer,
+            [ChatMessageUser(content="keep going")],
+            rewrite=[ChatMessageUser(content=V1_PROMPT)],
+        )
+    assert context == AgentBridgeContext("unknown")
+    assert event.span_id == outer
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_v2_followup_task_resumes_the_child_in_a_continuation_span() -> None:
+    """/root/worker finishes, is resumed by followup_task, delegates, finishes again.
+
+    The resumed requests go in a new span for /root/worker under root's span;
+    a child it spawns nests under that span; the FINAL_ANSWER still in root's
+    history does not close it, the next one does, and every span closes once.
+    """
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    first_answer = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "1")
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_typed_v2_spawn("call_w", "worker", "explore")],
+            )
+        )
+        to_worker = _agent_message_user("/root", "/root/worker")
+        context, event = await _bridge_request(consumer, [to_worker])
+        assert event.span_id == "agent-call_w"
+
+        context, event = await _bridge_request(
+            consumer, [ChatMessageUser(content="go"), first_answer]
+        )
+        assert context == AgentBridgeContext("root")
+        assert event.span_id == outer
+
+        followup = _agent_message_user("/root", "/root/worker", "MESSAGE", "more")
+        nested = _typed_v2_spawn("call_n", "helper", "coder")
+        context, event = await _bridge_request(
+            consumer,
+            [to_worker, followup],
+            output=ModelOutput.from_message(
+                ChatMessageAssistant(content="", tool_calls=[nested])
+            ),
+        )
+        assert context == AgentBridgeContext(
+            "subagent", subagent_id="/root/worker", subagent_type="explore"
+        )
+        continuation = event.span_id
+        assert continuation not in (outer, "agent-call_w")
+
+        # root's next request still carries the first FINAL_ANSWER
+        await _bridge_request(
+            consumer,
+            [
+                ChatMessageUser(content="go"),
+                first_answer,
+                ChatMessageUser(content="wait"),
+            ],
+        )
+        assert continuation in [a.span_id for a in consumer._agents.values()]
+
+        # the resumed worker's own next request stays in its span
+        context, event = await _bridge_request(consumer, [to_worker, followup])
+        assert event.span_id == continuation
+
+        context, event = await _bridge_request(
+            consumer,
+            [
+                ChatMessageUser(content="go"),
+                first_answer,
+                ChatMessageUser(content="wait"),
+                _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "2"),
+            ],
+        )
+        assert context == AgentBridgeContext("root")
+        assert continuation not in [a.span_id for a in consumer._agents.values()]
+        consumer.reset()
+
+    events = transcript().events
+    begins = {e.id: e for e in events if isinstance(e, SpanBeginEvent)}
+    ends = [e.id for e in events if isinstance(e, SpanEndEvent)]
+    assert begins[continuation].parent_id == outer
+    assert begins[continuation].name == "worker"
+    assert begins["agent-call_n"].parent_id == continuation
+    assert sorted(ends) == sorted(begins)
+
+
+def test_v2_continuation_closes_on_a_new_answer_after_root_compaction(
+    monkeypatch: Any,
+) -> None:
+    # local compaction drops root's agent_messages, so the next FINAL_ANSWER
+    # root receives is new even though root has now seen only one
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    to_worker: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    consumer.classify(model, to_worker, [])
+    _finish_v2(consumer, "/root/worker")
+    consumer.classify(model, to_worker, [])  # resumed: continuation opens
+    [continuation] = [a.span_id for a in consumer._agents.values()]
+
+    consumer.classify(model, [ChatMessageUser(content=_compaction_summary())], [])
+    assert continuation in [a.span_id for a in consumer._agents.values()]
+    _finish_v2(consumer, "/root/worker")
+    assert stub.span_ends()[-1].id == continuation
+    assert not consumer._agents
+
+
+def test_v2_continuation_closes_on_a_new_answer_carried_by_the_first_compacted_request(
+    monkeypatch: Any,
+) -> None:
+    # root's compaction request still carries the old answer, and its first
+    # post-compaction request already carries the new one: no request in
+    # between carries none, so only the answer's identity tells them apart
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    to_worker: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    consumer.classify(model, to_worker, [])
+    first = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "first")
+    consumer.classify(model, [first], [])
+    assert not consumer._agents
+    consumer.classify(model, to_worker, [])  # followup: continuation opens
+    [continuation] = [a.span_id for a in consumer._agents.values()]
+
+    compaction = ChatMessageUser(content=f"{COMPACTION_MARKER} summarize")
+    consumer.classify(model, [first, compaction], [])
+    assert continuation in [a.span_id for a in consumer._agents.values()]
+    second = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "second")
+    consumer.classify(model, [ChatMessageUser(content="compacted summary"), second], [])
+    assert stub.span_ends()[-1].id == continuation
+    assert not consumer._agents
+
+    # a later followup resumes the worker in a new continuation
+    consumer.classify(model, to_worker, [])
+    [resumed] = [a.span_id for a in consumer._agents.values()]
+    assert resumed != continuation
+    assert resumed in [e.id for e in stub.span_begins()]
+
+
+# ---------------------------------------------------------------------------
+# 18. review pass 2: historical marker, rewritten spawner path, nested requests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_historical_compaction_marker_does_not_disable_root_steering() -> None:
+    """A root conversation that merely quotes the compaction prompt earlier.
+
+    Only the latest user message can be Codex's compaction instruction, so
+    the continuation is root's (and passes the steering gate), and no
+    compaction marker is recorded for it.
+    """
+    from inspect_ai.agent import is_root_agent
+
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    seen: list[AgentBridgeContext | None] = []
+    gate: list[bool] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        seen.append(current_agent_bridge_context())
+        gate.append(is_root_agent())
+        return None
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+    input: list[ChatMessage] = [
+        ChatMessageUser(
+            content=f"{COMPACTION_MARKER}\n"
+            "Explain how this prompt is detected in the Codex codebase."
+        ),
+        ChatMessageAssistant(content="It is matched by its first line."),
+        ChatMessageUser(content="Thanks, now continue with the task."),
+        _agent_message_user("/root/helper", "/root", "MESSAGE", "status"),
+    ]
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        await bridge_generate(
+            bridge,
+            get_model("mockllm/model"),
+            input,
+            [],
+            None,
+            GenerateConfig(),
+            "gpt-5.6-sol",
+        )
+
+    assert seen == [AgentBridgeContext("root")]
+    assert gate == [True]
+    events = transcript().events
+    assert not [e for e in events if isinstance(e, CompactionEvent)]
+    [event] = [e for e in events if isinstance(e, ModelEvent)]
+    assert event.span_id == outer
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("mode", ["rewritten-input", "in-place-filter-output"])
+async def test_rewritten_v2_parent_spawn_keeps_original_requester_path(
+    mode: str,
+) -> None:
+    """/root/parent's request is rewritten (or edited in place) before it spawns.
+
+    The spawn is the requester's as `classify` read it (/root/parent), so its
+    child is expected at /root/parent/worker: the real nested child gets its
+    type and nests under the parent's span, and an unrelated /root/worker
+    (whose spawn was never seen) gets neither.
+    """
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    nested_spawn = _typed_v2_spawn("nested", "worker", "coder")
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        if messages[-1].text != _agent_message_user("/root", "/root/parent").text:
+            return None
+        summary: list[ChatMessage] = [ChatMessageUser(content=_SUMMARY)]
+        if mode == "rewritten-input":
+            return GenerateInput(
+                input=summary, tools=tools, tool_choice=tool_choice, config=config
+            )
+        messages[:] = summary
+        return ModelOutput.from_message(
+            ChatMessageAssistant(content="", tool_calls=[nested_spawn])
+        )
+
+    contexts: list[AgentBridgeContext | None] = []
+
+    async def record(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        contexts.append(current_agent_bridge_context())
+        return await user_filter(model, messages, tools, tool_choice, config)
+
+    # the parent's generation spawns (when the filter didn't answer itself)
+    outputs = [ModelOutput.from_content("mockllm", "ok")] * 2
+    if mode == "rewritten-input":
+        spawn = ChatMessageAssistant(content="", tool_calls=[nested_spawn])
+        outputs.insert(0, ModelOutput.from_message(spawn))
+    model = get_model("mockllm/model", custom_outputs=outputs)
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(record, consumer.classify, consumer.on_filter_output),
+        model_event_sink=consumer,
+    )
+
+    async def send(input: list[ChatMessage]) -> AgentBridgeContext | None:
+        await bridge_generate(
+            bridge, model, input, [], None, GenerateConfig(), "gpt-5.6-sol"
+        )
+        return contexts[-1]
+
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_typed_v2_spawn("parent", "parent", "planner")],
+            )
+        )
+        assert await send(
+            [_agent_message_user("/root", "/root/parent")]
+        ) == AgentBridgeContext(
+            "subagent", subagent_id="/root/parent", subagent_type="planner"
+        )
+        assert consumer._agents["nested"].expected_path == "/root/parent/worker"
+
+        # before the spawn result reaches /root/parent
+        nested_child = await send(
+            [_agent_message_user("/root/parent", "/root/parent/worker")]
+        )
+        sibling = await send([_agent_message_user("/root", "/root/worker")])
+
+    assert nested_child == AgentBridgeContext(
+        "subagent", subagent_id="/root/parent/worker", subagent_type="coder"
+    )
+    assert sibling == AgentBridgeContext("subagent", subagent_id="/root/worker")
+    events = transcript().events
+    model_events = [e for e in events if isinstance(e, ModelEvent)]
+    placed = {e.input[-1].text: e.span_id for e in model_events}
+    assert (
+        placed[_agent_message_user("/root/parent", "/root/parent/worker").text]
+        == "agent-nested"
+    )
+    assert placed[_agent_message_user("/root", "/root/worker").text] == outer
+    begins = {e.id: e for e in events if isinstance(e, SpanBeginEvent)}
+    assert begins["agent-nested"].parent_id == "agent-parent"
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("agent", ["codex_cli", "claude_code"])
+async def test_nested_bridge_request_restores_outer_span_decision(agent: str) -> None:
+    """A user filter runs another bridged request in the same task, then rewrites.
+
+    The nested request's classifier records its own decision; once the outer
+    filter returns, the outer request's decision is back, so its rewritten
+    generation lands in the sub-agent's span the filter was told about.
+    """
+    from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+    from inspect_swe._claude_code.model import resolve_claude_code_models
+
+    init_transcript(Transcript())
+    prompt = "Investigate the failing integration test and report the root cause."
+    consumer: CodexConsumer | LiveConsumer
+    inner: CodexConsumer | LiveConsumer
+    if agent == "codex_cli":
+        consumer, inner = CodexConsumer(), CodexConsumer()
+        spawn = _typed_v2_spawn("child", "child", "coder")
+        outer_input: list[ChatMessage] = [_agent_message_user("/root", "/root/child")]
+        slug = inner_slug = "gpt-5.6-sol"
+        expected = AgentBridgeContext(
+            "subagent", subagent_id="/root/child", subagent_type="coder"
+        )
+    else:
+        models = resolve_claude_code_models("mockllm/model", None)
+        consumer, inner = LiveConsumer(models), LiveConsumer(models)
+        spawn = ToolCall(
+            id="child",
+            function="Task",
+            arguments={"prompt": prompt, "subagent_type": "coder"},
+        )
+        outer_input = [ChatMessageUser(content=prompt)]
+        slug, inner_slug = models.subagent, models.presented
+        expected = AgentBridgeContext(
+            "subagent", subagent_id="child", subagent_type="coder"
+        )
+    model = get_model("mockllm/model")
+    inner_bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(None, inner.classify, inner.on_filter_output),
+        model_event_sink=inner,
+    )
+    seen: list[AgentBridgeContext | None] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        seen.append(current_agent_bridge_context())
+        inner_input: list[ChatMessage] = [ChatMessageUser(content="nested check")]
+        await bridge_generate(
+            inner_bridge, model, inner_input, [], None, GenerateConfig(), inner_slug
+        )
+        seen.append(current_agent_bridge_context())
+        return GenerateInput(
+            input=[ChatMessageUser(content=_SUMMARY)],
+            tools=tools,
+            tool_choice=tool_choice,
+            config=config,
+        )
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+    async with span("outer", type="agent"):
+        consumer.on_complete(
+            _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+        )
+        await bridge_generate(
+            bridge, model, outer_input, [], None, GenerateConfig(), slug
+        )
+
+    assert seen == [expected, expected]
+    [outer_event] = [
+        e
+        for e in transcript().events
+        if isinstance(e, ModelEvent) and e.input[-1].text == _SUMMARY
+    ]
+    assert outer_event.span_id == "agent-child"
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("returned", [True, False])
+@pytest.mark.parametrize("agent", ["codex_cli", "claude_code"])
+async def test_filter_generation_lands_in_the_classified_sub_agent_span(
+    agent: str, returned: bool
+) -> None:
+    """A user filter that generates itself is placed like the bridge's generation.
+
+    The filter is told the request is the child's, and its own `model.generate`
+    lands in the child's span. Its output delegates to a grandchild: when the
+    filter returns it, that delegation opens one span (under the child); when
+    the filter discards it and the bridge generates instead, the agent never
+    saw the delegation, so no span opens.
+    """
+    from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+    from inspect_swe._claude_code.model import resolve_claude_code_models
+
+    init_transcript(Transcript())
+    prompt = "Investigate the failing integration test and report the root cause."
+    consumer: CodexConsumer | LiveConsumer
+    if agent == "codex_cli":
+        consumer = CodexConsumer()
+        spawn = _v2_spawn_call("child", "child")
+        grandchild = _v2_spawn_call("grand", "grand")
+        child_input: list[ChatMessage] = [_agent_message_user("/root", "/root/child")]
+        slug = "gpt-5.6-sol"
+        expected = AgentBridgeContext("subagent", subagent_id="/root/child")
+    else:
+        models = resolve_claude_code_models("mockllm/model", None)
+        consumer = LiveConsumer(models)
+        spawn = ToolCall(
+            id="child",
+            function="Task",
+            arguments={"prompt": prompt, "subagent_type": "Explore"},
+        )
+        grandchild = ToolCall(
+            id="grand",
+            function="Task",
+            arguments={"prompt": "Read the test logs.", "subagent_type": "Explore"},
+        )
+        child_input = [ChatMessageUser(content=prompt)]
+        slug = models.subagent
+        expected = AgentBridgeContext(
+            "subagent", subagent_id="child", subagent_type="Explore"
+        )
+    model = get_model(
+        "mockllm/model",
+        custom_outputs=[
+            ModelOutput.from_message(
+                ChatMessageAssistant(content="delegating", tool_calls=[grandchild])
+            ),
+            ModelOutput.from_content("mockllm", "bridge generation"),
+        ],
+    )
+    seen: list[AgentBridgeContext | None] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        seen.append(current_agent_bridge_context())
+        output = await model.generate(
+            input=messages, tools=tools, tool_choice=tool_choice, config=config
+        )
+        return output if returned else None
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output, consumer
+        ),
+        model_event_sink=consumer,
+    )
+    async with span("outer", type="agent"):
+        consumer.on_complete(
+            _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+        )
+        await bridge_generate(
+            bridge, model, child_input, [], None, GenerateConfig(), slug
+        )
+        consumer.reset()
+
+    assert seen == [expected]
+    events = transcript().events
+    generated = [e for e in events if isinstance(e, ModelEvent) and e.output.choices]
+    assert [e.span_id for e in generated] == (
+        ["agent-child"] if returned else ["agent-child", "agent-child"]
+    )
+    grand_begins = [
+        e for e in events if isinstance(e, SpanBeginEvent) and e.id == "agent-grand"
+    ]
+    if returned:
+        assert [e.parent_id for e in grand_begins] == ["agent-child"]
+    else:
+        assert grand_begins == []
+
+
+# ---------------------------------------------------------------------------
+# 19. review pass 4: nested request then filter generation, caller sinks,
+#     repeated answers across compaction
+# ---------------------------------------------------------------------------
+
+
+def _child_request(
+    agent: str,
+) -> tuple[Any, ToolCall, list[ChatMessage], str | None, str | None]:
+    """A consumer with `child` spawned, the child's request, and the slugs."""
+    from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+    from inspect_swe._claude_code.model import resolve_claude_code_models
+
+    if agent == "codex_cli":
+        return (
+            CodexConsumer(),
+            _v2_spawn_call("child", "child"),
+            [_agent_message_user("/root", "/root/child")],
+            "gpt-5.6-sol",
+            "gpt-5.6-sol",
+        )
+    prompt = "Investigate the failing integration test and report the root cause."
+    models = resolve_claude_code_models("mockllm/model", None)
+    return (
+        LiveConsumer(models),
+        ToolCall(
+            id="child",
+            function="Task",
+            arguments={"prompt": prompt, "subagent_type": "Explore"},
+        ),
+        [ChatMessageUser(content=prompt)],
+        models.subagent,
+        models.presented,
+    )
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("agent", ["codex_cli", "claude_code"])
+async def test_filter_generation_after_a_nested_request_stays_on_the_child(
+    agent: str,
+) -> None:
+    """A filter awaits another bridged request, then generates rewritten input.
+
+    The nested request records its own decision; the filter's own generation
+    after it still lands in the child's span the filter was told about.
+    """
+    init_transcript(Transcript())
+    consumer, spawn, child_input, slug, inner_slug = _child_request(agent)
+    inner, *_ = _child_request(agent)
+    model = get_model("mockllm/model")
+    nested = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(None, inner.classify, inner.on_filter_output, inner),
+        model_event_sink=inner,
+    )
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        await bridge_generate(
+            nested,
+            model,
+            [ChatMessageUser(content="nested request")],
+            [],
+            None,
+            GenerateConfig(),
+            inner_slug,
+        )
+        return await model.generate(
+            input=[ChatMessageUser(content="rewritten filter generation")]
+        )
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output, consumer
+        ),
+        model_event_sink=consumer,
+    )
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+        )
+        await bridge_generate(
+            bridge, model, child_input, [], None, GenerateConfig(), slug
+        )
+        consumer.reset()
+
+    placed = {
+        e.input[-1].text: e.span_id
+        for e in transcript().events
+        if isinstance(e, ModelEvent)
+    }
+    assert placed == {
+        "nested request": outer,
+        "rewritten filter generation": "agent-child",
+    }
+
+
+class _CallerSink:
+    """A caller's own sink around the bridge: records and emits each event."""
+
+    def __init__(self) -> None:
+        self.pending: list[ModelEvent] = []
+        self.completed: list[ModelEvent] = []
+
+    def on_pending(self, event: ModelEvent) -> None:
+        self.pending.append(event)
+        transcript()._event(event)
+
+    def on_complete(self, event: ModelEvent) -> None:
+        self.completed.append(event)
+        transcript()._event_updated(event)
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("agent", ["codex_cli", "claude_code"])
+async def test_a_caller_sink_still_sees_the_filter_s_own_generation(
+    agent: str,
+) -> None:
+    """A sink the caller installed around the bridge keeps the filter's events.
+
+    It sees the filter's generation once, as without classification, already
+    placed in the child's span; the transcript records it once (by the
+    caller's sink), and the bridge's own generations stay with its sink.
+    """
+    init_transcript(Transcript())
+    consumer, spawn, child_input, slug, _ = _child_request(agent)
+    model = get_model("mockllm/model")
+    caller = _CallerSink()
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        return await model.generate(input=messages)
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output, consumer
+        ),
+        model_event_sink=consumer,
+    )
+    async with span("outer", type="agent"):
+        consumer.on_complete(
+            _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+        )
+        with use_model_event_sink(caller):
+            await bridge_generate(
+                bridge, model, child_input, [], None, GenerateConfig(), slug
+            )
+        consumer.reset()
+
+    assert len(caller.pending) == 1
+    assert caller.completed == caller.pending
+    [event] = [e for e in transcript().events if isinstance(e, ModelEvent)]
+    assert event is caller.pending[0]
+    assert event.span_id == "agent-child"
+
+
+def test_v2_continuation_closes_on_a_repeated_answer_after_compaction(
+    monkeypatch: Any,
+) -> None:
+    # the resumed worker answers with the same text as before, and the raw
+    # items carry no id: the compaction summary marks the new one as new
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    to_worker: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    consumer.classify(model, to_worker, [])
+    first = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "Done.")
+    consumer.classify(model, [first], [])
+    consumer.classify(model, to_worker, [])  # followup: continuation opens
+    [continuation] = [a.span_id for a in consumer._agents.values()]
+
+    compaction = ChatMessageUser(content=f"{COMPACTION_MARKER} summarize")
+    consumer.classify(model, [first, compaction], [])
+    summary = ChatMessageUser(content=_compaction_summary())
+    second = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "Done.")
+    consumer.classify(model, [summary, second], [])
+    assert stub.span_ends()[-1].id == continuation
+    assert not consumer._agents
+
+    # a later followup resumes the worker in a new continuation
+    consumer.classify(model, to_worker, [])
+    [resumed] = [a.span_id for a in consumer._agents.values()]
+    assert resumed != continuation
+
+
+def test_v2_continuation_stays_open_when_compaction_keeps_the_old_answer(
+    monkeypatch: Any,
+) -> None:
+    # a compacted history that re-carries the old answer before its summary,
+    # and nothing after it, has no new answer: the continuation stays open
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    to_worker: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    consumer.classify(model, to_worker, [])
+    first = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "Done.")
+    consumer.classify(model, [first], [])
+    consumer.classify(model, to_worker, [])  # followup: continuation opens
+    [continuation] = [a.span_id for a in consumer._agents.values()]
+    ends = len(stub.span_ends())
+
+    compaction = ChatMessageUser(content=f"{COMPACTION_MARKER} summarize")
+    consumer.classify(model, [first, compaction], [])
+    summary = ChatMessageUser(content=_compaction_summary())
+    requests: list[list[ChatMessage]] = [
+        [first, summary],
+        [first, summary, ChatMessageUser(content="continue")],
+    ]
+    for request in requests:
+        consumer.classify(model, request, [])
+        assert [a.span_id for a in consumer._agents.values()] == [continuation]
+    assert len(stub.span_ends()) == ends
+
+
+def _resumed_worker_after_a_summarized_answer(
+    monkeypatch: Any,
+) -> tuple[CodexConsumer, _TranscriptStub, Model, list[ChatMessage], str]:
+    """Root compacted once (summary S), then got the worker's no-id `Done.`.
+
+    The worker's span closed on that answer and a followup resumed it; returns
+    the consumer, root's history `[S, Done.]` and the continuation span.
+    """
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    to_worker: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    consumer.classify(model, to_worker, [])
+    consumer.classify(
+        model, [ChatMessageUser(content=f"{COMPACTION_MARKER} first")], []
+    )
+    history: list[ChatMessage] = [
+        ChatMessageUser(content=_compaction_summary("Summary.")),
+        _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "Done."),
+    ]
+    consumer.classify(model, history, [])
+    assert not consumer._agents
+    consumer.classify(model, to_worker, [])  # followup: continuation opens
+    [continuation] = [a.span_id for a in consumer._agents.values()]
+    return consumer, stub, model, history, continuation
+
+
+def test_v2_continuation_closes_after_a_compaction_with_an_identical_summary(
+    monkeypatch: Any,
+) -> None:
+    # root compacts again and the new summary has the same text; the resumed
+    # worker again answers `Done.` with no raw id. The compaction request was
+    # seen, so the summary in root's next history is a new boundary
+    consumer, stub, model, history, continuation = (
+        _resumed_worker_after_a_summarized_answer(monkeypatch)
+    )
+    compaction = ChatMessageUser(content=f"{COMPACTION_MARKER} second")
+    consumer.classify(model, [*history, compaction], [])
+    consumer.classify(
+        model,
+        [
+            ChatMessageUser(content=_compaction_summary("Summary.")),
+            _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "Done."),
+        ],
+        [],
+    )
+    assert stub.span_ends()[-1].id == continuation
+    assert not consumer._agents
+
+    consumer.classify(model, [_agent_message_user("/root", "/root/worker")], [])
+    [resumed] = [a.span_id for a in consumer._agents.values()]
+    assert resumed != continuation
+
+
+def test_v2_continuation_stays_open_when_history_re_carries_the_summary(
+    monkeypatch: Any,
+) -> None:
+    # neither an ordinary request re-carrying the summary and the old answer,
+    # nor the first request after a compaction that didn't replace the history
+    # (root's earlier turns still follow the summary), closes the continuation
+    consumer, stub, model, history, continuation = (
+        _resumed_worker_after_a_summarized_answer(monkeypatch)
+    )
+    ends = len(stub.span_ends())
+    worked: list[ChatMessage] = [
+        *history,
+        ChatMessageAssistant(content="checking the worker's result"),
+        ChatMessageUser(content="continue"),
+    ]
+    consumer.classify(model, worked, [])
+    compaction = ChatMessageUser(content=f"{COMPACTION_MARKER} second")
+    consumer.classify(model, [*worked, compaction], [])
+    consumer.classify(model, [*worked, ChatMessageUser(content="more")], [])
+    assert [a.span_id for a in consumer._agents.values()] == [continuation]
+    assert len(stub.span_ends()) == ends

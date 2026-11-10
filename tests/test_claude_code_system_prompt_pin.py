@@ -255,7 +255,12 @@ async def test_pinning_is_idempotent_on_retries() -> None:
     assert system_texts(messages) == SYSTEM_RESUMED
 
 
-async def test_pinning_error_fails_open(caplog: pytest.LogCaptureFixture) -> None:
+async def test_pinning_error_fails_open(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # warn_once dedupes process-wide; start clean so each backend's run warns
+    monkeypatch.setattr("inspect_ai._util.logger._warned", [])
+
     def broken_session_id() -> str:
         raise RuntimeError("no session")
 

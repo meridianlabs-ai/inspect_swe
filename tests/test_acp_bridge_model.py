@@ -216,3 +216,104 @@ def test_acp_agent_on_the_eval_model_serves_the_eval_instance(
     )
     for name, model in served.items():
         assert model is eval_model, name
+
+
+def _classify(options: dict[str, Any], names: list[str]) -> dict[str, str]:
+    """The agent-context kind the bridge filter the agent passed stamps per name."""
+    from inspect_ai.agent import current_agent_bridge_context
+    from inspect_ai.agent._bridge.context import bridged_request_scope
+    from inspect_ai.model import ChatMessageUser
+
+    async def run() -> dict[str, str]:
+        kinds: dict[str, str] = {}
+        for name in names:
+            with bridged_request_scope(name):
+                await options["filter"](
+                    get_model("mockllm/model"),
+                    [ChatMessageUser(content="hi")],
+                    [],
+                    None,
+                    GenerateConfig(),
+                )
+                context = current_agent_bridge_context()
+                assert context is not None, name
+                kinds[name] = context.kind
+        return kinds
+
+    return anyio.run(run)
+
+
+def test_acp_claude_code_default_subagent_slug_is_the_agent_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # with subagent_model unset Claude Code is given a distinct synthetic
+    # sub-agent slug ("<presented>-subagent"); it is aliased to the agent's own
+    # instance like the presented name, and every other name still falls back
+    # to that instance through the resolver
+    agent_model = _agent_model()
+    names = ["agent", "agent-subagent", "claude-opus-4-1", "inspect"]
+    options, served = _bridge_options(
+        monkeypatch,
+        acp_claude_code,
+        lambda: ClaudeCode(model=agent_model),
+        names,
+    )
+    assert "agent-subagent" in options["model_aliases"]
+    for name, model in served.items():
+        assert model is agent_model, name
+    assert _classify(options, names[:3]) == {
+        "agent": "root",
+        "agent-subagent": "subagent",
+        "claude-opus-4-1": "unknown",
+    }
+
+
+def test_acp_claude_code_routes_and_classifies_each_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # canonical tier and sub-agent names keep their own models and kinds; a
+    # name Claude Code was never given is served by the agent's own instance
+    agent_model = _agent_model()
+    names = ["agent", "opus", "haiku", "subagent", "claude-sonnet-4-5"]
+    options, served = _bridge_options(
+        monkeypatch,
+        acp_claude_code,
+        lambda: ClaudeCode(
+            model=agent_model,
+            opus_model="mockllm/opus",
+            haiku_model="mockllm/haiku",
+            subagent_model="mockllm/subagent",
+        ),
+        names,
+    )
+    assert served["agent"] is agent_model
+    assert str(served["opus"]) == "mockllm/opus"
+    assert str(served["haiku"]) == "mockllm/haiku"
+    assert str(served["subagent"]) == "mockllm/subagent"
+    assert served["claude-sonnet-4-5"] is agent_model
+    assert _classify(options, names) == {
+        "agent": "root",
+        "opus": "root",
+        "haiku": "utility",
+        "subagent": "subagent",
+        "claude-sonnet-4-5": "unknown",
+    }
+
+
+def test_acp_claude_code_on_the_eval_model_routes_its_subagent_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # with no model= the presented and synthetic sub-agent names reach the
+    # eval's own instance, as does any name outside the aliases
+    eval_model = _eval_model()
+    names = ["eval", "eval-subagent", "claude-haiku-4-5"]
+    options, served = _bridge_options(
+        monkeypatch, acp_claude_code, ClaudeCode, names, eval_model=eval_model
+    )
+    for name, model in served.items():
+        assert model is eval_model, name
+    assert _classify(options, names) == {
+        "eval": "root",
+        "eval-subagent": "subagent",
+        "claude-haiku-4-5": "unknown",
+    }

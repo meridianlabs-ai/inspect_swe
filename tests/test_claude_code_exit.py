@@ -3,6 +3,11 @@ from inspect_ai.event._model import ModelEvent
 from inspect_ai.model import GenerateConfig, ModelOutput, StopReason
 from inspect_swe._claude_code._events.live_consumer import LiveConsumer
 from inspect_swe._claude_code.claude_code import _is_claude_code_refusal_exit
+from inspect_swe._claude_code.model import resolve_claude_code_models
+
+# Model identity is irrelevant to the exit/stop-reason tests in this file;
+# a plain default resolution gives LiveConsumer's now-required `models` arg.
+_MODELS = resolve_claude_code_models("mockllm/model", None)
 
 
 @pytest.mark.parametrize(
@@ -47,7 +52,7 @@ def _model_event(output: ModelOutput) -> ModelEvent:
 
 
 def test_last_stop_reason_tracks_latest_completed_event() -> None:
-    consumer = LiveConsumer()
+    consumer = LiveConsumer(_MODELS)
     assert consumer.last_stop_reason is None
 
     consumer.on_complete(_model_event(ModelOutput.from_content("m", "hi")))
@@ -60,7 +65,7 @@ def test_last_stop_reason_tracks_latest_completed_event() -> None:
 
 
 def test_reset_clears_last_stop_reason() -> None:
-    consumer = LiveConsumer()
+    consumer = LiveConsumer(_MODELS)
     consumer.on_complete(
         _model_event(ModelOutput.from_content("m", "", stop_reason="content_filter"))
     )
