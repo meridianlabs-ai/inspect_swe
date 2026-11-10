@@ -30,6 +30,18 @@ WAIT_AGENT = "wait_agent"
 # Source: codex-rs/core/templates/compact/prompt.md (injected at compact.rs:70-82).
 COMPACTION_MARKER = "You are performing a CONTEXT CHECKPOINT COMPACTION."
 
+# Prefix of the summary message a local compaction leaves in the compacted
+# history (`SUMMARY_PREFIX`, recognized by `is_summary_message` in
+# codex-rs/core/src/compact.rs). Items after it arrived after the compaction.
+SUMMARY_PREFIX = (
+    "Another language model started to solve this problem and produced a "
+    "summary of its thinking process. You also have access to the state of the "
+    "tools that were used by that language model. Use this to build on the work "
+    "that has already been done and avoid duplicating work. Here is the summary "
+    "produced by the other language model, use the information in this summary "
+    "to assist with your own analysis:"
+)
+
 
 @dataclass
 class SpawnedAgent:
@@ -224,6 +236,21 @@ def is_compaction_request(input_messages: list[ChatMessage]) -> bool:
         None,
     )
     return latest is not None and latest.text.lstrip().startswith(COMPACTION_MARKER)
+
+
+def compaction_summary_index(input_messages: list[ChatMessage]) -> int | None:
+    """Index of the latest local-compaction summary message, if the history has one.
+
+    A compacted history ends with the summary (`SUMMARY_PREFIX`), so every
+    message after it reached the requester after that compaction.
+    """
+    for index in range(len(input_messages) - 1, -1, -1):
+        msg = input_messages[index]
+        if isinstance(msg, ChatMessageUser) and msg.text.lstrip().startswith(
+            SUMMARY_PREFIX
+        ):
+            return index
+    return None
 
 
 # ---------------------------------------------------------------------------

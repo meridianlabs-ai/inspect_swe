@@ -73,6 +73,7 @@ from ..._util.model_event_sink import (
 from ..config import GUARDIAN_MODEL_SLUG
 from .detection import (
     agent_message_recipients,
+    compaction_summary_index,
     completed_thread_ids,
     final_answers,
     find_close_targets,
@@ -154,6 +155,12 @@ class CodexConsumer(ModelEventSink):
         # continuation), however many old answers a compaction removed.
         self._final_answers: dict[tuple[str, str], Counter[str]] = {}
 
+        # requester path → the compaction summary its history last carried. A
+        # request carrying a different one is the first after a compaction:
+        # only the answers before that summary are ones it had already seen,
+        # so a new answer repeating an old one's text still closes the thread.
+        self._compactions: dict[str, str] = {}
+
     @property
     def outer_span_id(self) -> str | None:
         """Span for main-agent attribution, resolved at emission time.
@@ -182,6 +189,7 @@ class CodexConsumer(ModelEventSink):
         self._closed_agents.clear()
         self._resumes.clear()
         self._final_answers.clear()
+        self._compactions.clear()
 
     # ------------------------------------------------------------------
     # ModelEventSink callbacks (called from the bridge)
@@ -497,6 +505,17 @@ class CodexConsumer(ModelEventSink):
             self._close_thread(thread_id)
         answers = final_answers(input_messages)
         requester = self._requester_path(input_messages)
+        summary_at = compaction_summary_index(input_messages)
+        if requester is not None and summary_at is not None:
+            summary = input_messages[summary_at].text
+            if self._compactions.get(requester) != summary:
+                self._compactions[requester] = summary
+                # answers the compaction kept precede its summary; any after
+                # it reached the requester since, whatever their text
+                kept = final_answers(input_messages[:summary_at])
+                for key in self._final_answers:
+                    if key[1] == requester:
+                        self._final_answers[key] = kept.get(key, Counter())
         for key in self._final_answers:
             # answers the requester received that its history no longer has
             if key[1] == requester:

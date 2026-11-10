@@ -2833,3 +2833,70 @@ async def test_a_caller_sink_still_sees_the_filter_s_own_generation(
     assert event is caller.pending[0]
     assert event.span_id == "agent-child"
 
+
+def test_v2_continuation_closes_on_a_repeated_answer_after_compaction(
+    monkeypatch: Any,
+) -> None:
+    # the resumed worker answers with the same text as before, and the raw
+    # items carry no id: the compaction summary marks the new one as new
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    to_worker: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    consumer.classify(model, to_worker, [])
+    first = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "Done.")
+    consumer.classify(model, [first], [])
+    consumer.classify(model, to_worker, [])  # followup: continuation opens
+    [continuation] = [a.span_id for a in consumer._agents.values()]
+
+    compaction = ChatMessageUser(content=f"{COMPACTION_MARKER} summarize")
+    consumer.classify(model, [first, compaction], [])
+    summary = ChatMessageUser(content=_compaction_summary())
+    second = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "Done.")
+    consumer.classify(model, [summary, second], [])
+    assert stub.span_ends()[-1].id == continuation
+    assert not consumer._agents
+
+    # a later followup resumes the worker in a new continuation
+    consumer.classify(model, to_worker, [])
+    [resumed] = [a.span_id for a in consumer._agents.values()]
+    assert resumed != continuation
+
+
+def test_v2_continuation_stays_open_when_compaction_keeps_the_old_answer(
+    monkeypatch: Any,
+) -> None:
+    # a compacted history that re-carries the old answer before its summary,
+    # and nothing after it, has no new answer: the continuation stays open
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    to_worker: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    consumer.classify(model, to_worker, [])
+    first = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "Done.")
+    consumer.classify(model, [first], [])
+    consumer.classify(model, to_worker, [])  # followup: continuation opens
+    [continuation] = [a.span_id for a in consumer._agents.values()]
+    ends = len(stub.span_ends())
+
+    compaction = ChatMessageUser(content=f"{COMPACTION_MARKER} summarize")
+    consumer.classify(model, [first, compaction], [])
+    summary = ChatMessageUser(content=_compaction_summary())
+    requests: list[list[ChatMessage]] = [
+        [first, summary],
+        [first, summary, ChatMessageUser(content="continue")],
+    ]
+    for request in requests:
+        consumer.classify(model, request, [])
+        assert [a.span_id for a in consumer._agents.values()] == [continuation]
+    assert len(stub.span_ends()) == ends
