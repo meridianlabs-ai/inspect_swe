@@ -51,7 +51,7 @@ class GeminiCli(ACPAgent):
     def _build_model_map(self) -> dict[str, str | Model]:
         """Map the resolved model under its bare ``.name``.
 
-        Google API URL paths only carry the slash-free model id, so the bridge sees e.g. ``gemini-3.1-pro-preview`` rather than ``google/gemini-3.1-pro-preview`` for the primary model. All other gemini-internal hardcoded model names (loop-detection, web-search, edit-fixer, next-speaker-checker, subagents, compaction) fall through to the bridge ``model=`` fallback, which resolves to this agent's target model.
+        Google API URL paths only carry the slash-free model id, so the bridge sees e.g. ``gemini-3.1-pro-preview`` rather than ``google/gemini-3.1-pro-preview`` for the primary model. All other gemini-internal hardcoded model names (loop-detection, web-search, edit-fixer, next-speaker-checker, subagents, compaction) go to the bridge ``model_resolver``, which serves them with this agent's own ``Model`` instance.
         """
         model_map = super()._build_model_map()
         model = get_model(self.model)
@@ -72,10 +72,11 @@ class GeminiCli(ACPAgent):
 
         async with sandbox_agent_bridge(
             state,
-            # Fallback for any model name not covered by model_aliases.
             # Gemini CLI hardcodes many internal utility-model names with no
-            # env-var override; route all of them to this agent's target.
-            model=str(model),
+            # env-var override. Serve them, and every other name outside
+            # model_aliases, with this agent's own Model instance (and its
+            # config, base URL and model args) rather than the eval's model.
+            model_resolver=lambda _name: model,
             model_aliases=self.model_map,
             # Same classifier as the non-ACP variant; `model.name` is the
             # presented slug passed as `--model` below (the non-ACP variant

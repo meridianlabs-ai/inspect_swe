@@ -13,6 +13,7 @@ import pytest
 from inspect_ai import eval
 from inspect_ai.log import EvalLog, EvalSample
 from inspect_ai.model import ChatMessageAssistant
+from inspect_ai.model._model import _models
 from inspect_swe._util import appdirs
 
 
@@ -409,6 +410,23 @@ def fresh_concurrency_registry() -> Iterator[None]:
 
     init_concurrency()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _models_stay_out_of_later_tests() -> Iterator[None]:
+    """Drop inspect_ai's memoized models after each test.
+
+    `get_model()` memoizes on the model name and its explicit arguments, but a
+    provider reads its API key from the environment when it is built. A test that
+    sets `OPENAI_API_KEY=test` and runs `openai/gpt-5.5` leaves that model, fake key
+    and all, in the cache after monkeypatch restores the environment, and a later
+    test on the same xdist worker that asks for `openai/gpt-5.5` reuses it and gets
+    401 from the provider -- an order-dependent failure in the nightly suite.
+    """
+    try:
+        yield
+    finally:
+        _models.clear()
 
 
 @pytest.fixture(autouse=True, scope="session")

@@ -16,7 +16,7 @@ from inspect_ai.agent import (
 )
 from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model
 from inspect_ai.scorer import score
-from inspect_ai.tool import MCPServerConfig, Skill, install_skills, read_skills
+from inspect_ai.tool import MCPServerConfig, Skill, Tool, install_skills, read_skills
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
@@ -28,6 +28,7 @@ from inspect_swe._util.agentcontext import (
     classify_filter,
     slug_map_classifier,
 )
+from inspect_swe._util.bridged_tools import resolve_bridged_tools
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
@@ -387,7 +388,7 @@ def opencode(
     system_prompt: str | None = None,
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
-    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+    bridged_tools: Sequence[Tool | BridgedToolsSpec] | None = None,
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     centaur: bool | CentaurOptions = False,
     attempts: int | AgentAttempts = 1,
@@ -418,7 +419,9 @@ def opencode(
         system_prompt: Additional system prompt to append
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
         mcp_servers: MCP servers to make available to the agent
-        bridged_tools: Host-side Inspect tools to expose to the agent via MCP
+        bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
+            Each BridgedToolsSpec creates an MCP server; plain Tools are
+            grouped into one MCP server named `tools`.
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
         centaur: Run in 'centaur' mode, which makes OpenCode available to an Inspect `human_cli()` agent rather than running it unattended.
@@ -484,6 +487,9 @@ def opencode(
         model_aliases, opencode_model, subagent_sentinel
     )
 
+    # resolve plain Tools into specs once, so bad input fails at construction
+    bridged_tools_specs = resolve_bridged_tools(bridged_tools)
+
     async def execute(state: AgentState) -> AgentState:
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "opencode_model_port"
@@ -504,7 +510,7 @@ def opencode(
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=port,
-            bridged_tools=bridged_tools,
+            bridged_tools=bridged_tools_specs,
             # granted unconditionally to preserve today's behaviour; a grant is
             # inert unless the CLI declares a native web tool
             web_search=True,

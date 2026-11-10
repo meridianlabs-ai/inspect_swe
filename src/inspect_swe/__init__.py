@@ -19,6 +19,7 @@ from ._tools.download import (
     download_agent_binary,
     resolve_agent_version,
 )
+from ._util.agentbinary import AgentBinaryInstall, AgentBinaryOrigin
 from ._util.agentwheel import download_wheels_tarball
 from ._util.centaur import CentaurOptions
 from ._util.sandbox import SandboxPlatform
@@ -52,6 +53,8 @@ __all__ = [
     "cached_agent_binaries",
     "resolve_agent_version",
     "AgentBinary",
+    "AgentBinaryInstall",
+    "AgentBinaryOrigin",
     "SandboxPlatform",
     "CentaurOptions",
     "CodexAutoReview",

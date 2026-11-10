@@ -12,7 +12,10 @@ routing instead of emitting it to the transcript itself. From those events alone
      user's filter returned itself never produces a `ModelEvent`;
      `on_filter_output` registers its spawns instead.
 
-  2. **Attribute** — `on_pending` resolves each call's span by substring-matching
+  2. **Attribute** — `on_start`, once per generate, does steps 3 and 4's
+     bindings and closes from the request's input, then resolves the call's
+     span (which inspect_ai runs the generate under; an inspect_ai without
+     `on_start` leaves this to `on_pending`) by substring-matching
      its user-message text against the open spawn prompts. Codex re-sends a
      sub-agent's spawn prompt as a user message on every request, so this works
      for every call (not just the first). Zero/multiple matches → outer span.
@@ -53,6 +56,7 @@ from inspect_ai.model._model import ModelEventSink
 from inspect_ai.tool import ToolInfo
 from inspect_ai.util._span import current_span_id
 
+from ..._util.model_event_sink import mark_started, started
 from ..config import GUARDIAN_MODEL_SLUG
 from .detection import (
     agent_message_recipients,
@@ -149,20 +153,22 @@ class CodexConsumer(ModelEventSink):
     # ModelEventSink callbacks (called from the bridge)
     # ------------------------------------------------------------------
 
-    def on_pending(self, event: ModelEvent) -> None:
-        # idempotent if classify() already ran over this request
-        self._sync_threads(event.input)
+    def on_start(self, input: list[ChatMessage]) -> str | None:
+        mark_started(self)
+        return self._start(input)
 
-        # attribute this call to a span
-        span_id = self._attribute(event.input)
-        event.span_id = span_id
+    def on_pending(self, event: ModelEvent) -> None:
+        # an inspect_ai without on_start leaves the bookkeeping and placement
+        # to us here, once per attempt
+        if not started(self):
+            event.span_id = self._start(event.input)
 
         # compaction summarization call → emit a marker on the same span
         if is_compaction_request(event.input):
             transcript()._event(
                 CompactionEvent(
                     source="codex_cli",
-                    span_id=span_id,
+                    span_id=event.span_id,
                     metadata={"trigger": "auto"},
                 )
             )
@@ -217,13 +223,13 @@ class CodexConsumer(ModelEventSink):
         """Filter-time agent classification from the same maps as span attribution.
 
         Runs inside the bridge filter (before generation), so it must not
-        assume `on_pending` has already seen this request — it does its own
-        `_sync_threads` + `_attribute`, exactly as `on_pending` would. The
+        assume `on_start`/`on_pending` has already seen this request — it does
+        its own `_sync_threads` + `_attribute`, exactly as `_start` would. The
         sync matters for the root thread: under V1 the request that follows
         the last sub-agent's completion carries that completion in its own
         input (wait/close result or notification) and has no agent_message
         recipient, so it is only recognisably "root" once that thread is
-        closed here rather than later in `on_pending`.
+        closed here rather than later in `_start`.
 
         Two positive claims are checked first, since neither is visible to
         `_attribute`: the guardian (`auto_review`) model slug and Codex's own
@@ -335,6 +341,17 @@ class CodexConsumer(ModelEventSink):
     # ------------------------------------------------------------------
     # internal
     # ------------------------------------------------------------------
+
+    def _start(self, input_messages: list[ChatMessage]) -> str | None:
+        """Bind and close threads from a request's input, then attribute it to a span.
+
+        Runs once per generate (from `on_start`, or from the first `on_pending`
+        on an inspect_ai without it), so a retried attempt keeps the span its
+        first attempt was placed under. `classify` may already have synced the
+        same request at filter time; `_sync_threads` is idempotent.
+        """
+        self._sync_threads(input_messages)
+        return self._attribute(input_messages)
 
     def _register_delegation(
         self,

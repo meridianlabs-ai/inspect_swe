@@ -11,11 +11,11 @@ dynamic = ["version"]
 description = "Software engineering agents for Inspect AI."
 authors = [{ name = "Meridian Labs" }]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect_ai>=0.3.261",
+    "inspect_ai>=0.3.277",
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.13.0",
@@ -52,7 +52,6 @@ dev = [
     "inspect-evals",
     "inspect_k8s_sandbox",
     "mini-swe-agent",
-    "inspect_swe[doc]",
 ]
 doc = [
     "quarto-cli>=1.9.36",
@@ -61,6 +60,21 @@ doc = [
     "markdown",
     "rich",
 ]
+
+[tool.uv]
+# 0.11.8 is the first uv that keeps uv.lock stable with a relative exclude-newer,
+# and 0.13.4 the first that no longer trusts the compromised emSign root
+# (GHSA-hq85-5cpj-mr62).
+required-version = ">=0.13.4"
+# Only resolve releases at least 7 days old (see CONTRIBUTING.md).
+exclude-newer = "7 days"
+
+# 6 hours only for direct dependencies that are a model provider SDK or an
+# Inspect package; see CONTRIBUTING.md.
+[tool.uv.exclude-newer-package]
+anthropic = "6 hours"
+inspect-ai = "6 hours"
+openai = "6 hours"
 
 [tool.hatch.build]
 only-packages = true
