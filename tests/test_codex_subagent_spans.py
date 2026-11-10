@@ -2326,3 +2326,194 @@ async def test_historical_compaction_marker_does_not_disable_root_steering() -> 
     assert not [e for e in events if isinstance(e, CompactionEvent)]
     [event] = [e for e in events if isinstance(e, ModelEvent)]
     assert event.span_id == outer
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("mode", ["rewritten-input", "in-place-filter-output"])
+async def test_rewritten_v2_parent_spawn_keeps_original_requester_path(
+    mode: str,
+) -> None:
+    """/root/parent's request is rewritten (or edited in place) before it spawns.
+
+    The spawn is the requester's as `classify` read it (/root/parent), so its
+    child is expected at /root/parent/worker: the real nested child gets its
+    type and nests under the parent's span, and an unrelated /root/worker
+    (whose spawn was never seen) gets neither.
+    """
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    nested_spawn = _typed_v2_spawn("nested", "worker", "coder")
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        if messages[-1].text != _agent_message_user("/root", "/root/parent").text:
+            return None
+        summary: list[ChatMessage] = [ChatMessageUser(content=_SUMMARY)]
+        if mode == "rewritten-input":
+            return GenerateInput(
+                input=summary, tools=tools, tool_choice=tool_choice, config=config
+            )
+        messages[:] = summary
+        return ModelOutput.from_message(
+            ChatMessageAssistant(content="", tool_calls=[nested_spawn])
+        )
+
+    contexts: list[AgentBridgeContext | None] = []
+
+    async def record(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        contexts.append(current_agent_bridge_context())
+        return await user_filter(model, messages, tools, tool_choice, config)
+
+    # the parent's generation spawns (when the filter didn't answer itself)
+    outputs = [ModelOutput.from_content("mockllm", "ok")] * 2
+    if mode == "rewritten-input":
+        spawn = ChatMessageAssistant(content="", tool_calls=[nested_spawn])
+        outputs.insert(0, ModelOutput.from_message(spawn))
+    model = get_model("mockllm/model", custom_outputs=outputs)
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(record, consumer.classify, consumer.on_filter_output),
+        model_event_sink=consumer,
+    )
+
+    async def send(input: list[ChatMessage]) -> AgentBridgeContext | None:
+        await bridge_generate(
+            bridge, model, input, [], None, GenerateConfig(), "gpt-5.6-sol"
+        )
+        return contexts[-1]
+
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_typed_v2_spawn("parent", "parent", "planner")],
+            )
+        )
+        assert await send(
+            [_agent_message_user("/root", "/root/parent")]
+        ) == AgentBridgeContext(
+            "subagent", subagent_id="/root/parent", subagent_type="planner"
+        )
+        assert consumer._agents["nested"].expected_path == "/root/parent/worker"
+
+        # before the spawn result reaches /root/parent
+        nested_child = await send(
+            [_agent_message_user("/root/parent", "/root/parent/worker")]
+        )
+        sibling = await send([_agent_message_user("/root", "/root/worker")])
+
+    assert nested_child == AgentBridgeContext(
+        "subagent", subagent_id="/root/parent/worker", subagent_type="coder"
+    )
+    assert sibling == AgentBridgeContext("subagent", subagent_id="/root/worker")
+    events = transcript().events
+    model_events = [e for e in events if isinstance(e, ModelEvent)]
+    placed = {e.input[-1].text: e.span_id for e in model_events}
+    assert (
+        placed[_agent_message_user("/root/parent", "/root/parent/worker").text]
+        == "agent-nested"
+    )
+    assert placed[_agent_message_user("/root", "/root/worker").text] == outer
+    begins = {e.id: e for e in events if isinstance(e, SpanBeginEvent)}
+    assert begins["agent-nested"].parent_id == "agent-parent"
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("agent", ["codex_cli", "claude_code"])
+async def test_nested_bridge_request_restores_outer_span_decision(agent: str) -> None:
+    """A user filter runs another bridged request in the same task, then rewrites.
+
+    The nested request's classifier records its own decision; once the outer
+    filter returns, the outer request's decision is back, so its rewritten
+    generation lands in the sub-agent's span the filter was told about.
+    """
+    from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+    from inspect_swe._claude_code.model import resolve_claude_code_models
+
+    init_transcript(Transcript())
+    prompt = "Investigate the failing integration test and report the root cause."
+    consumer: CodexConsumer | LiveConsumer
+    inner: CodexConsumer | LiveConsumer
+    if agent == "codex_cli":
+        consumer, inner = CodexConsumer(), CodexConsumer()
+        spawn = _typed_v2_spawn("child", "child", "coder")
+        outer_input: list[ChatMessage] = [_agent_message_user("/root", "/root/child")]
+        slug = inner_slug = "gpt-5.6-sol"
+        expected = AgentBridgeContext(
+            "subagent", subagent_id="/root/child", subagent_type="coder"
+        )
+    else:
+        models = resolve_claude_code_models("mockllm/model", None)
+        consumer, inner = LiveConsumer(models), LiveConsumer(models)
+        spawn = ToolCall(
+            id="child",
+            function="Task",
+            arguments={"prompt": prompt, "subagent_type": "coder"},
+        )
+        outer_input = [ChatMessageUser(content=prompt)]
+        slug, inner_slug = models.subagent, models.presented
+        expected = AgentBridgeContext(
+            "subagent", subagent_id="child", subagent_type="coder"
+        )
+    model = get_model("mockllm/model")
+    inner_bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(None, inner.classify, inner.on_filter_output),
+        model_event_sink=inner,
+    )
+    seen: list[AgentBridgeContext | None] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        seen.append(current_agent_bridge_context())
+        inner_input: list[ChatMessage] = [ChatMessageUser(content="nested check")]
+        await bridge_generate(
+            inner_bridge, model, inner_input, [], None, GenerateConfig(), inner_slug
+        )
+        seen.append(current_agent_bridge_context())
+        return GenerateInput(
+            input=[ChatMessageUser(content=_SUMMARY)],
+            tools=tools,
+            tool_choice=tool_choice,
+            config=config,
+        )
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+    async with span("outer", type="agent"):
+        consumer.on_complete(
+            _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+        )
+        await bridge_generate(
+            bridge, model, outer_input, [], None, GenerateConfig(), slug
+        )
+
+    assert seen == [expected, expected]
+    [outer_event] = [
+        e
+        for e in transcript().events
+        if isinstance(e, ModelEvent) and e.input[-1].text == _SUMMARY
+    ]
+    assert outer_event.span_id == "agent-child"

@@ -26,6 +26,8 @@ from inspect_ai.model import (
 )
 from inspect_ai.tool import ToolChoice, ToolInfo
 
+from .model_event_sink import preserve_decision
+
 logger = getLogger(__name__)
 
 # GenerateFilter is a union of Model-first and (deprecated) str-first callables;
@@ -182,14 +184,17 @@ def classify_filter(
         if user_filter is None:
             return None
 
-        if user_is_legacy:
-            result = await cast(StrFilter, user_filter)(
-                model.name, messages, tools, tool_choice, config
-            )
-        else:
-            result = await cast(ModelFilter, user_filter)(
-                model, messages, tools, tool_choice, config
-            )
+        # a user filter may run a nested bridged request in this task, whose
+        # classifier records its own placement: keep this request's
+        with preserve_decision():
+            if user_is_legacy:
+                result = await cast(StrFilter, user_filter)(
+                    model.name, messages, tools, tool_choice, config
+                )
+            else:
+                result = await cast(ModelFilter, user_filter)(
+                    model, messages, tools, tool_choice, config
+                )
         if on_filter_output is not None and isinstance(result, ModelOutput):
             try:
                 on_filter_output(messages, result)

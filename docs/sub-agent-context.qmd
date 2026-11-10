@@ -9,7 +9,7 @@ The `filter` option accepted by every agent in this package runs on *every* brid
 
 Every agent in `inspect_swe` classifies each bridged request into `inspect_ai`'s ambient `AgentBridgeContext` before your filter runs, so you can gate on it directly.
 
-For `claude_code` and `codex_cli`, the transcript places each generation in the span of the agent the classification names. Requests with no single named agent go in the top-level agent's span. Classification reads the request as it reaches the bridge. If your filter returns a rewritten `GenerateInput`, the generation still lands where the request was classified; it is not re-attributed from the rewritten messages.
+For `claude_code` and `codex_cli`, the transcript places each generation in the span of the agent the classification names. Requests with no single named agent go in the top-level agent's span. Classification reads the request as it reaches the bridge. If your filter returns a rewritten `GenerateInput` or edits the messages in place, the generation still lands where the request was classified; it is not re-attributed from the changed messages. Agents that the generation spawns are tracked as children of the agent the classification named. This also holds when your filter runs nested bridged requests of its own.
 
 ## Confining a Filter to the Root Agent
 

@@ -88,9 +88,10 @@ from inspect_ai.tool import ToolInfo
 from inspect_ai.util._span import current_span_id
 
 from ..._util.model_event_sink import (
+    Decision,
     mark_started,
-    remember_span,
-    remembered_span,
+    remember_decision,
+    remembered_decision,
     started,
 )
 from ..model import ClaudeCodeModels
@@ -279,7 +280,13 @@ class LiveConsumer(ModelEventSink):
         """
         msg = output.message if output.choices else None
         if msg is not None and msg.tool_calls:
-            self._register_tasks(msg, self._attribute(messages))
+            # the filter may have edited `messages` in place: prefer the
+            # decision `classify` made before it ran
+            decided = remembered_decision(self)
+            self._register_tasks(
+                msg,
+                decided.span_id if decided is not None else self._attribute(messages),
+            )
 
     def _register_tasks(
         self, msg: ChatMessageAssistant, parent_span_id: str | None
@@ -346,8 +353,10 @@ class LiveConsumer(ModelEventSink):
         since have rewritten the messages the generate sees, so they are only
         attributed afresh when no filter-time decision exists for this request.
         """
-        decided, span_id = remembered_span(self)
-        return span_id if decided else self._attribute(input_messages)
+        decided = remembered_decision(self)
+        return (
+            decided.span_id if decided is not None else self._attribute(input_messages)
+        )
 
     def _attribute(self, input_messages: list[ChatMessage]) -> str | None:
         """Resolve the span_id for an incoming bridge call.
@@ -495,7 +504,7 @@ class LiveConsumer(ModelEventSink):
         self._check_subagent_slug_drift(slug, context)
         # the generate this request leads to is placed by the same decision,
         # even if the user's filter rewrites its messages (see `_start`)
-        remember_span(self, self._attribute(messages))
+        remember_decision(self, Decision(self._attribute(messages)))
         return context
 
     def _subagent_context(self, messages: list[ChatMessage]) -> AgentBridgeContext:

@@ -62,9 +62,10 @@ from inspect_ai.tool import ToolInfo
 from inspect_ai.util._span import current_span_id
 
 from ..._util.model_event_sink import (
+    Decision,
     mark_started,
-    remember_span,
-    remembered_span,
+    remember_decision,
+    remembered_decision,
     started,
 )
 from ..config import GUARDIAN_MODEL_SLUG
@@ -215,10 +216,16 @@ class CodexConsumer(ModelEventSink):
                     if custom is not None:
                         tc.view = custom
 
+            # a filter may have rewritten the input this generate saw: the
+            # requesting agent's path is the one `classify` read off the
+            # request as it reached the bridge
+            decided = remembered_decision(self)
             self._register_delegation(
                 msg,
                 event.span_id or self.outer_span_id,
-                self._requester_path(event.input),
+                decided.requester_path
+                if decided is not None
+                else self._requester_path(event.input),
             )
 
         if id(event) in self._emitted_events:
@@ -238,9 +245,15 @@ class CodexConsumer(ModelEventSink):
         """
         msg = output.message if output.choices else None
         if msg is not None and msg.tool_calls:
-            self._register_delegation(
-                msg, self._attribute(messages), self._requester_path(messages)
-            )
+            # the filter may have edited `messages` in place: prefer the
+            # decision `classify` made before it ran
+            decided = remembered_decision(self)
+            if decided is not None:
+                self._register_delegation(msg, decided.span_id, decided.requester_path)
+            else:
+                self._register_delegation(
+                    msg, self._attribute(messages), self._requester_path(messages)
+                )
 
     # ------------------------------------------------------------------
     # filter-time classification (AgentContextClassifier)
@@ -278,7 +291,7 @@ class CodexConsumer(ModelEventSink):
         context, span_id = self._decide(messages)
         # the generate this request leads to is placed by the same decision,
         # even if the user's filter rewrites its messages (see `_start`)
-        remember_span(self, span_id)
+        remember_decision(self, Decision(span_id, self._requester_path(messages)))
         return context
 
     def _decide(
@@ -387,8 +400,10 @@ class CodexConsumer(ModelEventSink):
         the generate sees, so only without that decision are threads synced
         and the request attributed here (`_sync_threads` is idempotent).
         """
-        decided, span_id = remembered_span(self)
-        return span_id if decided else self._decide(input_messages)[1]
+        decided = remembered_decision(self)
+        return (
+            decided.span_id if decided is not None else self._decide(input_messages)[1]
+        )
 
     def _register_delegation(
         self,
