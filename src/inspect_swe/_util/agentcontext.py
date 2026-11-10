@@ -6,6 +6,7 @@ the user's filter and everything downstream in the request task) and then
 delegates to the user's filter unchanged.
 """
 
+import contextvars
 import inspect
 import warnings
 from logging import getLogger
@@ -26,10 +27,21 @@ from inspect_ai.model import (
     Model,
     ModelOutput,
 )
-from inspect_ai.model._model import ModelEventSink, use_model_event_sink
+from inspect_ai.model._model import (
+    ModelEventSink,
+    _model_event_sink,
+    use_model_event_sink,
+)
 from inspect_ai.tool import ToolChoice, ToolInfo
 
-from .model_event_sink import filter_generation, preserve_decision
+from .model_event_sink import (
+    Decision,
+    filter_generation,
+    preserve_decision,
+    reinstate_decision,
+    remembered_decision,
+    started,
+)
 
 logger = getLogger(__name__)
 
@@ -125,42 +137,101 @@ class _FilterGenerationSink:
     after the filter, so a filter that generates (and returns that output)
     would record its `ModelEvent`, and give a live sentinel its conversation,
     in the outer span rather than the agent the filter was told about.
-    Installed around the user filter, this forwards that generation to the
-    sink, which places it like the bridge's own (`on_start`, from the
-    filter-time decision), and marks its `on_complete` as a filter's
-    generation (`filter_generation`): only an output the filter returns
-    reaches the agent, and `on_filter_output` tracks delegation in that one.
+    Installed around the user filter, this places that generation as the sink
+    places the bridge's own (`on_start`, from the filter-time decision), and
+    marks its `on_complete` as a filter's generation (`filter_generation`):
+    only an output the filter returns reaches the agent, and
+    `on_filter_output` tracks delegation in that one.
+
+    The decision is captured when the filter starts and reinstated around each
+    forwarded callback, so a nested bridged request the filter awaited first
+    can't take it away (`reinstate_decision`).
+
+    A sink the caller installed around the bridge (`ambient`) keeps receiving
+    the filter's generations, as it did before this adapter: the bridge's sink
+    chooses the span first (from `on_start`, or on an inspect_ai without it by
+    setting the event's span before the caller's `on_pending`), then the
+    caller's sink sees `on_start` (its returned span is not used), `on_pending`
+    and `on_complete`, and records the event in the transcript as it chooses;
+    the bridge's sink then records nothing for it.
 
     A nested bridged request the filter makes is its own request: one that
     installs its own sink is unaffected, and any other generation under
-    another request is recorded in the current span as without a sink.
+    another request goes to the caller's sink, or without one is recorded in
+    the current span, as it would be without this adapter.
     """
 
-    def __init__(self, inner: ModelEventSink, request: object) -> None:
+    def __init__(
+        self,
+        inner: ModelEventSink,
+        request: object,
+        decision: Decision | None,
+        ambient: ModelEventSink | None,
+    ) -> None:
         self.inner = inner
         self.request = request
+        self.decision = decision
+        # an enclosing request's filter-generation sink isn't the caller's:
+        # this request's generations reach what that one forwards to
+        while isinstance(ambient, _FilterGenerationSink):
+            ambient = ambient.ambient
+        self.ambient: ModelEventSink | None = ambient
 
     def _ours(self) -> bool:
         return current_bridge_request() is self.request
 
-    def on_start(self, input: list[ChatMessage]) -> str | None:
+    def _place(self, input: list[ChatMessage]) -> str | None:
         on_start = getattr(self.inner, "on_start", None)
-        if not self._ours() or on_start is None:
+        if on_start is None:
             return None
-        return cast(str | None, on_start(input))
+        with reinstate_decision(self.inner, self.decision):
+            return cast(str | None, on_start(input))
+
+    def on_start(self, input: list[ChatMessage]) -> str | None:
+        ambient_start = getattr(self.ambient, "on_start", None)
+        if not self._ours():
+            return (
+                cast(str | None, ambient_start(input))
+                if ambient_start is not None
+                else None
+            )
+        span_id = self._place(input)
+        if ambient_start is not None:
+            ambient_start(input)
+        return span_id
 
     def on_pending(self, event: ModelEvent) -> None:
-        if self._ours():
-            self.inner.on_pending(event)
+        if not self._ours():
+            if self.ambient is not None:
+                self.ambient.on_pending(event)
+            else:
+                transcript()._event(event)
+        elif self.ambient is not None:
+            if not started(self.inner):
+                # an inspect_ai without on_start: place it here, without
+                # marking the bridge's sink started for this task
+                span_id = contextvars.copy_context().run(self._place, event.input)
+                if span_id is not None:
+                    event.span_id = span_id
+            self.ambient.on_pending(event)
         else:
-            transcript()._event(event)
+            with reinstate_decision(self.inner, self.decision):
+                self.inner.on_pending(event)
 
     def on_complete(self, event: ModelEvent) -> None:
-        if self._ours():
-            with filter_generation(self.inner):
-                self.inner.on_complete(event)
+        if not self._ours():
+            if self.ambient is not None:
+                self.ambient.on_complete(event)
+            else:
+                transcript()._event_updated(event)
+        elif self.ambient is not None:
+            self.ambient.on_complete(event)
         else:
-            transcript()._event_updated(event)
+            with (
+                reinstate_decision(self.inner, self.decision),
+                filter_generation(self.inner),
+            ):
+                self.inner.on_complete(event)
 
 
 def is_legacy_str_filter(fn: GenerateFilter) -> bool:
@@ -242,7 +313,12 @@ def classify_filter(
         # classifier records its own placement: keep this request's
         request = current_bridge_request()
         filter_sink = (
-            _FilterGenerationSink(sink, request)
+            _FilterGenerationSink(
+                sink,
+                request,
+                remembered_decision(sink),
+                _model_event_sink.get(),
+            )
             if sink is not None and request is not None
             else None
         )

@@ -2664,3 +2664,172 @@ async def test_filter_generation_lands_in_the_classified_sub_agent_span(
     else:
         assert grand_begins == []
 
+
+# ---------------------------------------------------------------------------
+# 19. review pass 4: nested request then filter generation, caller sinks,
+#     repeated answers across compaction
+# ---------------------------------------------------------------------------
+
+
+def _child_request(
+    agent: str,
+) -> tuple[Any, ToolCall, list[ChatMessage], str | None, str | None]:
+    """A consumer with `child` spawned, the child's request, and the slugs."""
+    from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+    from inspect_swe._claude_code.model import resolve_claude_code_models
+
+    if agent == "codex_cli":
+        return (
+            CodexConsumer(),
+            _v2_spawn_call("child", "child"),
+            [_agent_message_user("/root", "/root/child")],
+            "gpt-5.6-sol",
+            "gpt-5.6-sol",
+        )
+    prompt = "Investigate the failing integration test and report the root cause."
+    models = resolve_claude_code_models("mockllm/model", None)
+    return (
+        LiveConsumer(models),
+        ToolCall(
+            id="child",
+            function="Task",
+            arguments={"prompt": prompt, "subagent_type": "Explore"},
+        ),
+        [ChatMessageUser(content=prompt)],
+        models.subagent,
+        models.presented,
+    )
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("agent", ["codex_cli", "claude_code"])
+async def test_filter_generation_after_a_nested_request_stays_on_the_child(
+    agent: str,
+) -> None:
+    """A filter awaits another bridged request, then generates rewritten input.
+
+    The nested request records its own decision; the filter's own generation
+    after it still lands in the child's span the filter was told about.
+    """
+    init_transcript(Transcript())
+    consumer, spawn, child_input, slug, inner_slug = _child_request(agent)
+    inner, *_ = _child_request(agent)
+    model = get_model("mockllm/model")
+    nested = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(None, inner.classify, inner.on_filter_output, inner),
+        model_event_sink=inner,
+    )
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        await bridge_generate(
+            nested,
+            model,
+            [ChatMessageUser(content="nested request")],
+            [],
+            None,
+            GenerateConfig(),
+            inner_slug,
+        )
+        return await model.generate(
+            input=[ChatMessageUser(content="rewritten filter generation")]
+        )
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output, consumer
+        ),
+        model_event_sink=consumer,
+    )
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+        )
+        await bridge_generate(
+            bridge, model, child_input, [], None, GenerateConfig(), slug
+        )
+        consumer.reset()
+
+    placed = {
+        e.input[-1].text: e.span_id
+        for e in transcript().events
+        if isinstance(e, ModelEvent)
+    }
+    assert placed == {
+        "nested request": outer,
+        "rewritten filter generation": "agent-child",
+    }
+
+
+class _CallerSink:
+    """A caller's own sink around the bridge: records and emits each event."""
+
+    def __init__(self) -> None:
+        self.pending: list[ModelEvent] = []
+        self.completed: list[ModelEvent] = []
+
+    def on_pending(self, event: ModelEvent) -> None:
+        self.pending.append(event)
+        transcript()._event(event)
+
+    def on_complete(self, event: ModelEvent) -> None:
+        self.completed.append(event)
+        transcript()._event_updated(event)
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("agent", ["codex_cli", "claude_code"])
+async def test_a_caller_sink_still_sees_the_filter_s_own_generation(
+    agent: str,
+) -> None:
+    """A sink the caller installed around the bridge keeps the filter's events.
+
+    It sees the filter's generation once, as without classification, already
+    placed in the child's span; the transcript records it once (by the
+    caller's sink), and the bridge's own generations stay with its sink.
+    """
+    init_transcript(Transcript())
+    consumer, spawn, child_input, slug, _ = _child_request(agent)
+    model = get_model("mockllm/model")
+    caller = _CallerSink()
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        return await model.generate(input=messages)
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output, consumer
+        ),
+        model_event_sink=consumer,
+    )
+    async with span("outer", type="agent"):
+        consumer.on_complete(
+            _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+        )
+        with use_model_event_sink(caller):
+            await bridge_generate(
+                bridge, model, child_input, [], None, GenerateConfig(), slug
+            )
+        consumer.reset()
+
+    assert len(caller.pending) == 1
+    assert caller.completed == caller.pending
+    [event] = [e for e in transcript().events if isinstance(e, ModelEvent)]
+    assert event is caller.pending[0]
+    assert event.span_id == "agent-child"
+

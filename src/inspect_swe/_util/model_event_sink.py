@@ -110,6 +110,26 @@ def preserve_decision() -> Iterator[None]:
 
 
 @contextmanager
+def reinstate_decision(sink: object, decision: Decision | None) -> Iterator[None]:
+    """Make `decision` `sink`'s placement for the current request in the block.
+
+    A user filter's own generation reads the decision of the request the filter
+    is handling, which a nested bridged request it awaited earlier may have
+    replaced (`preserve_decision` restores it only once the filter returns).
+    The filter-generation sink captures the decision when the filter starts and
+    reinstates it around each callback it forwards, which are synchronous.
+    """
+    if decision is None:
+        yield
+        return
+    token = _decided.set((sink, current_bridge_request(), decision))
+    try:
+        yield
+    finally:
+        _decided.reset(token)
+
+
+@contextmanager
 def filter_generation(sink: object) -> Iterator[None]:
     """Mark `sink`'s callbacks in the block as for a user filter's own generation."""
     token = _filter_generation.set(sink)
