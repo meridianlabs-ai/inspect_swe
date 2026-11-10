@@ -7,7 +7,10 @@ updates:
   # cooldown gives a compromised release time to be caught before it is
   # proposed; security updates skip it.
   - package-ecosystem: "github-actions"
-    directory: "/"
+    # / covers the workflows; the local composite actions pin actions too.
+    directories:
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: "weekly"
     cooldown:
@@ -27,6 +30,8 @@ updates:
   # counts whole days, so those packages' 6-hour cooldown is left to uv. They
   # get their own group, so a broken update elsewhere can't hold them up. It
   # comes first because a package that matches both groups goes to the first.
+  # inspect-ai is ignored: it comes from inspect_ai main, which CI moves to the
+  # latest commit on every run.
   - package-ecosystem: "uv"
     versioning-strategy: "lockfile-only"
     directory: "/"
@@ -36,13 +41,13 @@ updates:
       default-days: 7
       exclude:
         - "anthropic"
-        - "inspect-ai"
         - "openai"
+    ignore:
+      - dependency-name: "inspect-ai"
     groups:
       six-hour-cooldown:
         patterns:
           - "anthropic"
-          - "inspect-ai"
           - "openai"
       python-packages:
         patterns:
