@@ -47,6 +47,7 @@ from inspect_ai.model import (
     ModelOutput,
     get_model,
 )
+from inspect_ai.model import _model as model_module
 from inspect_ai.model._chat_message import (
     ChatMessage,
     ChatMessageAssistant,
@@ -1808,6 +1809,10 @@ class _RetryOnce(Exception):
     pass
 
 
+# whether this inspect_ai calls `ModelEventSink.on_start` (absent at the floor)
+_SINK_HAS_ON_START = hasattr(model_module, "_StartingModelEventSink")
+
+
 # mockllm inherits inspect_ai's asyncio-backed connection limiter
 @pytest.mark.parametrize("anyio_backend", ["asyncio"])
 @pytest.mark.anyio
@@ -1931,7 +1936,10 @@ async def test_bridge_generate_classifies_and_places_each_request_once(
     assert marker.span_id == "agent-call_fb"
     ends = [e.id for e in events if isinstance(e, SpanEndEvent)]
     assert [id for id in ends if id != outer] == ["agent-call_fb"]
-    # once per generate, not once per attempt
+    # once per generate, not once per attempt; an inspect_ai without
+    # `ModelEventSink.on_start` (the 0.3.280 floor) places each attempt from
+    # `on_pending` instead, so the retried requests start twice
+    retried = [] if _SINK_HAS_ON_START else [first_call[-1].text, completion[-1].text]
     assert sorted(starts) == sorted(
         [
             first_call[-1].text,
@@ -1939,6 +1947,7 @@ async def test_bridge_generate_classifies_and_places_each_request_once(
             "go",
             compaction[-1].text,
             completion[-1].text,
+            *retried,
         ]
     )
 
@@ -2654,3 +2663,4 @@ async def test_filter_generation_lands_in_the_classified_sub_agent_span(
         assert [e.parent_id for e in grand_begins] == ["agent-child"]
     else:
         assert grand_begins == []
+
