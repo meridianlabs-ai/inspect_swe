@@ -40,6 +40,14 @@ dev = [
     "ruff",
     "mypy",
     "pytest",
+    # The nightly slow suite (meridianlabs-ai/actions
+    # inspect-swe-nightly-tests.yml) installs this extra from uv.lock and
+    # runs pytest with -n auto and --timeout; google-genai lets the
+    # gemini_cli tests run there (with GOOGLE_API_KEY set they fail with
+    # PrerequisiteError without it, rather than skip).
+    "pytest-timeout",
+    "pytest-xdist",
+    "google-genai",
     # Floors required by inspect_ai's sandbox agent bridge (see
     # inspect_ai/model/_providers/providers.py). Without explicit floors a lock
     # regeneration can resolve below them, and bridge-backed tests then fail
