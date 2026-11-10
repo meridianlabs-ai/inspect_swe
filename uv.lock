@@ -1357,7 +1357,7 @@ requires-dist = [
     { name = "anyio" },
     { name = "griffe", marker = "extra == 'doc'", specifier = ">=2" },
     { name = "httpx" },
-    { name = "inspect-ai", specifier = ">=0.3.277" },
+    { name = "inspect-ai", specifier = ">=0.3.280" },
     { name = "inspect-evals", marker = "extra == 'dev'" },
     { name = "inspect-k8s-sandbox", marker = "extra == 'dev'" },
     { name = "ipython", marker = "extra == 'dev'" },
