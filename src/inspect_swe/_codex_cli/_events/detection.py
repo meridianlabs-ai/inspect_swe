@@ -72,11 +72,24 @@ def final_answer_authors(input_messages: list[ChatMessage]) -> set[str]:
     `wait_agent` result no longer carries per-thread completion status), so its
     author path marks that agent's thread as completed.
     """
-    authors: set[str] = set()
+    return {author for author, _ in final_answer_counts(input_messages)}
+
+
+def final_answer_counts(
+    input_messages: list[ChatMessage],
+) -> dict[tuple[str, str], int]:
+    """FINAL_ANSWER agent_message items in a request's input, per (author, recipient).
+
+    The recipient (the requester) keeps every answer it received in its
+    history, so the count tells a new answer from one already seen.
+    """
+    counts: dict[tuple[str, str], int] = {}
     for item in _agent_message_items(input_messages):
         author = item.get("author")
         if not (isinstance(author, str) and author):
             continue
+        recipient = item.get("recipient")
+        key = (author, recipient if isinstance(recipient, str) else "")
         for part in item.get("content") or []:
             if (
                 isinstance(part, dict)
@@ -84,9 +97,9 @@ def final_answer_authors(input_messages: list[ChatMessage]) -> set[str]:
                 and isinstance(text := part.get("text"), str)
                 and text.lstrip().startswith("Message Type: FINAL_ANSWER")
             ):
-                authors.add(author)
+                counts[key] = counts.get(key, 0) + 1
                 break
-    return authors
+    return counts
 
 
 def find_spawned_agents(tool_calls: list[ToolCall] | None) -> list[SpawnedAgent]:

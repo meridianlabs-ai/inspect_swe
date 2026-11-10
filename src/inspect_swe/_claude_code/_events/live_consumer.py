@@ -4,11 +4,13 @@ Three responsibilities, all driven from the same `LiveConsumer` instance:
 
 1. **`ModelEventSink`** — installed on the agent bridge so the bridge hands
    us every `ModelEvent` for routing instead of emitting it to the transcript
-   itself. We attribute each generate to the correct agent span in
-   `on_start`, which inspect_ai calls once per generate and runs the generate
-   under (so a live sentinel follows the same span as the log), then forward
-   each event to the transcript in `on_pending`. An inspect_ai without
-   `on_start` never calls it, and we attribute in `on_pending` instead.
+   itself. Each generate is attributed to an agent span by the same
+   decision `classify` (3) made over the request in the bridge filter, before
+   the user's filter could rewrite it; `on_start`, which inspect_ai calls once
+   per generate and runs the generate under (so a live sentinel follows the
+   same span as the log), returns that span, and `on_pending` forwards each
+   event to the transcript. An inspect_ai without `on_start` never calls it,
+   and we place each event in `on_pending` instead.
 
    **Attribution mechanism (substring match against pending sub-agents)**:
 
@@ -85,7 +87,12 @@ from inspect_ai.model._model_output import StopReason
 from inspect_ai.tool import ToolInfo
 from inspect_ai.util._span import current_span_id
 
-from ..._util.model_event_sink import mark_started, started
+from ..._util.model_event_sink import (
+    mark_started,
+    remember_span,
+    remembered_span,
+    started,
+)
 from ..model import ClaudeCodeModels
 from .toolview import tool_view
 
@@ -220,12 +227,12 @@ class LiveConsumer(ModelEventSink):
 
     def on_start(self, input: list[ChatMessage]) -> str | None:
         mark_started(self)
-        return self._attribute(input)
+        return self._start(input)
 
     def on_pending(self, event: ModelEvent) -> None:
         # an inspect_ai without on_start leaves the placement to us here
         if not started(self):
-            event.span_id = self._attribute(event.input)
+            event.span_id = self._start(event.input)
         self._emitted_events.add(id(event))
         transcript()._event(event)
 
@@ -332,20 +339,29 @@ class LiveConsumer(ModelEventSink):
     # Attribution
     # ------------------------------------------------------------------
 
+    def _start(self, input_messages: list[ChatMessage]) -> str | None:
+        """The span a generate runs under: the one `classify` chose, if it ran.
+
+        `classify` ran over the request as it reached the bridge; a filter may
+        since have rewritten the messages the generate sees, so they are only
+        attributed afresh when no filter-time decision exists for this request.
+        """
+        decided, span_id = remembered_span(self)
+        return span_id if decided else self._attribute(input_messages)
+
     def _attribute(self, input_messages: list[ChatMessage]) -> str | None:
         """Resolve the span_id for an incoming bridge call.
 
         A request under a main-thread slug is the root thread's regardless
         of prompt content (same reasoning as `classify` step 3), so it lands
-        on the outer span. Otherwise delegates the substring match to
-        `_match_pending_prompt` (shared with `classify`) and resolves the
-        matched sub-agent's span, falling back to the outer span whenever
-        there's no unambiguous match.
+        on the outer span. Otherwise the request's owner (`_owner`, shared
+        with `classify`'s identity) picks the sub-agent's span, falling back
+        to the outer span whenever there's no unambiguous owner.
         """
         request = current_bridge_request()
         if self._is_root_slug(request.model if request is not None else None):
             return self.outer_span_id
-        tool_use_id = self._match_pending_prompt(input_messages)
+        tool_use_id = self._owner(input_messages)
         if tool_use_id is not None:
             agent = self._open_agents.get(tool_use_id)
             if agent is not None:
@@ -376,6 +392,27 @@ class LiveConsumer(ModelEventSink):
             if len(prompt) >= _MIN_PROMPT_LENGTH and prompt in user_text
         ]
         return matches[0] if len(matches) == 1 else None
+
+    def _owner(self, input_messages: list[ChatMessage]) -> str | None:
+        """The running Task this request belongs to, when it can be told.
+
+        The unique pending-prompt match, unless the request also carries the
+        prompt of a Task whose tool_result already arrived: a backgrounded
+        or resumed sub-agent still running under that prompt sends the same
+        text, so the request could be either. Both span placement and the
+        filter-time identity use this, so neither credits the pending Task
+        with a request that may be the detached one's.
+        """
+        tool_use_id = self._match_pending_prompt(input_messages)
+        if tool_use_id is None:
+            return None
+        user_text = self._first_user_text(input_messages) or ""
+        if any(
+            len(prompt) >= _MIN_PROMPT_LENGTH and prompt in user_text
+            for prompt in self._detached_prompts.values()
+        ):
+            return None
+        return tool_use_id
 
     # ------------------------------------------------------------------
     # filter-time classification (AgentContextClassifier)
@@ -431,7 +468,13 @@ class LiveConsumer(ModelEventSink):
         tool_use id and `subagent_type` its `subagent_type` argument. With
         no unique match (parallel Tasks whose prompts can't be told apart,
         or a request whose first user message doesn't carry the Task prompt)
-        both are None -- the slug says "a sub-agent", not which one.
+        both are None -- the slug says "a sub-agent", not which one. Nor
+        does a request that may be a detached Task's (`_owner`); it is placed
+        on the outer span rather than in the pending Task's.
+
+        The span `_attribute` gives the request is recorded for `on_start`,
+        so the generate is placed by this same decision even when the user's
+        filter returns a rewritten `GenerateInput`.
         """
         request = current_bridge_request()
         slug = request.model if request is not None else None
@@ -450,24 +493,19 @@ class LiveConsumer(ModelEventSink):
             )
 
         self._check_subagent_slug_drift(slug, context)
+        # the generate this request leads to is placed by the same decision,
+        # even if the user's filter rewrites its messages (see `_start`)
+        remember_span(self, self._attribute(messages))
         return context
 
     def _subagent_context(self, messages: list[ChatMessage]) -> AgentBridgeContext:
-        """The "subagent" context, identified by a unique pending-prompt match.
+        """The "subagent" context, identified by the request's owner (`_owner`).
 
-        No identity when the request also carries the prompt of a Task whose
-        tool_result already arrived: a backgrounded or resumed sub-agent
-        still running under that prompt would otherwise borrow the pending
-        Task's id.
+        No identity without a unique owner: parallel Tasks whose prompts can't
+        be told apart, or a request that may be a detached Task's.
         """
-        tool_use_id = self._match_pending_prompt(messages)
+        tool_use_id = self._owner(messages)
         if tool_use_id is None:
-            return AgentBridgeContext("subagent")
-        user_text = self._first_user_text(messages) or ""
-        if any(
-            len(prompt) >= _MIN_PROMPT_LENGTH and prompt in user_text
-            for prompt in self._detached_prompts.values()
-        ):
             return AgentBridgeContext("subagent")
         agent = self._open_agents.get(tool_use_id)
         return AgentBridgeContext(

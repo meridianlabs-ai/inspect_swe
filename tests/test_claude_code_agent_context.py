@@ -691,3 +691,142 @@ async def test_claude_code_wires_filter_output_tracking(monkeypatch: Any) -> Non
             GenerateConfig(),
         )
     assert list(captured["model_event_sink"]._open_agents) == ["toolu_a"]
+
+
+# ---------------------------------------------------------------------------
+# filter context and span placement agree (real bridge_generate, real
+# transcript, inspect_ai's own generate: on_start, then on_pending)
+# ---------------------------------------------------------------------------
+
+
+_SUMMARY = "Summary: look into the integration failure."
+
+
+async def _generate_through_bridge(
+    consumer: LiveConsumer,
+    text: str,
+    slug: str,
+    rewrite: str | None = None,
+) -> tuple[AgentBridgeContext | None, ModelEvent]:
+    """Send one request through the bridge with claude_code's filter wiring.
+
+    The user filter records the context it saw and, when `rewrite` is given,
+    returns a GenerateInput replacing the request's messages with that text.
+    Returns the context and the request's recorded ModelEvent.
+    """
+    from inspect_ai.agent import AgentState, current_agent_bridge_context
+    from inspect_ai.agent._bridge.types import AgentBridge
+    from inspect_ai.agent._bridge.util import bridge_generate
+    from inspect_ai.log import transcript
+    from inspect_ai.model import ChatMessage, GenerateInput, Model
+    from inspect_ai.tool import ToolChoice, ToolInfo
+    from inspect_swe._util.agentcontext import classify_filter
+
+    seen: list[AgentBridgeContext | None] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        seen.append(current_agent_bridge_context())
+        if rewrite is None:
+            return None
+        return GenerateInput(
+            input=[ChatMessageUser(content=rewrite)],
+            tools=tools,
+            tool_choice=tool_choice,
+            config=config,
+        )
+
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+    messages: list[ChatMessage] = [ChatMessageUser(content=text)]
+    await bridge_generate(
+        bridge, get_model("mockllm/model"), messages, [], None, GenerateConfig(), slug
+    )
+    [event] = [e for e in transcript().events if isinstance(e, ModelEvent)][-1:]
+    return seen[-1], event
+
+
+def _live_consumer() -> LiveConsumer:
+    from inspect_ai.log._transcript import Transcript, init_transcript
+
+    init_transcript(Transcript())
+    return LiveConsumer(resolve_claude_code_models("mockllm/model", None))
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("slug", ["subagent", "some-unrecognized-slug"])
+async def test_detached_task_s_request_stays_off_a_later_task_s_span(
+    slug: str,
+) -> None:
+    """Background Task A returned, Task B launched with the same prompt.
+
+    A request carrying that prompt may be A's, so it is a sub-agent's (by
+    slug, or by the prompt match) with no identity, and is not placed in B's
+    span either.
+    """
+    from inspect_ai.util._span import current_span_id, span
+
+    consumer = _live_consumer()
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        _spawn_typed(consumer, "cc_a", _TASK_PROMPT, "Explore")
+        consumer.process_jsonl_line(_tool_result_line("cc_a"))
+        _spawn_typed(consumer, "cc_b", _TASK_PROMPT, "general-purpose")
+        context, event = await _generate_through_bridge(
+            consumer,
+            _TASK_PROMPT,
+            consumer._models.subagent if slug == "subagent" else slug,
+        )
+    assert context == AgentBridgeContext("subagent")
+    assert event.span_id == outer
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_rewritten_input_keeps_the_span_the_filter_saw() -> None:
+    """A filter that rewrites the request away from the Task prompt.
+
+    The generation is placed where the request was classified (the Task's
+    span), not re-attributed from the rewritten messages.
+    """
+    from inspect_ai.util._span import span
+
+    consumer = _live_consumer()
+    async with span("outer", type="agent"):
+        _spawn_typed(consumer, "cc_child", _TASK_PROMPT, "Explore")
+        context, event = await _generate_through_bridge(
+            consumer,
+            _TASK_PROMPT,
+            "some-unrecognized-slug",
+            rewrite=_SUMMARY,
+        )
+    assert context == AgentBridgeContext(
+        "subagent", subagent_id="cc_child", subagent_type="Explore"
+    )
+    assert event.input[-1].text == _SUMMARY
+    assert event.span_id == "agent-cc_child"
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_rewritten_input_root_request_stays_on_root() -> None:
+    """The converse: a root request rewritten to quote the Task prompt."""
+    from inspect_ai.util._span import current_span_id, span
+
+    consumer = _live_consumer()
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        _spawn_typed(consumer, "cc_child", _TASK_PROMPT, "Explore")
+        context, event = await _generate_through_bridge(
+            consumer, "keep going", "some-unrecognized-slug", rewrite=_TASK_PROMPT
+        )
+    assert context == AgentBridgeContext("unknown")
+    assert event.span_id == outer

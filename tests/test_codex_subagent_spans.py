@@ -1072,9 +1072,10 @@ def test_classify_v1_resumed_agent_does_not_borrow_a_later_id(
     consumer.on_complete(_model_event(root, tool_calls=[coder]))
 
     # neither the new spawn's id nor its type ("coder") is proven for this
-    # request, which may be the resumed explorer
+    # request, which may be the resumed explorer: like any V1 request that
+    # carries a finished spawn's prompt, it is "unknown" (it could be root's)
     child: list[ChatMessage] = [ChatMessageUser(content=prompt)]
-    assert consumer.classify(model, child, []) == AgentBridgeContext("subagent")
+    assert consumer.classify(model, child, []) == AgentBridgeContext("unknown")
 
 
 def test_spawn_failed_shapes() -> None:
@@ -1239,8 +1240,8 @@ def _assert_old_and_nested_workers_keep_their_types(consumer: CodexConsumer) -> 
 
 
 def test_v2_resumed_parent_spawn_binds_under_its_own_path(monkeypatch: Any) -> None:
-    """/root/other finishes, is resumed, and spawns "worker" from the outer span."""
-    consumer, _ = _consumer(monkeypatch)
+    """/root/other finishes, is resumed, and spawns "worker" from its continuation."""
+    consumer, stub = _consumer(monkeypatch)
     model = get_model("mockllm/model")
     consumer.on_complete(
         _model_event(
@@ -1268,9 +1269,14 @@ def test_v2_resumed_parent_spawn_binds_under_its_own_path(monkeypatch: Any) -> N
         "subagent", subagent_id="/root/other", subagent_type="planner"
     )
     consumer.on_pending(resumed_other)
-    assert resumed_other.span_id == consumer.outer_span_id  # its span closed
+    # its first span closed; the resumed agent continues in a new one
+    continuation = stub.span_begins()[-1]
+    assert continuation.id == resumed_other.span_id == "agent-call_o-resumed-1"
+    assert continuation.name == "other"
+    assert continuation.parent_id == consumer.outer_span_id
     consumer.on_complete(resumed_other)
     assert consumer._agents["call_new"].expected_path == "/root/other/worker"
+    assert stub.span_begins()[-1].parent_id == continuation.id
 
     _assert_old_and_nested_workers_keep_their_types(consumer)
 
@@ -1397,8 +1403,9 @@ def test_v2_closed_path_is_never_rebound_by_expected_path(monkeypatch: Any) -> N
     """A finished agent's path binds no later spawn by expected path alone.
 
     Codex is not known to reuse a path for a new child, so a request under a
-    closed path is the finished agent resumed. The guard costs a same-named
-    re-spawn only its first-call binding: it still binds from its result.
+    closed path is the finished agent resumed, and continues in a new span
+    for it. The guard costs a same-named re-spawn only its first-call
+    binding: it still binds from its result, which ends that continuation.
     """
     consumer, stub = _consumer(monkeypatch)
     consumer.on_complete(
@@ -1420,10 +1427,12 @@ def test_v2_closed_path_is_never_rebound_by_expected_path(monkeypatch: Any) -> N
     second_span = stub.span_begins()[1].id
     resumed = _model_event([_agent_message_user("/root", "/root/worker")])
     consumer.on_pending(resumed)
-    assert resumed.span_id == consumer.outer_span_id
+    continuation = stub.span_begins()[2].id
+    assert resumed.span_id == continuation == "agent-call_1-resumed-1"
     assert consumer._agents["call_2"].thread_id is None
 
     _deliver_v2_spawn_results(consumer, {"call_2": "/root/worker"})
+    assert stub.span_ends()[-1].id == continuation
     later = _model_event([_agent_message_user("/root", "/root/worker")])
     consumer.on_pending(later)
     assert later.span_id == second_span
@@ -1969,3 +1978,284 @@ def test_classify_then_on_start_closes_a_v1_thread_once(
 
     assert contextvars.copy_context().run(generate) == [None, None]
     assert [e.id for e in stub.span_ends()] == ["agent-call_v1"]
+
+
+# ---------------------------------------------------------------------------
+# 17. filter context and span placement agree (real bridge_generate)
+# ---------------------------------------------------------------------------
+
+
+_SUMMARY = "Summary: the delegated work so far."
+
+
+async def _bridge_request(
+    consumer: CodexConsumer,
+    input: list[ChatMessage],
+    rewrite: list[ChatMessage] | None = None,
+    output: ModelOutput | None = None,
+) -> tuple[AgentBridgeContext | None, ModelEvent]:
+    """One request through the bridge with codex_cli()'s filter wiring.
+
+    The user filter records the context it saw and, when `rewrite` is given,
+    returns a GenerateInput with those messages instead. The model answers
+    with `output` (default: plain text). Returns the context and the
+    request's recorded ModelEvent.
+    """
+    seen: list[AgentBridgeContext | None] = []
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        seen.append(current_agent_bridge_context())
+        if rewrite is None:
+            return None
+        return GenerateInput(
+            input=rewrite, tools=tools, tool_choice=tool_choice, config=config
+        )
+
+    model = get_model(
+        "mockllm/model",
+        custom_outputs=[output or ModelOutput.from_content("mockllm", "ok")],
+    )
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+    await bridge_generate(
+        bridge, model, input, [], None, GenerateConfig(), "gpt-5.6-sol"
+    )
+    [event] = [e for e in transcript().events if isinstance(e, ModelEvent)][-1:]
+    return seen[-1], event
+
+
+def _close_v1(consumer: CodexConsumer, call_id: str, thread_id: str) -> None:
+    """Root's request carrying the spawn result and the thread's completion."""
+    consumer.classify(
+        get_model("mockllm/model"),
+        [
+            ChatMessageUser(content="go"),
+            _spawn_result_tool_message(call_id, json.dumps({"agent_id": thread_id})),
+            ChatMessageTool(
+                content=json.dumps({"status": {thread_id: {"completed": "done"}}}),
+                tool_call_id=f"wait_{call_id}",
+                function="wait_agent",
+            ),
+        ],
+        [],
+    )
+
+
+V1_AMBIGUOUS: dict[str, list[ChatMessage]] = {
+    # send_input to the finished agent A: its thread still carries its prompt
+    "resumed-a": [
+        ChatMessageUser(content=V1_PROMPT),
+        ChatMessageUser(content="one more thing"),
+    ],
+    # root after local compaction: the spawn calls are gone, the prompt isn't
+    "compacted-root": [
+        ChatMessageUser(content=f"Earlier you delegated: {V1_PROMPT}"),
+    ],
+}
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("request_name", V1_AMBIGUOUS)
+async def test_v1_closed_prompt_request_stays_off_a_later_spawn_s_span(
+    request_name: str,
+) -> None:
+    """A finished, B spawned with the same prompt; a request carrying it.
+
+    It may be A's (or root's), so it is "unknown" and stays on the outer span
+    rather than landing in B's.
+    """
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_v1_spawn_call("v1_old", V1_PROMPT)],
+            )
+        )
+        _close_v1(consumer, "v1_old", "thread_old")
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_v1_spawn_call("v1_new", V1_PROMPT)],
+            )
+        )
+        context, event = await _bridge_request(consumer, V1_AMBIGUOUS[request_name])
+    assert context == AgentBridgeContext("unknown")
+    assert event.span_id == outer
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("version", ["v1", "v2"])
+async def test_rewritten_input_keeps_the_span_the_filter_saw(version: str) -> None:
+    """A filter that rewrites a child's request away from what identifies it.
+
+    The generation is placed where the request was classified (the child's
+    span), not re-attributed from the rewritten messages.
+    """
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    async with span("outer", type="agent"):
+        spawn = (
+            _v1_spawn_call("call_child", V1_PROMPT)
+            if version == "v1"
+            else _v2_spawn_call("call_child", "write_fizzbuzz")
+        )
+        consumer.on_complete(
+            _model_event([ChatMessageUser(content="go")], tool_calls=[spawn])
+        )
+        input: list[ChatMessage] = (
+            [ChatMessageUser(content=V1_PROMPT)]
+            if version == "v1"
+            else [_agent_message_user("/root", "/root/write_fizzbuzz")]
+        )
+        context, event = await _bridge_request(
+            consumer, input, rewrite=[ChatMessageUser(content=_SUMMARY)]
+        )
+    assert context is not None and context.kind == "subagent"
+    assert context.subagent_id == (
+        "call_child" if version == "v1" else "/root/write_fizzbuzz"
+    )
+    assert event.input[-1].text == _SUMMARY
+    assert event.span_id == "agent-call_child"
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_rewritten_root_input_stays_on_root() -> None:
+    """The converse: root's request rewritten to quote the open spawn's prompt."""
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_v1_spawn_call("call_child", V1_PROMPT)],
+            )
+        )
+        context, event = await _bridge_request(
+            consumer,
+            [ChatMessageUser(content="keep going")],
+            rewrite=[ChatMessageUser(content=V1_PROMPT)],
+        )
+    assert context == AgentBridgeContext("unknown")
+    assert event.span_id == outer
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_v2_followup_task_resumes_the_child_in_a_continuation_span() -> None:
+    """/root/worker finishes, is resumed by followup_task, delegates, finishes again.
+
+    The resumed requests go in a new span for /root/worker under root's span;
+    a child it spawns nests under that span; the FINAL_ANSWER still in root's
+    history does not close it, the next one does, and every span closes once.
+    """
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    first_answer = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "1")
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[_typed_v2_spawn("call_w", "worker", "explore")],
+            )
+        )
+        to_worker = _agent_message_user("/root", "/root/worker")
+        context, event = await _bridge_request(consumer, [to_worker])
+        assert event.span_id == "agent-call_w"
+
+        context, event = await _bridge_request(
+            consumer, [ChatMessageUser(content="go"), first_answer]
+        )
+        assert context == AgentBridgeContext("root")
+        assert event.span_id == outer
+
+        followup = _agent_message_user("/root", "/root/worker", "MESSAGE", "more")
+        nested = _typed_v2_spawn("call_n", "helper", "coder")
+        context, event = await _bridge_request(
+            consumer,
+            [to_worker, followup],
+            output=ModelOutput.from_message(
+                ChatMessageAssistant(content="", tool_calls=[nested])
+            ),
+        )
+        assert context == AgentBridgeContext(
+            "subagent", subagent_id="/root/worker", subagent_type="explore"
+        )
+        continuation = event.span_id
+        assert continuation not in (outer, "agent-call_w")
+
+        # root's next request still carries the first FINAL_ANSWER
+        await _bridge_request(
+            consumer,
+            [
+                ChatMessageUser(content="go"),
+                first_answer,
+                ChatMessageUser(content="wait"),
+            ],
+        )
+        assert continuation in [a.span_id for a in consumer._agents.values()]
+
+        # the resumed worker's own next request stays in its span
+        context, event = await _bridge_request(consumer, [to_worker, followup])
+        assert event.span_id == continuation
+
+        context, event = await _bridge_request(
+            consumer,
+            [
+                ChatMessageUser(content="go"),
+                first_answer,
+                ChatMessageUser(content="wait"),
+                _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "2"),
+            ],
+        )
+        assert context == AgentBridgeContext("root")
+        assert continuation not in [a.span_id for a in consumer._agents.values()]
+        consumer.reset()
+
+    events = transcript().events
+    begins = {e.id: e for e in events if isinstance(e, SpanBeginEvent)}
+    ends = [e.id for e in events if isinstance(e, SpanEndEvent)]
+    assert begins[continuation].parent_id == outer
+    assert begins[continuation].name == "worker"
+    assert begins["agent-call_n"].parent_id == continuation
+    assert sorted(ends) == sorted(begins)
+
+
+def test_v2_continuation_closes_on_a_new_answer_after_root_compaction(
+    monkeypatch: Any,
+) -> None:
+    # local compaction drops root's agent_messages, so the next FINAL_ANSWER
+    # root receives is new even though root has now seen only one
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    to_worker: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    consumer.classify(model, to_worker, [])
+    _finish_v2(consumer, "/root/worker")
+    consumer.classify(model, to_worker, [])  # resumed: continuation opens
+    [continuation] = [a.span_id for a in consumer._agents.values()]
+
+    consumer.classify(model, [ChatMessageUser(content=_compaction_summary())], [])
+    assert continuation in [a.span_id for a in consumer._agents.values()]
+    _finish_v2(consumer, "/root/worker")
+    assert stub.span_ends()[-1].id == continuation
+    assert not consumer._agents
