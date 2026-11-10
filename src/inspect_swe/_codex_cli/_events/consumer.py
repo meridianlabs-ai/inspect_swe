@@ -43,6 +43,7 @@ routes to its own span regardless of interleaving, and each thread binds/closes
 independently via its unique spawn `tool_call_id`.
 """
 
+from collections import Counter
 from dataclasses import dataclass, field
 from logging import getLogger
 
@@ -72,7 +73,7 @@ from ..config import GUARDIAN_MODEL_SLUG
 from .detection import (
     agent_message_recipients,
     completed_thread_ids,
-    final_answer_counts,
+    final_answers,
     find_close_targets,
     find_spawned_agents,
     is_compaction_request,
@@ -144,11 +145,13 @@ class CodexConsumer(ModelEventSink):
         self._closed_agents: dict[str, _OpenAgent] = {}
         self._resumes: dict[str, int] = {}
 
-        # (author, recipient) → FINAL_ANSWERs from author in recipient's
-        # request when it last closed author's thread. The recipient keeps
-        # an answer in its history, so only a request carrying more of them
-        # than that closes the thread again (a resumed child's continuation).
-        self._final_answers: dict[tuple[str, str], int] = {}
+        # (author, recipient) → FINAL_ANSWERs from author (by identity, see
+        # `final_answers`) in recipient's request when it last closed author's
+        # thread, less any its history has since dropped. The recipient keeps
+        # an answer in its history, so only a request carrying an answer not
+        # among these closes the thread again (a resumed child's
+        # continuation), however many old answers a compaction removed.
+        self._final_answers: dict[tuple[str, str], Counter[str]] = {}
 
     @property
     def outer_span_id(self) -> str | None:
@@ -481,27 +484,29 @@ class CodexConsumer(ModelEventSink):
         Completion carriers: V1 wait/close status dicts and notifications; V2
         FINAL_ANSWER agent_messages. Idempotent: closing pops the thread, so a
         second pass over the same request emits no second SpanEndEvent. A V2
-        thread closes only on a FINAL_ANSWER beyond those it last closed on
-        (see `_final_answers`), so an answer still in the parent's history
-        doesn't close the continuation of a child resumed after it.
+        thread closes only on a FINAL_ANSWER other than those it last closed
+        on (see `_final_answers`), so an answer still in the parent's history
+        doesn't close the continuation of a child resumed after it, and a new
+        answer closes it even when a compaction dropped the old ones.
         """
         self._harvest_bindings(input_messages)
         for thread_id in completed_thread_ids(input_messages):
             self._close_thread(thread_id)
-        counts = final_answer_counts(input_messages)
+        answers = final_answers(input_messages)
         requester = self._requester_path(input_messages)
         for key in self._final_answers:
             # answers the requester received that its history no longer has
             if key[1] == requester:
-                counts.setdefault(key, 0)
-        for key, count in counts.items():
-            closed_on = self._final_answers.get(key, 0)
-            if count < closed_on:
+                answers.setdefault(key, Counter())
+        for key, carried in answers.items():
+            closed_on = self._final_answers.get(key)
+            if carried - (closed_on or Counter()):
+                if self._close_thread(key[0]):
+                    self._final_answers[key] = carried
+            elif closed_on is not None:
                 # the history lost answers (local compaction drops
-                # agent_messages): count from what it carries now
-                self._final_answers[key] = count
-            elif count > closed_on and self._close_thread(key[0]):
-                self._final_answers[key] = count
+                # agent_messages): keep only those it carries now
+                self._final_answers[key] = carried
 
     def _harvest_bindings(self, input_messages: list[ChatMessage]) -> None:
         """Bind thread_id → span from spawn_agent tool results (by tool_call_id).

@@ -2261,6 +2261,43 @@ def test_v2_continuation_closes_on_a_new_answer_after_root_compaction(
     assert not consumer._agents
 
 
+def test_v2_continuation_closes_on_a_new_answer_carried_by_the_first_compacted_request(
+    monkeypatch: Any,
+) -> None:
+    # root's compaction request still carries the old answer, and its first
+    # post-compaction request already carries the new one: no request in
+    # between carries none, so only the answer's identity tells them apart
+    consumer, stub = _consumer(monkeypatch)
+    model = get_model("mockllm/model")
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v2_spawn_call("call_w", "worker")],
+        )
+    )
+    to_worker: list[ChatMessage] = [_agent_message_user("/root", "/root/worker")]
+    consumer.classify(model, to_worker, [])
+    first = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "first")
+    consumer.classify(model, [first], [])
+    assert not consumer._agents
+    consumer.classify(model, to_worker, [])  # followup: continuation opens
+    [continuation] = [a.span_id for a in consumer._agents.values()]
+
+    compaction = ChatMessageUser(content=f"{COMPACTION_MARKER} summarize")
+    consumer.classify(model, [first, compaction], [])
+    assert continuation in [a.span_id for a in consumer._agents.values()]
+    second = _agent_message_user("/root/worker", "/root", "FINAL_ANSWER", "second")
+    consumer.classify(model, [ChatMessageUser(content="compacted summary"), second], [])
+    assert stub.span_ends()[-1].id == continuation
+    assert not consumer._agents
+
+    # a later followup resumes the worker in a new continuation
+    consumer.classify(model, to_worker, [])
+    [resumed] = [a.span_id for a in consumer._agents.values()]
+    assert resumed != continuation
+    assert resumed in [e.id for e in stub.span_begins()]
+
+
 # ---------------------------------------------------------------------------
 # 18. review pass 2: historical marker, rewritten spawner path, nested requests
 # ---------------------------------------------------------------------------

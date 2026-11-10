@@ -7,6 +7,7 @@ spans (and detect compaction) bridge-only.
 """
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,18 +73,21 @@ def final_answer_authors(input_messages: list[ChatMessage]) -> set[str]:
     `wait_agent` result no longer carries per-thread completion status), so its
     author path marks that agent's thread as completed.
     """
-    return {author for author, _ in final_answer_counts(input_messages)}
+    return {author for author, _ in final_answers(input_messages)}
 
 
-def final_answer_counts(
+def final_answers(
     input_messages: list[ChatMessage],
-) -> dict[tuple[str, str], int]:
+) -> dict[tuple[str, str], Counter[str]]:
     """FINAL_ANSWER agent_message items in a request's input, per (author, recipient).
 
-    The recipient (the requester) keeps every answer it received in its
-    history, so the count tells a new answer from one already seen.
+    Each answer is identified by its item id when it has one, else by its
+    text, and counted per identity. The recipient (the requester) keeps every
+    answer it received in its history until a compaction drops them, so an
+    identity beyond those already seen tells a new answer from an old one
+    regardless of how many old ones the history still carries.
     """
-    counts: dict[tuple[str, str], int] = {}
+    answers: dict[tuple[str, str], Counter[str]] = {}
     for item in _agent_message_items(input_messages):
         author = item.get("author")
         if not (isinstance(author, str) and author):
@@ -97,9 +101,11 @@ def final_answer_counts(
                 and isinstance(text := part.get("text"), str)
                 and text.lstrip().startswith("Message Type: FINAL_ANSWER")
             ):
-                counts[key] = counts.get(key, 0) + 1
+                item_id = item.get("id")
+                identity = item_id if isinstance(item_id, str) and item_id else text
+                answers.setdefault(key, Counter())[identity] += 1
                 break
-    return counts
+    return answers
 
 
 def find_spawned_agents(tool_calls: list[ToolCall] | None) -> list[SpawnedAgent]:
