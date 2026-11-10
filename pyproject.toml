@@ -15,7 +15,7 @@ requires-python = ">=3.11"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect-ai>=0.3.277",
+    "inspect-ai>=0.3.280",
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.13.0",

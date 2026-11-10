@@ -39,7 +39,9 @@ def test_presented_model_identities_are_populated() -> None:
     # every role resolves to the served model's name for a single-model run
     assert env["ANTHROPIC_MODEL"] == "model"
     assert env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "model"
-    assert env["CLAUDE_CODE_SUBAGENT_MODEL"] == "model"
+    # the subagent role is the exception: it never presents the primary slug
+    # (see resolve_claude_code_models), so subagent traffic is distinguishable
+    assert env["CLAUDE_CODE_SUBAGENT_MODEL"] == "model-subagent"
 
 
 def test_mcp_connection_is_blocking_by_default() -> None:

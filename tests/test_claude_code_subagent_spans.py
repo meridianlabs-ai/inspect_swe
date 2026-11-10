@@ -27,6 +27,9 @@ from inspect_ai.tool import ToolCall
 from inspect_ai.util._span import current_span_id, span
 from inspect_swe._claude_code._events import live_consumer as consumer_module
 from inspect_swe._claude_code._events.live_consumer import LiveConsumer
+from inspect_swe._claude_code.model import resolve_claude_code_models
+
+_MODELS = resolve_claude_code_models("mockllm/model", None)
 
 PROMPT = "Find every TODO comment in the repository and list them."
 
@@ -63,7 +66,7 @@ def _spawned(monkeypatch: Any) -> tuple[LiveConsumer, LiveConsumer, _TranscriptS
     """Two consumers that have each seen a parent spawn one Task sub-agent."""
     stub = _TranscriptStub()
     monkeypatch.setattr(consumer_module, "transcript", lambda: stub)
-    consumers = LiveConsumer(), LiveConsumer()
+    consumers = LiveConsumer(_MODELS), LiveConsumer(_MODELS)
     for consumer in consumers:
         consumer.on_complete(
             _model_event(
@@ -171,7 +174,7 @@ async def test_generates_through_the_model_are_attributed_once_each(
 ) -> None:
     # inspect_ai's own generate(): through on_start when it has one, else on_pending
     init_transcript(Transcript())
-    consumer = LiveConsumer()
+    consumer = LiveConsumer(_MODELS)
     attributed: list[list[ChatMessage]] = []
     attribute = consumer._attribute
 

@@ -7,6 +7,7 @@ spans (and detect compaction) bridge-only.
 """
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,6 +30,18 @@ WAIT_AGENT = "wait_agent"
 # Source: codex-rs/core/templates/compact/prompt.md (injected at compact.rs:70-82).
 COMPACTION_MARKER = "You are performing a CONTEXT CHECKPOINT COMPACTION."
 
+# Prefix of the summary message a local compaction leaves in the compacted
+# history (`SUMMARY_PREFIX`, recognized by `is_summary_message` in
+# codex-rs/core/src/compact.rs). Items after it arrived after the compaction.
+SUMMARY_PREFIX = (
+    "Another language model started to solve this problem and produced a "
+    "summary of its thinking process. You also have access to the state of the "
+    "tools that were used by that language model. Use this to build on the work "
+    "that has already been done and avoid duplicating work. Here is the summary "
+    "produced by the other language model, use the information in this summary "
+    "to assist with your own analysis:"
+)
+
 
 @dataclass
 class SpawnedAgent:
@@ -40,6 +53,9 @@ class SpawnedAgent:
     reasoning_effort: str | None
     task_name: str | None = None
     """Multi-Agent V2 task name (e.g. "write_fizzbuzz"); None under V1."""
+    declared_type: str | None = None
+    """The `agent_type` argument as given; None when the spawn omits it
+    (Codex then inherits the parent's type or uses its default)."""
 
     @property
     def name(self) -> str:
@@ -69,11 +85,27 @@ def final_answer_authors(input_messages: list[ChatMessage]) -> set[str]:
     `wait_agent` result no longer carries per-thread completion status), so its
     author path marks that agent's thread as completed.
     """
-    authors: set[str] = set()
+    return {author for author, _ in final_answers(input_messages)}
+
+
+def final_answers(
+    input_messages: list[ChatMessage],
+) -> dict[tuple[str, str], Counter[str]]:
+    """FINAL_ANSWER agent_message items in a request's input, per (author, recipient).
+
+    Each answer is identified by its item id when it has one, else by its
+    text, and counted per identity. The recipient (the requester) keeps every
+    answer it received in its history until a compaction drops them, so an
+    identity beyond those already seen tells a new answer from an old one
+    regardless of how many old ones the history still carries.
+    """
+    answers: dict[tuple[str, str], Counter[str]] = {}
     for item in _agent_message_items(input_messages):
         author = item.get("author")
         if not (isinstance(author, str) and author):
             continue
+        recipient = item.get("recipient")
+        key = (author, recipient if isinstance(recipient, str) else "")
         for part in item.get("content") or []:
             if (
                 isinstance(part, dict)
@@ -81,9 +113,11 @@ def final_answer_authors(input_messages: list[ChatMessage]) -> set[str]:
                 and isinstance(text := part.get("text"), str)
                 and text.lstrip().startswith("Message Type: FINAL_ANSWER")
             ):
-                authors.add(author)
+                item_id = item.get("id")
+                identity = item_id if isinstance(item_id, str) and item_id else text
+                answers.setdefault(key, Counter())[identity] += 1
                 break
-    return authors
+    return answers
 
 
 def find_spawned_agents(tool_calls: list[ToolCall] | None) -> list[SpawnedAgent]:
@@ -105,6 +139,9 @@ def find_spawned_agents(tool_calls: list[ToolCall] | None) -> list[SpawnedAgent]
                 message=message,
                 reasoning_effort=str(reasoning) if reasoning else None,
                 task_name=str(task_name) if task_name else None,
+                declared_type=str(args["agent_type"])
+                if args.get("agent_type")
+                else None,
             )
         )
     return result
@@ -154,6 +191,20 @@ def spawn_result(message: ChatMessageTool) -> SpawnResult | None:
     return None
 
 
+def spawn_failed(message: ChatMessageTool) -> bool:
+    """Whether a `spawn_agent` tool result reports that no agent was spawned.
+
+    A successful spawn returns a JSON object under both V1 and V2 (see
+    `spawn_result`). Codex reports a failed one -- e.g. "Reasoning effort
+    `low` is not supported for model ..." -- as plain text. Only a result
+    that isn't a JSON object (or carries a tool error) counts, so an
+    unrecognized success format never reads as a failure.
+    """
+    if message.function != SPAWN_AGENT:
+        return False
+    return message.error is not None or not isinstance(_loads(message.text), dict)
+
+
 def completed_thread_ids(input_messages: list[ChatMessage]) -> set[str]:
     """Thread ids reported `completed`, from wait/close results and notifications.
 
@@ -173,12 +224,33 @@ def completed_thread_ids(input_messages: list[ChatMessage]) -> set[str]:
 
 
 def is_compaction_request(input_messages: list[ChatMessage]) -> bool:
-    """Whether this request is a (local) compaction summarization call."""
-    return any(
-        isinstance(msg, ChatMessageUser)
-        and msg.text.lstrip().startswith(COMPACTION_MARKER)
-        for msg in input_messages
+    """Whether this request is a (local) compaction summarization call.
+
+    Codex appends the compaction prompt as the turn's latest user message, so
+    only that message is checked: an earlier user message that merely starts
+    with the marker text (e.g. a task about the prompt itself) stays in the
+    history of ordinary requests and does not make them compaction calls.
+    """
+    latest = next(
+        (msg for msg in reversed(input_messages) if isinstance(msg, ChatMessageUser)),
+        None,
     )
+    return latest is not None and latest.text.lstrip().startswith(COMPACTION_MARKER)
+
+
+def compaction_summary_index(input_messages: list[ChatMessage]) -> int | None:
+    """Index of the latest local-compaction summary message, if the history has one.
+
+    A compacted history ends with the summary (`SUMMARY_PREFIX`), so every
+    message after it reached the requester after that compaction.
+    """
+    for index in range(len(input_messages) - 1, -1, -1):
+        msg = input_messages[index]
+        if isinstance(msg, ChatMessageUser) and msg.text.lstrip().startswith(
+            SUMMARY_PREFIX
+        ):
+            return index
+    return None
 
 
 # ---------------------------------------------------------------------------
