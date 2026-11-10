@@ -1788,3 +1788,184 @@ def test_a_v1_thread_bound_and_completed_in_one_request_closes_its_span_once(
 
     contextvars.copy_context().run(generate)
     assert [e.id for e in stub.span_ends()] == ["agent-call_v1"]
+
+
+# ---------------------------------------------------------------------------
+# 16. classify() at filter time together with on_start / on_pending
+# ---------------------------------------------------------------------------
+
+
+class _RetryOnce(Exception):
+    pass
+
+
+# mockllm inherits inspect_ai's asyncio-backed connection limiter
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.anyio
+async def test_bridge_generate_classifies_and_places_each_request_once(
+    monkeypatch: Any,
+) -> None:
+    """The bridge's filter-time classify() and the sink's on_start agree.
+
+    Driven through the real bridge_generate, the same filter wiring
+    codex_cli() installs, and inspect_ai's own generate() (on_start, then
+    on_pending once per attempt): a V2 child's first call (bound by expected
+    path, retried once), a concurrent V1 child and root call, the child's
+    local compaction, and root's request carrying the child's FINAL_ANSWER
+    (retried once). classify() has already synced each request when on_start
+    runs, so each request is attributed once per generate and the child's
+    span closes exactly once.
+    """
+    init_transcript(Transcript())
+    consumer = CodexConsumer()
+    starts: list[str] = []
+    start = consumer._start
+
+    def counted(input: list[ChatMessage]) -> str | None:
+        starts.append(input[-1].text)
+        return start(input)
+
+    monkeypatch.setattr(consumer, "_start", counted)
+
+    contexts: dict[str, AgentBridgeContext | None] = {}
+
+    async def user_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        contexts[messages[-1].text] = current_agent_bridge_context()
+        return None
+
+    first_call = REQUESTS["v2-recipient"]
+    compaction: list[ChatMessage] = [
+        _agent_message_user("/root", "/root/write_fizzbuzz"),
+        ChatMessageUser(content=f"{COMPACTION_MARKER}\nSummarize."),
+    ]
+    completion: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _agent_message_user("/root/write_fizzbuzz", "/root", "FINAL_ANSWER", "done"),
+    ]
+    retry_once = {first_call[-1].text, completion[-1].text}
+
+    def outputs(
+        input: list[ChatMessage], *_: Any
+    ) -> ModelOutput:  # one failed attempt for each request in retry_once
+        if input[-1].text in retry_once:
+            retry_once.discard(input[-1].text)
+            raise _RetryOnce()
+        return ModelOutput.from_content("mockllm", "ok")
+
+    model = get_model("mockllm/model", custom_outputs=outputs)
+    monkeypatch.setattr(
+        model.api, "should_retry", lambda ex: isinstance(ex, _RetryOnce)
+    )
+    bridge = AgentBridge(
+        AgentState(messages=[]),
+        filter=classify_filter(
+            user_filter, consumer.classify, consumer.on_filter_output
+        ),
+        model_event_sink=consumer,
+    )
+
+    async def generate(input: list[ChatMessage]) -> None:
+        await bridge_generate(bridge, model, input, [], None, GenerateConfig(), None)
+
+    async with span("outer", type="agent"):
+        outer = current_span_id()
+        consumer.on_complete(
+            _model_event(
+                [ChatMessageUser(content="go")],
+                tool_calls=[
+                    _v2_spawn_call("call_fb", "write_fizzbuzz"),
+                    _v1_spawn_call("call_v1", V1_PROMPT),
+                ],
+            )
+        )
+        async with anyio.create_task_group() as tg:
+            for input in (first_call, REQUESTS["v1-prompt"], REQUESTS["outer"]):
+                tg.start_soon(generate, input)
+        await generate(compaction)
+        await generate(completion)
+
+    assert {text: ctx.kind if ctx else None for text, ctx in contexts.items()} == {
+        first_call[-1].text: "subagent",
+        V1_PROMPT: "subagent",
+        "go": "unknown",  # root's own request while sub-agents are open
+        compaction[-1].text: "utility",
+        completion[-1].text: "root",
+    }
+    assert contexts[first_call[-1].text] == AgentBridgeContext(
+        "subagent", subagent_id="/root/write_fizzbuzz"
+    )
+
+    events = transcript().events
+    placed = sorted(
+        (e.input[-1].text, e.span_id) for e in events if isinstance(e, ModelEvent)
+    )
+    assert placed == sorted(
+        [
+            # the retried first call stays on the child's span
+            (first_call[-1].text, "agent-call_fb"),
+            (first_call[-1].text, "agent-call_fb"),
+            (V1_PROMPT, "agent-call_v1"),
+            ("go", outer),
+            (compaction[-1].text, "agent-call_fb"),
+            # the retried completion stays on root's span
+            (completion[-1].text, outer),
+            (completion[-1].text, outer),
+        ]
+    )
+    [marker] = [e for e in events if isinstance(e, CompactionEvent)]
+    assert marker.span_id == "agent-call_fb"
+    ends = [e.id for e in events if isinstance(e, SpanEndEvent)]
+    assert [id for id in ends if id != outer] == ["agent-call_fb"]
+    # once per generate, not once per attempt
+    assert sorted(starts) == sorted(
+        [
+            first_call[-1].text,
+            V1_PROMPT,
+            "go",
+            compaction[-1].text,
+            completion[-1].text,
+        ]
+    )
+
+
+@pytest.mark.parametrize("carrier", V1_COMPLETED)
+def test_classify_then_on_start_closes_a_v1_thread_once(
+    monkeypatch: Any, carrier: str
+) -> None:
+    # classify() closes the completed thread at filter time; on_start's own
+    # sync of the same request (and the retried attempt) must not close it
+    # again, and the request is root's once the thread is closed
+    consumer, stub = _consumer(monkeypatch)
+    consumer.on_complete(
+        _model_event(
+            [ChatMessageUser(content="go")],
+            tool_calls=[_v1_spawn_call("call_v1", V1_PROMPT)],
+        )
+    )
+    input: list[ChatMessage] = [
+        ChatMessageUser(content="go"),
+        _spawn_result_tool_message("call_v1", '{"agent_id":"thread_abc"}'),
+        V1_COMPLETED[carrier],
+    ]
+
+    def generate() -> list[str | None]:
+        context = consumer.classify(get_model("mockllm/model"), input, [])
+        assert context == AgentBridgeContext("root")
+        span_id = consumer.on_start(input)
+        placed = []
+        for _ in range(2):
+            event = _model_event(input)
+            event.span_id = span_id
+            consumer.on_pending(event)
+            consumer.on_complete(event)
+            placed.append(event.span_id)
+        return placed
+
+    assert contextvars.copy_context().run(generate) == [None, None]
+    assert [e.id for e in stub.span_ends()] == ["agent-call_v1"]
