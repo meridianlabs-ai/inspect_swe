@@ -47,7 +47,7 @@ dev = [
     # PrerequisiteError without it, rather than skip).
     "pytest-timeout",
     "pytest-xdist",
-    "google-genai",
+    "google-genai>=3.0.0",  # inspect_ai's Google provider floor (providers.py)
     # Floors required by inspect_ai's sandbox agent bridge (see
     # inspect_ai/model/_providers/providers.py). Without explicit floors a lock
     # regeneration can resolve below them, and bridge-backed tests then fail
@@ -81,6 +81,7 @@ exclude-newer = "7 days"
 # Inspect package; see CONTRIBUTING.md.
 [tool.uv.exclude-newer-package]
 anthropic = "6 hours"
+google-genai = "6 hours"
 inspect-ai = "6 hours"
 openai = "6 hours"
 
