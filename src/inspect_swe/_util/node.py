@@ -7,7 +7,6 @@ and/or npm packages installed in sandboxes.
 import json
 import lzma
 import os
-import re
 import shutil
 import subprocess
 import tarfile
@@ -29,8 +28,6 @@ NPM_RELEASE_COOLDOWN = timedelta(days=7)
 Applies to every package in the installed tree. A compromised or broken
 release is usually found and unpublished within this time.
 """
-
-_STABLE_SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
 async def ensure_node_available(
@@ -119,12 +116,14 @@ def npm_cooldown_cutoff() -> datetime:
 
 
 def resolve_npm_package_version(package: str) -> str:
-    """Get the newest release of an npm package that is past the cooldown.
+    """Get the version of an npm package's ``latest`` tag, as of the cooldown.
 
-    Picks the highest stable version, no higher than the ``latest`` dist-tag,
-    published at or before ``npm_cooldown_cutoff()``. This is the version
-    ``npm install --before`` selects for ``latest``; ``npm view`` ignores
-    ``--before``, so the choice is made here.
+    Asks npm which version ``{package}@latest`` resolves to with ``--before``
+    set to ``npm_cooldown_cutoff()``, the same choice ``npm install --before``
+    makes: the newest release no higher than ``latest`` that was published
+    before the cutoff and is still published, preferring versions that are
+    not deprecated. ``npm view`` ignores ``--before``, so this uses
+    ``npm pack --dry-run``, which reads the package without writing it.
 
     Requires ``npm`` to be available on the host.
     """
@@ -134,51 +133,29 @@ def resolve_npm_package_version(package: str) -> str:
             "Please install Node.js (https://nodejs.org/) and ensure npm is on "
             "your PATH."
         )
+    before = npm_cooldown_cutoff().isoformat()
     result = subprocess.run(
-        ["npm", "view", package, "time", "dist-tags", "--json"],
+        [
+            "npm",
+            "pack",
+            f"{package}@latest",
+            "--dry-run",
+            "--json",
+            "--ignore-scripts",
+            "--before",
+            before,
+        ],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=300,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"Failed to resolve version of {package}: {result.stderr}")
-    packument = json.loads(result.stdout)
-    cutoff = npm_cooldown_cutoff()
-    version = _newest_release_before(
-        packument["time"], packument["dist-tags"]["latest"], cutoff
-    )
-    if version is None:
         raise RuntimeError(
-            f"No release of {package} up to its latest version "
-            f"({packument['dist-tags']['latest']}) was published before "
-            f"{cutoff.isoformat()} (the {NPM_RELEASE_COOLDOWN.days}-day cooldown)."
+            f"Failed to resolve version of {package} from releases published "
+            f"before {before} (the {NPM_RELEASE_COOLDOWN.days}-day cooldown): "
+            f"{result.stderr}"
         )
-    return version
-
-
-def _newest_release_before(
-    publish_times: dict[str, str], latest: str, cutoff: datetime
-) -> str | None:
-    latest_key = _semver_key(re.split(r"[-+]", latest)[0])
-    if latest_key is None:
-        raise RuntimeError(f"Unexpected latest dist-tag version: {latest}")
-    candidates = [
-        (key, version)
-        for version, published in publish_times.items()
-        if (key := _semver_key(version)) is not None
-        and key <= latest_key
-        and datetime.fromisoformat(published.replace("Z", "+00:00")) <= cutoff
-    ]
-    return max(candidates)[1] if candidates else None
-
-
-def _semver_key(version: str) -> tuple[int, int, int] | None:
-    """Return a sort key for a stable ``X.Y.Z`` version, or None otherwise."""
-    match = _STABLE_SEMVER.match(version)
-    if match is None:
-        return None
-    major, minor, patch = match.groups()
-    return int(major), int(minor), int(patch)
+    return str(json.loads(result.stdout)[0]["version"])
 
 
 def create_npm_bundle(
