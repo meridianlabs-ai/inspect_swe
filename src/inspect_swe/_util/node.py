@@ -134,10 +134,11 @@ def create_npm_bundle(
 
     Runs ``npm install`` on the host and bundles the ``node_modules``
     directory into a tarball.  Uses ``--os``, ``--cpu`` and ``--libc`` to
-    get native modules for the sandbox platform: npm otherwise takes the
-    libc from the host, which on macOS has none, so it skips optional
-    packages that declare one (e.g. ``@anthropic-ai/claude-agent-sdk-linux-*``).
-    Results are cached locally.
+    get native modules for the sandbox platform. Without ``--libc`` npm uses
+    the host's: on macOS it skips every optional package that declares a
+    libc (e.g. ``@anthropic-ai/claude-agent-sdk-linux-*``), and on a glibc
+    host it picks glibc packages for a musl sandbox. Results are cached
+    locally.
 
     Args:
         package: npm package name (e.g. ``"@google/gemini-cli"``).
@@ -156,7 +157,7 @@ def create_npm_bundle(
     cache_dir = package_cache_dir(cache_name)
     suffix = "-noscripts" if ignore_scripts else ""
     # bundles cached before --libc was passed can lack the sandbox's
-    # libc-specific packages, so the "-libc" in the name rebuilds them
+    # libc-specific packages or hold the wrong ones; "-libc" rebuilds them
     cache_path = cache_dir / f"{cache_name}-{version}-{platform}-libc{suffix}.tar.gz"
 
     if cache_path.exists():
@@ -192,8 +193,8 @@ def create_npm_bundle(
             "linux",
             "--cpu",
             cpu,
-            "--libc",
-            libc,
+            # npm before 10.3 lacks --libc; "--libc glibc" would install "glibc"
+            f"--libc={libc}",
         ]
         if ignore_scripts:
             npm_cmd.append("--ignore-scripts")
