@@ -122,7 +122,7 @@ jobs:
       contents: read
       pages: write
       id-token: write
-    uses: meridianlabs-ai/actions/.github/workflows/publish-docs.yml@v1
+    uses: meridianlabs-ai/actions/.github/workflows/publish-docs.yml@62bc8360498822ef3eab7c9584d1bd523de3febf # main
     with:
       python-version: "3.14"
       extras: doc
