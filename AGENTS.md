@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents working in this repository.
 
 ## Build/Lint/Test Commands
 
-- Install dev environment: `uv sync --extra dev` (uv 0.13.4 or later)
+- Install dev environment: `uv sync --locked --extra dev` (uv 0.13.4 or later)
 - Format, lint, and type check: `make check` (runs `ruff format`, `ruff check --fix`, `mypy`)
 - Run fast tests: `make test` (or `pytest`)
 - Run a single test: `pytest tests/test_file.py::test_name -v`
@@ -16,7 +16,8 @@ This file provides guidance to AI coding agents working in this repository.
 
 ## Dependencies
 
-- `uv.lock` pins every dependency except the build toolchain (pinned with hashes in `scripts/build-dist/requirements.txt`), and uv only resolves releases at least 7 days old (6 hours for a few listed packages). Read "Dependencies and the cooldown" in [CONTRIBUTING.md](CONTRIBUTING.md) before you change dependencies, `[tool.uv]` or `.github/dependabot.yml`. Dev and CI track inspect_ai `main` through `[tool.uv.sources]`; the published package requires the `inspect-ai>=` floor. See "inspect_ai main" in CONTRIBUTING.md.
+- After changing dependencies in `pyproject.toml`, run `uv lock` and commit `uv.lock`; CI fails on a stale lock. Don't override the 7-day `exclude-newer` cooldown.
+- Every other dependency rule and procedure (the lock file, the cooldown, inspect_ai tracked from `main`, the build toolchain) is in [DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions. Read it before you change dependencies, `[tool.uv]` or `.github/dependabot.yml`.
 
 ## Test Suite Topology
 

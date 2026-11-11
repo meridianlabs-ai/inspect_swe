@@ -17,10 +17,10 @@ To work on development of Inspect SWE, clone the repository and install it with 
 ```bash
 git clone https://github.com/meridianlabs-ai/inspect_swe
 cd inspect_swe
-uv sync --extra dev
+uv sync --locked --extra dev
 ```
 
-To build the docs, run `uv sync --extra dev --extra doc` instead.
+To build the docs, run `uv sync --locked --extra dev --extra doc` instead.
 
 Run the commands below from the `.venv` that `uv sync` creates: `uv run <command>`, `.venv/bin/<command>`, or `source .venv/bin/activate`.
 
