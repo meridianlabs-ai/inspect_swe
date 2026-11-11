@@ -1,9 +1,8 @@
 """In-process cache for upstream version resolution.
 
 Agents that install from npm resolve their version on every sample, so
-without caching a single multi-sample eval issues one ``api.github.com``
-request per sample. Unauthenticated requests are limited to 60/hour per IP,
-which one ordinary eval can exhaust on its own.
+without caching a single multi-sample eval runs one ``npm view`` registry
+request per sample.
 
 Agents installed via ``AgentBinarySource`` have an equivalent cache in
 ``agentbinary.download_agent_binary_async``.

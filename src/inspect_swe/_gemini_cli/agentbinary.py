@@ -1,13 +1,13 @@
-import json
-from typing import Any, Literal
+from typing import Literal
 
+import anyio
 from inspect_ai.util import SandboxEnvironment, concurrency
 
-from .._util.download import download_text_file
 from .._util.node import (
     create_npm_bundle,
     ensure_node_available,
     install_npm_bundle,
+    resolve_npm_package_version,
 )
 from .._util.sandbox import (
     SANDBOX_INSTALL_DIR,
@@ -16,6 +16,8 @@ from .._util.sandbox import (
     detect_sandbox_platform,
 )
 from .._util.versioncache import cached_version_resolution
+
+_GEMINI_CLI_PACKAGE = "@google/gemini-cli"
 
 
 async def ensure_gemini_cli_setup(
@@ -39,19 +41,23 @@ async def ensure_gemini_cli_setup(
 async def resolve_gemini_version(
     version: Literal["auto", "sandbox", "stable", "latest"] | str,
 ) -> str:
-    """Resolve version string to an actual semver version."""
+    """Resolve version string to an actual semver version.
+
+    The aliases resolve to the newest release past the npm release cooldown
+    (see ``resolve_npm_package_version``).
+    """
     if version in ["auto", "sandbox", "stable", "latest"]:
-        # cached so concurrent samples don't each hit the (rate-limited)
-        # GitHub API — all four aliases resolve to the same latest release
+        # cached so concurrent samples don't each query the registry — all
+        # four aliases resolve to the same release
         return await cached_version_resolution("gemini-cli", _fetch_latest_version)
 
     return version
 
 
 async def _fetch_latest_version() -> str:
-    """Fetch the latest released gemini-cli version from GitHub."""
-    release = await _fetch_latest_release()
-    return str(release["tag_name"]).lstrip("v")
+    return await anyio.to_thread.run_sync(
+        resolve_npm_package_version, _GEMINI_CLI_PACKAGE
+    )
 
 
 async def ensure_gemini_cli_installed(
@@ -85,7 +91,7 @@ async def ensure_gemini_cli_installed(
 
     async with concurrency("gemini-cli-install", 1, visible=False):
         bundle_data = create_npm_bundle(
-            package="@google/gemini-cli",
+            package=_GEMINI_CLI_PACKAGE,
             version=version,
             platform=platform,
             cache_name="gemini-cli-bundles",
@@ -97,10 +103,3 @@ async def ensure_gemini_cli_installed(
             binary_name="gemini",
             user=user,
         )
-
-
-async def _fetch_latest_release() -> dict[str, Any]:
-    """Fetch the latest release from GitHub."""
-    releases_url = "https://api.github.com/repos/google-gemini/gemini-cli/releases"
-    release_json = await download_text_file(f"{releases_url}/latest")
-    return dict(json.loads(release_json))

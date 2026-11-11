@@ -53,10 +53,12 @@ By default, the agent will download the current stable version of {{< meta agent
 |------------------------------------|------------------------------------|
 | `"auto"` | Use any available version of {{< meta agent_name >}} in the sandbox, otherwise download the latest version. |
 | `"sandbox"` | Use the version of {{< meta agent_name >}} in the sandbox (raises `RuntimeError` if not available in the sandbox) |
-| `"latest"` | Download and use the very latest version. |
+| `"latest"` | Download and use the newest release that is at least 7 days old. |
 | `"x.x.x-preview.y"` | Download and use a specific version number. |
 
 : {tbl-colwidths=\[25,75\]}
+
+{{< meta agent_name >}} is installed with `npm install` on the host and then copied to the sandbox. The install uses only releases that have been on npm for at least 7 days, for {{< meta agent_name >}} and for each of its dependencies. A specific version that is less than 7 days old fails to install. Package install scripts do not run.
 
 {{< include _snippets/agent_installation.md >}}
 

@@ -7,10 +7,12 @@ and/or npm packages installed in sandboxes.
 import json
 import lzma
 import os
+import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 
 from inspect_ai.util import SandboxEnvironment, concurrency
@@ -20,6 +22,15 @@ from .download import download_file
 from .sandbox import SANDBOX_INSTALL_DIR, SandboxPlatform, bash_command, sandbox_exec
 
 NODE_VERSION = "20.11.0"
+
+NPM_RELEASE_COOLDOWN = timedelta(days=7)
+"""How long an npm release must be public before it is installed on the host.
+
+Applies to every package in the installed tree. A compromised or broken
+release is usually found and unpublished within this time.
+"""
+
+_STABLE_SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
 async def ensure_node_available(
@@ -101,8 +112,19 @@ async def _download_and_install_node(
     return node_path
 
 
+def npm_cooldown_cutoff() -> datetime:
+    """Return the newest publish time an npm install may use (whole seconds)."""
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    return now - NPM_RELEASE_COOLDOWN
+
+
 def resolve_npm_package_version(package: str) -> str:
-    """Get the latest version of an npm package from the registry.
+    """Get the newest release of an npm package that is past the cooldown.
+
+    Picks the highest stable version, no higher than the ``latest`` dist-tag,
+    published at or before ``npm_cooldown_cutoff()``. This is the version
+    ``npm install --before`` selects for ``latest``; ``npm view`` ignores
+    ``--before``, so the choice is made here.
 
     Requires ``npm`` to be available on the host.
     """
@@ -113,14 +135,50 @@ def resolve_npm_package_version(package: str) -> str:
             "your PATH."
         )
     result = subprocess.run(
-        ["npm", "view", package, "version"],
+        ["npm", "view", package, "time", "dist-tags", "--json"],
         capture_output=True,
         text=True,
         timeout=30,
     )
     if result.returncode != 0:
         raise RuntimeError(f"Failed to resolve version of {package}: {result.stderr}")
-    return result.stdout.strip()
+    packument = json.loads(result.stdout)
+    cutoff = npm_cooldown_cutoff()
+    version = _newest_release_before(
+        packument["time"], packument["dist-tags"]["latest"], cutoff
+    )
+    if version is None:
+        raise RuntimeError(
+            f"No release of {package} up to its latest version "
+            f"({packument['dist-tags']['latest']}) was published before "
+            f"{cutoff.isoformat()} (the {NPM_RELEASE_COOLDOWN.days}-day cooldown)."
+        )
+    return version
+
+
+def _newest_release_before(
+    publish_times: dict[str, str], latest: str, cutoff: datetime
+) -> str | None:
+    latest_key = _semver_key(re.split(r"[-+]", latest)[0])
+    if latest_key is None:
+        raise RuntimeError(f"Unexpected latest dist-tag version: {latest}")
+    candidates = [
+        (key, version)
+        for version, published in publish_times.items()
+        if (key := _semver_key(version)) is not None
+        and key <= latest_key
+        and datetime.fromisoformat(published.replace("Z", "+00:00")) <= cutoff
+    ]
+    return max(candidates)[1] if candidates else None
+
+
+def _semver_key(version: str) -> tuple[int, int, int] | None:
+    """Return a sort key for a stable ``X.Y.Z`` version, or None otherwise."""
+    match = _STABLE_SEMVER.match(version)
+    if match is None:
+        return None
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch)
 
 
 def create_npm_bundle(
@@ -128,7 +186,6 @@ def create_npm_bundle(
     version: str,
     platform: SandboxPlatform,
     cache_name: str,
-    ignore_scripts: bool = False,
 ) -> bytes:
     """Create an npm package bundle with dependencies for the target platform.
 
@@ -136,22 +193,28 @@ def create_npm_bundle(
     directory into a tarball.  Uses ``--os`` and ``--cpu`` to get native
     modules for the sandbox architecture.  Results are cached locally.
 
+    The install passes ``--before`` with ``npm_cooldown_cutoff()``, so every
+    package in the tree is a release at least ``NPM_RELEASE_COOLDOWN`` old;
+    a ``version`` published after the cutoff fails to install. It also
+    passes ``--ignore-scripts``: install scripts would run on the host and
+    build for the host's platform, not the sandbox's. The agent CLIs
+    bundled with this need none (gemini-cli's optional ``node-pty`` and
+    ``@github/keytar`` builds are unused; it loads the prebuilt
+    ``@lydell/node-pty`` package instead).
+
     Args:
         package: npm package name (e.g. ``"@google/gemini-cli"``).
         version: Exact semver version string.
         platform: Target sandbox platform.
         cache_name: Subdirectory name inside the package cache for
             storing the tarball (also used as the cache-key prefix).
-        ignore_scripts: If ``True``, pass ``--ignore-scripts`` so package
-            lifecycle scripts (notably ``postinstall``) do not run on the
-            host. Useful when the postinstall is host-platform-specific
-            and must instead run inside the sandbox after extraction.
     """
     cpu = platform.split("-")[1]
 
     cache_dir = package_cache_dir(cache_name)
-    suffix = "-noscripts" if ignore_scripts else ""
-    cache_path = cache_dir / f"{cache_name}-{version}-{platform}{suffix}.tar.gz"
+    # bundles cached before the cooldown and --ignore-scripts have no suffix,
+    # so they are rebuilt rather than reused
+    cache_path = cache_dir / f"{cache_name}-{version}-{platform}-noscripts.tar.gz"
 
     if cache_path.exists():
         with open(cache_path, "rb") as f:
@@ -177,6 +240,7 @@ def create_npm_bundle(
         with open(package_json_path, "w") as f:
             json.dump(package_json, f)
 
+        before = npm_cooldown_cutoff().isoformat()
         npm_cmd = [
             "npm",
             "install",
@@ -186,9 +250,10 @@ def create_npm_bundle(
             "linux",
             "--cpu",
             cpu,
+            "--ignore-scripts",
+            "--before",
+            before,
         ]
-        if ignore_scripts:
-            npm_cmd.append("--ignore-scripts")
 
         result = subprocess.run(
             npm_cmd,
@@ -200,7 +265,9 @@ def create_npm_bundle(
 
         if result.returncode != 0:
             raise RuntimeError(
-                f"Failed to run npm install for {package}@{version}:\n"
+                f"Failed to run npm install for {package}@{version} with "
+                f"releases published before {before} "
+                f"(the {NPM_RELEASE_COOLDOWN.days}-day cooldown):\n"
                 f"stdout: {result.stdout}\n"
                 f"stderr: {result.stderr}"
             )
