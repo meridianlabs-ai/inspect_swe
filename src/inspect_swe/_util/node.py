@@ -119,11 +119,12 @@ def resolve_npm_package_version(package: str) -> str:
     """Get the version of an npm package's ``latest`` tag, as of the cooldown.
 
     Asks npm which version ``{package}@latest`` resolves to with ``--before``
-    set to ``npm_cooldown_cutoff()``, the same choice ``npm install --before``
-    makes: the newest release no higher than ``latest`` that was published
-    before the cutoff and is still published, preferring versions that are
-    not deprecated. ``npm view`` ignores ``--before``, so this uses
-    ``npm pack --dry-run``, which reads the package without writing it.
+    set to ``npm_cooldown_cutoff()``. This is the choice ``npm install
+    --before`` makes, so unpublished releases and prereleases are skipped.
+    ``npm view`` ignores ``--before``, so this uses ``npm pack --dry-run``,
+    which reads the package without writing it. It runs in an empty
+    directory, like ``create_npm_bundle``, so a project ``.npmrc`` in the
+    caller's working directory applies to neither.
 
     Requires ``npm`` to be available on the host.
     """
@@ -134,21 +135,23 @@ def resolve_npm_package_version(package: str) -> str:
             "your PATH."
         )
     before = npm_cooldown_cutoff().isoformat()
-    result = subprocess.run(
-        [
-            "npm",
-            "pack",
-            f"{package}@latest",
-            "--dry-run",
-            "--json",
-            "--ignore-scripts",
-            "--before",
-            before,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(
+            [
+                "npm",
+                "pack",
+                f"{package}@latest",
+                "--dry-run",
+                "--json",
+                "--ignore-scripts",
+                "--before",
+                before,
+            ],
+            cwd=tmpdir,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
     if result.returncode != 0:
         raise RuntimeError(
             f"Failed to resolve version of {package} from releases published "

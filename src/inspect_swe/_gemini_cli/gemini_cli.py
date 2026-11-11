@@ -152,7 +152,8 @@ def gemini_cli(
         version: Version of gemini cli to use. One of:
             - "auto": Use any available version in sandbox, otherwise download latest
             - "sandbox": Use sandbox version (raises RuntimeError if not available)
-            - "stable"/"latest": Download and use the latest version
+            - "stable"/"latest": Download and use the newest release that is
+              at least 7 days old
             - "x.x.x": Download and use a specific version
         debug: Trace all debug output.
     """

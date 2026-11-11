@@ -51,7 +51,7 @@ By default, the agent will download the current stable version of {{< meta agent
 
 | Option | Description |
 |------------------------------------|------------------------------------|
-| `"auto"` | Use any available version of {{< meta agent_name >}} in the sandbox, otherwise download the latest version. |
+| `"auto"` | Use any available version of {{< meta agent_name >}} in the sandbox, otherwise download the same version as `"latest"`. |
 | `"sandbox"` | Use the version of {{< meta agent_name >}} in the sandbox (raises `RuntimeError` if not available in the sandbox) |
 | `"latest"` | Download and use the newest release that is at least 7 days old. |
 | `"x.x.x"` | Download and use a specific version number. |

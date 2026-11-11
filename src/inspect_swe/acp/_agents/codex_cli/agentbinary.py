@@ -6,6 +6,7 @@ caching), and copies both into each sandbox.
 
 import logging
 
+import anyio
 from inspect_ai.util import SandboxEnvironment, concurrency
 
 from inspect_swe._util.node import (
@@ -54,7 +55,9 @@ async def _ensure_acp_installed(
         return acp_binary
 
     async with concurrency("codex-acp-install", 1, visible=False):
-        version = resolve_npm_package_version(_ACP_ADAPTER_PACKAGE)
+        version = await anyio.to_thread.run_sync(
+            resolve_npm_package_version, _ACP_ADAPTER_PACKAGE
+        )
         bundle_data = create_npm_bundle(
             package=_ACP_ADAPTER_PACKAGE,
             version=version,

@@ -1,8 +1,8 @@
 """In-process cache for upstream version resolution.
 
 Agents that install from npm resolve their version on every sample, so
-without caching a single multi-sample eval runs one ``npm view`` registry
-request per sample.
+without caching a single multi-sample eval runs one npm registry lookup
+per sample.
 
 Agents installed via ``AgentBinarySource`` have an equivalent cache in
 ``agentbinary.download_agent_binary_async``.
