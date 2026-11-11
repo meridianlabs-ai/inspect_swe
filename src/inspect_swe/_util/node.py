@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 
@@ -28,6 +29,8 @@ NPM_RELEASE_COOLDOWN = timedelta(days=7)
 Applies to every package in the installed tree. A compromised or broken
 release is usually found and unpublished within this time.
 """
+
+_LATEST_BUNDLE_MAX_AGE = timedelta(days=1).total_seconds()
 
 
 async def ensure_node_available(
@@ -115,52 +118,6 @@ def npm_cooldown_cutoff() -> datetime:
     return now - NPM_RELEASE_COOLDOWN
 
 
-def resolve_npm_package_version(package: str) -> str:
-    """Get the version of an npm package's ``latest`` tag, as of the cooldown.
-
-    Asks npm which version ``{package}@latest`` resolves to with ``--before``
-    set to ``npm_cooldown_cutoff()``. This is the choice ``npm install
-    --before`` makes, so unpublished releases and prereleases are skipped.
-    ``npm view`` ignores ``--before``, so this uses ``npm pack --dry-run``,
-    which reads the package without writing it. It runs in an empty
-    directory, like ``create_npm_bundle``, so a project ``.npmrc`` in the
-    caller's working directory applies to neither.
-
-    Requires ``npm`` to be available on the host.
-    """
-    if not shutil.which("npm"):
-        raise RuntimeError(
-            f"npm is required on the host to resolve the version of {package}. "
-            "Please install Node.js (https://nodejs.org/) and ensure npm is on "
-            "your PATH."
-        )
-    before = npm_cooldown_cutoff().isoformat()
-    with tempfile.TemporaryDirectory() as tmpdir:
-        result = subprocess.run(
-            [
-                "npm",
-                "pack",
-                f"{package}@latest",
-                "--dry-run",
-                "--json",
-                "--ignore-scripts",
-                "--before",
-                before,
-            ],
-            cwd=tmpdir,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to resolve version of {package} from releases published "
-            f"before {before} (the {NPM_RELEASE_COOLDOWN.days}-day cooldown): "
-            f"{result.stderr}"
-        )
-    return str(json.loads(result.stdout)[0]["version"])
-
-
 def create_npm_bundle(
     package: str,
     version: str,
@@ -173,18 +130,20 @@ def create_npm_bundle(
     directory into a tarball.  Uses ``--os`` and ``--cpu`` to get native
     modules for the sandbox architecture.  Results are cached locally.
 
-    The install passes ``--before`` with ``npm_cooldown_cutoff()``, so every
-    package in the tree is a release at least ``NPM_RELEASE_COOLDOWN`` old;
-    a ``version`` published after the cutoff fails to install. It also
-    passes ``--ignore-scripts``: install scripts would run on the host and
-    build for the host's platform, not the sandbox's. The agent CLIs
-    bundled with this need none (gemini-cli's optional ``node-pty`` and
-    ``@github/keytar`` builds are unused; it loads the prebuilt
-    ``@lydell/node-pty`` package instead).
+    The install passes ``--before`` with ``npm_cooldown_cutoff()``, so npm
+    picks every package in the tree, ``latest`` included, from releases at
+    least ``NPM_RELEASE_COOLDOWN`` old; an exact ``version`` published after
+    the cutoff fails to install. It also passes ``--ignore-scripts``:
+    install scripts would run on the host and build for the host's platform,
+    not the sandbox's. The agent CLIs bundled with this need none
+    (gemini-cli's optional ``node-pty`` and ``@github/keytar`` builds are
+    unused; it loads the prebuilt ``@lydell/node-pty`` package instead).
 
     Args:
         package: npm package name (e.g. ``"@google/gemini-cli"``).
-        version: Exact semver version string.
+        version: Exact version, or ``"latest"``. A cached ``"latest"`` bundle
+            is rebuilt after a day, to pick up releases that have since
+            passed the cooldown.
         platform: Target sandbox platform.
         cache_name: Subdirectory name inside the package cache for
             storing the tarball (also used as the cache-key prefix).
@@ -196,7 +155,10 @@ def create_npm_bundle(
     # so they are rebuilt rather than reused
     cache_path = cache_dir / f"{cache_name}-{version}-{platform}-noscripts.tar.gz"
 
-    if cache_path.exists():
+    if cache_path.exists() and (
+        version != "latest"
+        or time.time() - cache_path.stat().st_mtime < _LATEST_BUNDLE_MAX_AGE
+    ):
         with open(cache_path, "rb") as f:
             return f.read()
 
@@ -263,8 +225,12 @@ def create_npm_bundle(
         bundle_data = buffer.getvalue()
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    with open(cache_path, "wb") as f:
+    # the "latest" bundle is rewritten daily; replace it atomically so another
+    # process never reads a partial file
+    partial_path = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.partial")
+    with open(partial_path, "wb") as f:
         f.write(bundle_data)
+    os.replace(partial_path, cache_path)
 
     return bundle_data
 

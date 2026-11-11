@@ -47,7 +47,7 @@ For example, here we specify a custom system prompt:
 
 ## Installation
 
-By default, the agent will download the current stable version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:
+By default, the agent will download the `"latest"` version of {{< meta agent_name >}} described below and copy it to the sandbox. You can override this behaviour using the `version` option:
 
 | Option | Description |
 |------------------------------------|------------------------------------|
