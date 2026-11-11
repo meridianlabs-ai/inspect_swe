@@ -113,3 +113,16 @@ jobs:
       - name: Publish to PyPI
         if: ${{ github.event_name == 'release' || inputs.confirm == 'yes' }}
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  # Deploy the docs site for this release once the package is on PyPI.
+  docs:
+    needs: publish
+    if: ${{ github.event_name == 'release' }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: meridianlabs-ai/actions/.github/workflows/publish-docs.yml@62bc8360498822ef3eab7c9584d1bd523de3febf # main
+    with:
+      python-version: "3.14"
+      extras: doc
