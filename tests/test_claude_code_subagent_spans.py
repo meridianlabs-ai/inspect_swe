@@ -12,7 +12,7 @@ from typing import Any
 
 import anyio
 import pytest
-from inspect_ai.event import SpanBeginEvent
+from inspect_ai.event import CompactionEvent, SpanBeginEvent
 from inspect_ai.event._model import ModelEvent
 from inspect_ai.log._transcript import Transcript, init_transcript, transcript
 from inspect_ai.model import GenerateConfig, ModelOutput, get_model
@@ -216,3 +216,24 @@ async def test_generates_through_the_model_are_attributed_once_each(
         [(sub, "agent-toolu_1"), (main, outer), (sub, "agent-toolu_1")]
     )
     assert len(attributed) == 3
+
+
+def test_stream_json_compact_boundary_records_tokens_before(monkeypatch: Any) -> None:
+    stub = _TranscriptStub()
+    monkeypatch.setattr(consumer_module, "transcript", lambda: stub)
+    # a compact_boundary line as `--output-format stream-json` prints it
+    LiveConsumer(_MODELS).process_jsonl_line(
+        {
+            "type": "system",
+            "subtype": "compact_boundary",
+            "session_id": "fb4c6404",
+            "compact_metadata": {
+                "trigger": "auto",
+                "pre_tokens": 68303,
+                "post_tokens": 8082,
+            },
+        }
+    )
+    [event] = [e for e in stub.events if isinstance(e, CompactionEvent)]
+    assert event.tokens_before == 68303
+    assert event.metadata == {"trigger": "auto", "content": "Conversation compacted"}

@@ -851,11 +851,14 @@ class LiveConsumer(ModelEventSink):
         else:
             span_id = self.outer_span_id
 
-        compact_meta = raw.get("compactMetadata") or {}
+        # stream-json uses snake_case; camelCase session-file keys are a fallback
+        compact_meta = raw.get("compact_metadata") or raw.get("compactMetadata") or {}
         transcript()._event(
             CompactionEvent(
                 source="claude_code",
-                tokens_before=compact_meta.get("preTokens"),
+                tokens_before=compact_meta.get(
+                    "pre_tokens", compact_meta.get("preTokens")
+                ),
                 span_id=span_id,
                 metadata={
                     "trigger": compact_meta.get("trigger", "auto"),
