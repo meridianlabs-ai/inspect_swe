@@ -403,9 +403,16 @@ def build_gemini_settings(mcp_servers: Sequence[MCPServerConfig]) -> str:
             config = server.model_dump(
                 exclude={"name", "tools", "type"}, exclude_none=True
             )
-            # For HTTP transport, Gemini CLI uses 'httpUrl' field
-            if isinstance(server, MCPServerConfigHTTP) and "url" in config:
-                config["httpUrl"] = config.pop("url")
+            # For HTTP transport, Gemini CLI uses 'httpUrl' field. SSE servers
+            # keep 'url' and need an explicit type, since Gemini CLI treats a
+            # bare 'url' as streamable HTTP.
+            if isinstance(server, MCPServerConfigHTTP):
+                if server.type == "sse":
+                    config["type"] = "sse"
+                else:
+                    config["httpUrl"] = config.pop("url")
+            if server.tools != "all":
+                config["includeTools"] = list(server.tools)
             if "cwd" in config and not isinstance(config["cwd"], str):
                 config["cwd"] = str(config["cwd"])
             mcp_servers_config[server.name] = config
