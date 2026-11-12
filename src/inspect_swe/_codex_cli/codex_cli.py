@@ -59,6 +59,7 @@ from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.agentcontext import classify_filter
+from .._util.identity import refuse_centaur_in_scope, resolve_agent_identity
 from ._events.consumer import CodexConsumer
 from .agentbinary import (
     codex_alignment_catalog,
@@ -210,7 +211,10 @@ def codex_cli(
         home_dir: Home directory to use for codex cli. If set, AGENTS.md, skills, and the MCP configuration will be written here.
         cwd: Working directory to run codex cli within.
         env: Environment variables to set for codex cli
-        user: User to execute codex cli with.
+        user: User to execute codex cli with. Inside a sandbox identity scope
+            (such as inspect_swarm's users isolation), codex cli runs as the scope's
+            user, in the scope's working directory unless `cwd` is set, and
+            `centaur` mode raises an error.
         sandbox: Optional sandbox environment name.
         version: Version of codex cli to use. One of:
             - "auto": Use any available version of codex cli in the sandbox, otherwise download the latest version.
@@ -379,6 +383,12 @@ def codex_cli(
     bridged_tools_specs = resolve_bridged_tools(bridged_tools)
 
     async def execute(state: AgentState) -> AgentState:
+        # inside a sandbox identity scope, run as the scope's user, in its
+        # working directory and with its home, resolved before any setup
+        if centaur is not False:
+            refuse_centaur_in_scope("codex_cli", sandbox)
+        identity = await resolve_agent_identity(sandbox, user, cwd)
+
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "codex_cli_model_port"
         port = store().get(MODEL_PORT, 3000) + 1
@@ -426,7 +436,7 @@ def codex_cli(
             async def probe_codex_version(binary: str) -> str | None:
                 if binary not in probed_versions:
                     probed_versions[binary] = await codex_binary_version(
-                        sandbox_env(sandbox), binary, user
+                        sandbox_env(sandbox), binary, identity.user
                     )
                 return probed_versions[binary]
 
@@ -434,7 +444,7 @@ def codex_cli(
             codex_binary = await ensure_agent_binary_installed(
                 codex_cli_binary_source(),
                 version,
-                user,
+                identity.user,
                 sandbox_env(sandbox),
                 sandbox_version=probe_codex_version,
             )
@@ -490,7 +500,7 @@ def codex_cli(
                     bwrap_probe = await sandbox_exec(
                         sbox,
                         "uname -s; command -v bwrap || echo __MISSING__",
-                        user=user,
+                        user=identity.user,
                     )
                     store().set(BWRAP_PROBE, bwrap_probe)
                 probe_lines = [ln for ln in bwrap_probe.splitlines() if ln.strip()]
@@ -517,7 +527,9 @@ def codex_cli(
                         )
 
             # resolve working directory (home dir if sandbox default is '/')
-            agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
+            agent_cwd = await resolve_agent_cwd(
+                sbox, identity.user, identity.cwd, identity.home_env
+            )
 
             # align Codex's `--model` slug to the real bridged model, and fail
             # before launch if code mode would deny every bridged tool call
@@ -536,9 +548,13 @@ def codex_cli(
             else:
                 # Resolve ~ and $VARS inside the sandbox
                 codex_home = await sandbox_exec(
-                    sbox, f'eval echo "{home_dir}"', user=user, cwd=agent_cwd
+                    sbox,
+                    f'eval echo "{home_dir}"',
+                    user=identity.user,
+                    cwd=agent_cwd,
+                    env=identity.home_env,
                 )
-            await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=user)
+            await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=identity.user)
 
             # location for agents_md
             def codex_agents_md() -> str:
@@ -555,17 +571,21 @@ def codex_cli(
                     return join_path(codex_home, CONFIG_TOML)
                 else:
                     dir = join_path(agent_cwd, ".codex")
-                    await sandbox_exec(sbox, cmd=f"mkdir -p {dir}", user=user)
+                    await sandbox_exec(sbox, cmd=f"mkdir -p {dir}", user=identity.user)
                     return join_path(dir, CONFIG_TOML)
 
             # write system messages to AGENTS.md
             if system_messages:
                 await sbox.write_file(codex_agents_md(), "\n\n".join(system_messages))
 
-            # install skills
+            # install skills (inside a scope, an omitted user installs them
+            # as the scope's user)
             if resolved_skills is not None:
                 await install_skills(
-                    resolved_skills, sbox, user, join_path(codex_home, "skills")
+                    resolved_skills,
+                    sbox,
+                    None if identity.scoped else identity.user,
+                    join_path(codex_home, "skills"),
                 )
 
             prompt, has_assistant_response = build_user_prompt(
@@ -575,7 +595,7 @@ def codex_cli(
             # stage input images as files in the sandbox (empty if the input
             # has no images); attached to the prompt via `--image` below
             image_files = await _stage_prompt_images(
-                collect_user_images(state.messages), sbox, user, codex_home
+                collect_user_images(state.messages), sbox, identity.user, codex_home
             )
 
             # build agent cmd
@@ -678,12 +698,16 @@ def codex_cli(
             await sbox.write_file(await codex_config_toml(), to_toml(toml_config))
 
             # setup agent env
-            agent_env = {
-                "CODEX_HOME": codex_home,
-                "OPENAI_API_KEY": "api-key",
-                "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
-                "RUST_LOG": "warning",
-            } | (env or {})
+            agent_env = (
+                (identity.home_env or {})
+                | {
+                    "CODEX_HOME": codex_home,
+                    "OPENAI_API_KEY": "api-key",
+                    "OPENAI_BASE_URL": f"http://localhost:{bridge.port}/v1",
+                    "RUST_LOG": "warning",
+                }
+                | (env or {})
+            )
 
             # Compute bridged HTTP configs once at the outer scope so both the
             # centaur and non-centaur paths gate on the same set. Codex closes
@@ -766,7 +790,10 @@ def codex_cli(
                         cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
                         + agent_cmd,
                         options=ExecRemoteAwaitableOptions(
-                            cwd=agent_cwd, env=agent_env, user=user, concurrency=False
+                            cwd=agent_cwd,
+                            env=agent_env,
+                            user=identity.user,
+                            concurrency=False,
                         ),
                         stream=False,
                     )

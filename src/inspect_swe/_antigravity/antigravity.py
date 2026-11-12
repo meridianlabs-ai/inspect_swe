@@ -31,6 +31,7 @@ from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from inspect_swe._util.agentcontext import classify_filter, static_root_classifier
 from inspect_swe._util.bridged_tools import resolve_bridged_tools
+from inspect_swe._util.identity import refuse_sandbox_identity
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -328,6 +329,8 @@ def antigravity(
     bridged_tools_specs = resolve_bridged_tools(bridged_tools)
 
     async def execute(state: AgentState) -> AgentState:
+        refuse_sandbox_identity("antigravity()", sandbox)
+
         bridge_port = store().get(_BRIDGE_PORT_KEY, 3000) + 1
         store().set(_BRIDGE_PORT_KEY, bridge_port)
 

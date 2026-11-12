@@ -56,7 +56,10 @@ def bash_command(cmd: str) -> list[str]:
 
 
 async def resolve_agent_cwd(
-    sandbox: SandboxEnvironment, user: str | None, cwd: str | None
+    sandbox: SandboxEnvironment,
+    user: str | None,
+    cwd: str | None,
+    home_env: dict[str, str] | None = None,
 ) -> str:
     """Resolve the working directory to run an agent within.
 
@@ -75,6 +78,9 @@ async def resolve_agent_cwd(
     `sandbox.exec()` caller in every eval (bash tool, setup scripts,
     scorers, ...) rather than just sandbox agents, so the policy is
     applied here at the agent layer instead.
+
+    `home_env` (a `HOME` resolved from the user's passwd entry) is used for
+    the home directory fallback instead of the `HOME` the sandbox inherits.
     """
     if cwd is not None:
         if PurePosixPath(cwd).is_absolute():
@@ -84,7 +90,7 @@ async def resolve_agent_cwd(
     if working_dir != "/":
         return working_dir
     home_dir = await sandbox_exec(
-        sandbox, 'cd ~ 2>/dev/null && pwd || echo "/"', user=user
+        sandbox, 'cd ~ 2>/dev/null && pwd || echo "/"', user=user, env=home_env
     )
     if home_dir != "/":
         logger.info(
@@ -99,8 +105,13 @@ async def sandbox_exec(
     cmd: str,
     user: str | None = None,
     cwd: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> str:
-    result = await sandbox.exec(bash_command(cmd), user=user, cwd=cwd)
+    # env is passed only when given, so calls without it are unchanged
+    if env is None:
+        result = await sandbox.exec(bash_command(cmd), user=user, cwd=cwd)
+    else:
+        result = await sandbox.exec(bash_command(cmd), user=user, cwd=cwd, env=env)
     if not result.success:
         raise RuntimeError(f"Error executing sandbox command {cmd}: {result.stderr}")
     return result.stdout.strip()

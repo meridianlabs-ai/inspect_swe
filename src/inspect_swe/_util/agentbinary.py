@@ -8,6 +8,7 @@ import anyio
 from inspect_ai.log import transcript
 from inspect_ai.util import SandboxEnvironment, concurrency
 from inspect_ai.util import sandbox as sandbox_env
+from inspect_ai.util._sandbox.identity import sandbox_identity_active
 from pydantic import BaseModel
 
 from inspect_swe._util.trace import trace
@@ -21,6 +22,7 @@ from .sandbox import (
     detect_sandbox_platform,
     sandbox_exec,
 )
+from .shared_install import install_shared_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -354,12 +356,20 @@ async def ensure_agent_binary_installed(
         install_path = (
             f"{SANDBOX_INSTALL_DIR}/{source.binary}-{resolved_version}-{platform}"
         )
-        if package:
-            if source.package_entrypoint is None:
-                raise RuntimeError(
-                    f"{source.agent} resolved a package archive but the source "
-                    "does not define a package_entrypoint"
-                )
+        if package and source.package_entrypoint is None:
+            raise RuntimeError(
+                f"{source.agent} resolved a package archive but the source "
+                "does not define a package_entrypoint"
+            )
+        if sandbox_identity_active(sandbox):
+            # inside a sandbox identity scope every member runs this binary,
+            # so it is installed and verified as a shared artifact
+            entrypoint = source.package_entrypoint if package else None
+            await install_shared_artifact(
+                sandbox, install_path, binary_bytes, entrypoint
+            )
+            binary_path = f"{install_path}/{entrypoint}" if entrypoint else install_path
+        elif package:
             binary_path = f"{install_path}/{source.package_entrypoint}"
             # skip write + extract if this version's package is already
             # installed (probe as root to match the extraction below, so a
