@@ -23,12 +23,14 @@ from inspect_ai.model import (
     Model,
     ModelOutput,
 )
-from inspect_ai.tool import MCPServerConfig, ToolChoice, ToolInfo
+from inspect_ai.tool import MCPServerConfig, Tool, ToolChoice, ToolInfo
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
+from inspect_swe._util.agentcontext import classify_filter, static_root_classifier
+from inspect_swe._util.bridged_tools import resolve_bridged_tools
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -182,6 +184,13 @@ def _confine_declared_tools(
     return _filter
 
 
+def build_antigravity_filter(
+    filter: _ModelGenerateFilter | None,
+) -> _ModelGenerateFilter:
+    """Antigravity bridge filter: tool confinement + static root agent context."""
+    return classify_filter(_confine_declared_tools(filter), static_root_classifier)
+
+
 @dataclass(frozen=True, slots=True)
 class SDKExecutionSpec:
     command: list[str]
@@ -263,7 +272,7 @@ def antigravity(
     description: str = "Sandboxed Google Antigravity SDK coding agent.",
     system_prompt: str | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
-    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+    bridged_tools: Sequence[Tool | BridgedToolsSpec] | None = None,
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     model: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
@@ -291,6 +300,8 @@ def antigravity(
         mcp_servers: MCP servers to make available to the agent (HTTP configs;
             localharness reaches servers over streamable HTTP).
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
+            Each BridgedToolsSpec creates an MCP server; plain Tools are
+            grouped into one MCP server named `tools`.
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
         model: Model name to use for the inspect bridge (defaults to the task model).
@@ -300,8 +311,8 @@ def antigravity(
         filter: Filter for intercepting bridged model requests. Note this agent's
             filter is typed Model-first (the non-deprecated GenerateFilter form);
             the deprecated str-first form is not accepted, unlike sibling agents,
-            because the confinement wrapper dispatches on the outermost filter's
-            first-parameter annotation.
+            because the confinement wrapper invokes the user filter Model-first
+            directly, with no legacy-dispatch branching of its own.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         user: Sandbox user to run the SDK as (defaults to the sandbox default user).
         cwd: Working directory for the SDK (defaults to the user's home directory).
@@ -313,6 +324,9 @@ def antigravity(
     """
     bridge_model = f"inspect/{model}" if model else "inspect"
 
+    # resolve plain Tools into specs once, so bad input fails at construction
+    bridged_tools_specs = resolve_bridged_tools(bridged_tools)
+
     async def execute(state: AgentState) -> AgentState:
         bridge_port = store().get(_BRIDGE_PORT_KEY, 3000) + 1
         store().set(_BRIDGE_PORT_KEY, bridge_port)
@@ -321,11 +335,11 @@ def antigravity(
             state,
             model=bridge_model,
             model_aliases=model_aliases,
-            filter=_confine_declared_tools(filter),
+            filter=build_antigravity_filter(filter),
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             port=bridge_port,
-            bridged_tools=bridged_tools,
+            bridged_tools=bridged_tools_specs,
             # granted unconditionally to preserve today's behaviour; a grant is
             # inert unless the CLI declares a native web tool
             web_search=True,

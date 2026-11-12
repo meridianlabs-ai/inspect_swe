@@ -10,12 +10,17 @@ on:
       - "release/**"
   workflow_dispatch:
 
+# Every job here only reads the repo. State that rather than inheriting the
+# repo default.
+permissions:
+  contents: read
+
 jobs:
   # Detect whether anything outside docs changed, so the build matrix can be
   # skipped on documentation-only changes.
   #
   # The skip lives on the STEPS of each matrix job, not on the job itself. The
-  # `main` ruleset requires the versioned check names (`py-ruff (3.10)`, ...),
+  # `main` ruleset requires the versioned check names (`py-ruff (3.11)`, ...),
   # and a job skipped by a job-level `if` never expands its matrix: it reports a
   # single unversioned check (`py-ruff`), so the required contexts stay
   # "Expected" forever and a docs-only PR can never merge. With the condition on
@@ -30,6 +35,8 @@ jobs:
       build: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.code == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
@@ -45,106 +52,122 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.14"]
     steps:
       - if: needs.changes.outputs.build == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Ruff only reads the source, so the project itself does not install.
+      - if: needs.changes.outputs.build == 'true'
+        uses: ./.github/actions/uv-sync
+        with:
+          python-version: ${{ matrix.python-version }}
+          project-install: skip
+          extras: dev
       - name: Lint with Ruff
         if: needs.changes.outputs.build == 'true'
-        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        run: uv run --no-sync ruff check
       - name: Format with Ruff
         if: needs.changes.outputs.build == 'true'
-        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
-        with:
-          args: "format --check"
+        run: uv run --no-sync ruff format --check
+      - name: Minimize uv cache
+        if: ${{ !cancelled() && needs.changes.outputs.build == 'true' }}
+        run: uv cache prune --ci
 
   py-mypy:
     needs: changes
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.14"]
     steps:
       - if: needs.changes.outputs.build == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Python ${{ matrix.python-version }}
-        if: needs.changes.outputs.build == 'true'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          persist-credentials: false
+      - if: needs.changes.outputs.build == 'true'
+        uses: ./.github/actions/uv-sync
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Cache pip dependencies
-        if: needs.changes.outputs.build == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}-${{ matrix.python-version }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-      - name: Install dependencies
-        if: needs.changes.outputs.build == 'true'
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install .[dev]
+          extras: dev
       - name: Run mypy
         if: needs.changes.outputs.build == 'true'
-        run: |
-          mypy --python-executable "$(which python)"
+        run: uv run --no-sync mypy
+      - name: Minimize uv cache
+        if: ${{ !cancelled() && needs.changes.outputs.build == 'true' }}
+        run: uv cache prune --ci
 
   py-test:
     needs: changes
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.14"]
     steps:
       - if: needs.changes.outputs.build == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Python ${{ matrix.python-version }}
-        if: needs.changes.outputs.build == 'true'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          persist-credentials: false
+      - if: needs.changes.outputs.build == 'true'
+        uses: ./.github/actions/uv-sync
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Cache pip dependencies
-        if: needs.changes.outputs.build == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}-${{ matrix.python-version }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-      - name: Install dependencies
-        if: needs.changes.outputs.build == 'true'
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install .[dev]
+          extras: dev
       - name: Run tests
         if: needs.changes.outputs.build == 'true'
-        run: pytest
+        run: uv run --no-sync pytest
+      - name: Minimize uv cache
+        if: ${{ !cancelled() && needs.changes.outputs.build == 'true' }}
+        run: uv cache prune --ci
 
   py-build:
     needs: changes
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.14"]
     steps:
       - if: needs.changes.outputs.build == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Python ${{ matrix.python-version }}
-        if: needs.changes.outputs.build == 'true'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          persist-credentials: false
+      # The project's locked dependencies, not the project itself: the step
+      # after the build installs the wheel.
+      - if: needs.changes.outputs.build == 'true'
+        uses: ./.github/actions/uv-sync
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install build dependencies
+          project-install: skip
+      # The build toolchain that publish.yml uses, pinned with hashes, in its
+      # own environment. To update the file, see publish.yml. The default
+      # actions-cache matches the setup-uv that uv-sync ran; the hashes still
+      # pin every file.
+      - name: Install build toolchain
+        if: needs.changes.outputs.build == 'true'
+        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
+        with:
+          versions: hashed-requirements
+          python-version: ${{ matrix.python-version }}
+          requirements-file: scripts/build-dist/requirements.txt
+          package-format: wheels-only
+          environment-dir: ${{ runner.temp }}/build-venv
+      - name: Build package
+        id: build
         if: needs.changes.outputs.build == 'true'
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install build
-      - name: Build package
-        if: needs.changes.outputs.build == 'true'
-        run: python -m build
+          "$RUNNER_TEMP/build-venv/bin/python" -m build --no-isolation
+          wheels=(dist/*.whl)
+          [ ${#wheels[@]} -eq 1 ] && [ -f "${wheels[0]}" ] || { echo "::error::expected one wheel in dist/"; exit 1; }
+          echo "wheel=${wheels[0]}" >> "$GITHUB_OUTPUT"
       - name: Verify package
         if: needs.changes.outputs.build == 'true'
+        env:
+          WHEEL: ${{ steps.build.outputs.wheel }}
         run: |
-          python -m pip install dist/*.whl
-          python -c "import inspect_swe; print('Package imported successfully')"
+          uv pip install --no-deps "$WHEEL"
+          # -I so the import resolves to the installed wheel, not the checkout's src/.
+          .venv/bin/python -I -c "import inspect_swe; print('Package imported successfully')"
+      - name: Minimize uv cache
+        if: ${{ !cancelled() && needs.changes.outputs.build == 'true' }}
+        run: uv cache prune --ci

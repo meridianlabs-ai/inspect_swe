@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents working in this repository.
 
 ## Build/Lint/Test Commands
 
-- Install dev environment: `pip install -e ".[dev]"`, or with uv: `make sync`
+- Install dev environment: `uv sync --locked --extra dev` (uv 0.13.4 or later)
 - Format, lint, and type check: `make check` (runs `ruff format`, `ruff check --fix`, `mypy`)
 - Run fast tests: `make test` (or `pytest`)
 - Run a single test: `pytest tests/test_file.py::test_name -v`
@@ -12,7 +12,12 @@ This file provides guidance to AI coding agents working in this repository.
 ## Type Checking
 
 - mypy runs with `strict = true` over `src` and `tests`. All functions need type annotations, and an unused `type: ignore` comment is a hard error (`warn_unused_ignores`).
-- CI installs the latest unpinned mypy, so a new mypy release can turn `main` red with no code change (e.g. a `type: ignore` that a newer mypy considers unused). If the mypy check fails on a line your diff didn't touch, check whether `main` has the same failure before debugging your change — and if so, fix it in your PR and note that it was pre-existing.
+- CI installs the mypy that `uv.lock` pins, so a mypy release reaches CI only through a `uv.lock` update (usually a Dependabot PR). If the mypy check fails on a line your diff didn't touch, check whether `main` has the same failure before debugging your change — and if so, fix it in your PR and note that it was pre-existing.
+
+## Dependencies
+
+- After changing dependencies in `pyproject.toml`, run `uv lock` and commit `uv.lock`; CI fails on a stale lock. Don't override the 7-day `exclude-newer` cooldown.
+- Every other dependency rule and procedure (the lock file, the cooldown, inspect_ai tracked from `main`, the build toolchain) is in [DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions. Read it before you change dependencies, `[tool.uv]` or `.github/dependabot.yml`.
 
 ## Test Suite Topology
 

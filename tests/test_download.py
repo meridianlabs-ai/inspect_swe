@@ -13,6 +13,7 @@ from inspect_swe import (
     resolve_agent_version,
 )
 from inspect_swe._util.download import download_file
+from inspect_swe._util.sandbox import SandboxPlatform
 
 
 @pytest.mark.slow
@@ -111,6 +112,9 @@ def test_resolve_agent_version_rejects_unknown_agent(version: str) -> None:
         (None, "linux-x64"),  # Latest
         ("1.17.4", "linux-arm64"),
         ("1.17.4", "linux-x64"),
+        # a musl target must resolve across both musllinux ABI levels; as of today
+        # no single level is sufficient for this dependency tree
+        ("2.3.0", "linux-x64-musl"),
     ],
 )
 def test_mini_swe_agent_wheels_download(
@@ -159,10 +163,76 @@ def test_mini_swe_agent_invalid_version() -> None:
 
 def test_mini_swe_agent_unsupported_platform() -> None:
     """Test that unsupported platforms raise appropriate errors."""
-    from inspect_swe._util.agentwheel import platform_to_pip_platform
+    from inspect_swe._util.agentwheel import platform_to_pip_platforms
 
     with pytest.raises(ValueError, match="Unsupported platform"):
-        platform_to_pip_platform("unsupported-platform")  # type: ignore[arg-type]
+        platform_to_pip_platforms("unsupported-platform")  # type: ignore[arg-type]
+
+
+def test_platform_to_pip_platforms_returns_a_copy() -> None:
+    """Callers cannot mutate the shared PIP_PLATFORMS entry."""
+    from inspect_swe._util.agentwheel import PIP_PLATFORMS, platform_to_pip_platforms
+
+    platform_to_pip_platforms("linux-x64-musl").append("musllinux_9_9_x86_64")
+
+    assert "musllinux_9_9_x86_64" not in PIP_PLATFORMS["linux-x64-musl"]
+
+
+@pytest.mark.parametrize(
+    "platform,expected",
+    [
+        ("linux-x64-musl", ["musllinux_1_1_x86_64", "musllinux_1_2_x86_64"]),
+        ("linux-arm64-musl", ["musllinux_1_1_aarch64", "musllinux_1_2_aarch64"]),
+    ],
+    ids=["x64", "arm64"],
+)
+def test_musl_platforms_keep_both_abi_levels(
+    platform: SandboxPlatform, expected: list[str]
+) -> None:
+    """Pin the musl tag lists so dropping a level fails PR CI.
+
+    Resolution only actually breaks against PyPI, which the --runslow matrix covers
+    but PR CI does not run, so this deliberately restates the literals.
+    """
+    from inspect_swe._util.agentwheel import platform_to_pip_platforms
+
+    assert platform_to_pip_platforms(platform) == expected
+
+
+@pytest.mark.parametrize(
+    "platform", ["linux-x64", "linux-x64-musl"], ids=["glibc", "musl"]
+)
+def test_pip_download_passes_every_platform_tag(
+    platform: SandboxPlatform, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every tag for the target platform reaches pip as its own --platform flag."""
+    from inspect_swe._util import agentwheel
+
+    monkeypatch.setattr(agentwheel, "_ensure_pip_available", lambda: None)
+    monkeypatch.setattr(agentwheel, "_wheels_cache_dir", lambda _: tmp_path)
+
+    captured: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        captured.append(cmd)
+        # pip is expected to have populated --dest with the resolved wheels
+        dest = Path(cmd[cmd.index("--dest") + 1])
+        (dest / "mini_swe_agent-2.3.0-py3-none-any.whl").write_bytes(b"wheel")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("inspect_swe._util.agentwheel.subprocess.run", fake_run)
+
+    agentwheel.download_wheels_tarball(
+        package_name="mini-swe-agent",
+        version="2.3.0",
+        platform=platform,
+        python_version="311",
+    )
+
+    assert len(captured) == 1
+    cmd = captured[0]
+    tags = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--platform"]
+    assert tags == agentwheel.platform_to_pip_platforms(platform)
 
 
 def test_mini_swe_agent_pip_failure_preserves_error(
@@ -233,6 +303,58 @@ def test_mini_swe_agent_cache_hit(wheels_cache_cleanup: Path) -> None:
     assert cache_file.stat().st_atime >= cache_mtime
 
 
+def test_github_api_headers_uses_token_for_api_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect_swe._util.download import github_api_headers
+
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    headers = github_api_headers("https://api.github.com/repos/openai/codex/releases")
+    assert headers == {"Authorization": "Bearer test-token"}
+
+
+def test_github_api_headers_falls_back_to_gh_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect_swe._util.download import github_api_headers
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("GH_TOKEN", "gh-token")
+    headers = github_api_headers("https://api.github.com/repos/openai/codex/releases")
+    assert headers == {"Authorization": "Bearer gh-token"}
+
+
+def test_github_api_headers_empty_without_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect_swe._util.download import github_api_headers
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    assert github_api_headers("https://api.github.com/repos/openai/codex") == {}
+
+
+def test_github_api_headers_never_sent_to_other_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect_swe._util.download import github_api_headers
+
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    assert github_api_headers("https://objects.githubusercontent.com/asset") == {}
+    assert github_api_headers("https://raw.githubusercontent.com/x/y") == {}
+    assert github_api_headers("https://code.kimi.com/kimi-code/latest.json") == {}
+    assert github_api_headers("https://evil.example.com/api.github.com/x") == {}
+
+
+def test_github_api_headers_never_sent_over_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inspect_swe._util.download import github_api_headers
+
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    assert github_api_headers("http://api.github.com/repos/openai/codex") == {}
+
+
 def test_ensure_pip_available_noop_when_present() -> None:
     from inspect_swe._util.agentwheel import _ensure_pip_available
 
@@ -269,6 +391,7 @@ def test_ensure_pip_available_bootstraps_when_missing() -> None:
 
 def _download_with_transport(
     handler: Callable[[httpx.Request], httpx.Response],
+    url: str = "https://example.com/file",
 ) -> bytes:
     """Run download_file against a mock transport with zero retry delays."""
     transport = httpx.MockTransport(handler)
@@ -281,7 +404,7 @@ def _download_with_transport(
         patch("httpx.AsyncClient", client_with_mock_transport),
         patch("inspect_swe._util.download._RETRY_DELAYS", (0.0, 0.0, 0.0)),
     ):
-        return asyncio.run(download_file("https://example.com/file"))
+        return asyncio.run(download_file(url))
 
 
 def test_download_file_retries_transient_errors() -> None:
@@ -326,6 +449,25 @@ def test_download_file_does_not_retry_client_errors() -> None:
     with pytest.raises(httpx.HTTPStatusError):
         _download_with_transport(handler)
     assert calls == 1
+
+
+def test_download_file_retries_unauthenticated_after_bad_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 401 from a bad token falls back to an unauthenticated request."""
+    monkeypatch.setenv("GITHUB_TOKEN", "expired-token")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    auth_headers: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth_headers.append(request.headers.get("Authorization"))
+        if "Authorization" in request.headers:
+            return httpx.Response(401)
+        return httpx.Response(200, content=b"ok")
+
+    url = "https://api.github.com/repos/openai/codex/releases/latest"
+    assert _download_with_transport(handler, url) == b"ok"
+    assert auth_headers == ["Bearer expired-token", None]
 
 
 def test_download_file_raises_after_retries_exhausted() -> None:

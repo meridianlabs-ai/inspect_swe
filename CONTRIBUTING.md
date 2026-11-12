@@ -4,27 +4,32 @@ Thanks for your interest in contributing to Inspect SWE, a suite of software eng
 
 ## Development setup
 
-Inspect SWE requires Python 3.10 or later. Clone the repository and install it in
-editable mode with the `[dev]` optional dependencies:
+Inspect SWE requires Python 3.11 or later and [uv](https://docs.astral.sh/uv/)
+0.13.4 or later. Clone the repository and install it in editable mode with the
+`[dev]` optional dependencies:
 
 ```bash
 git clone https://github.com/meridianlabs-ai/inspect_swe
 cd inspect_swe
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 ```
 
-If you use [uv](https://docs.astral.sh/uv/), you can instead sync all groups and
-extras with:
-
-```bash
-make sync
-```
+`uv sync --locked` creates `.venv` with the exact versions in `uv.lock`, the `[dev]` extra included, and installs Inspect SWE editable. It fails if `uv.lock` is out of date with `pyproject.toml`. Run Python commands from the environment: `uv run <command>`, `.venv/bin/<command>`, or `source .venv/bin/activate`. `uv sync --locked` without `--extra dev` removes the dev tools again.
 
 To enable the pre-commit hooks:
 
 ```bash
 make hooks
 ```
+
+### Dependencies
+
+[DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions tells how the Inspect repositories install and change dependencies. It covers the lock file, the cooldown, the canaries, inspect_ai `main`, the release build tools, and the procedures to add or update a dependency. Follow it. It is the same for every Inspect repository, so this file does not repeat it.
+
+For this repository:
+
+- inspect_swe needs unreleased inspect_ai changes. `[tool.uv.sources]` in `pyproject.toml` points `inspect-ai` at inspect_ai `main`.
+- The 6-hour packages are in `[tool.uv.exclude-newer-package]` in `pyproject.toml`.
 
 ## Checks and tests
 
@@ -48,6 +53,22 @@ collected via:
 
 ```bash
 pytest --co
+```
+
+## Documentation
+
+The docs packages (including Quarto) are in the `[doc]` extra, which `[dev]` does
+not include. Install it alongside `[dev]`:
+
+```bash
+uv sync --locked --extra dev --extra doc
+```
+
+Then preview the docs:
+
+```bash
+cd docs
+quarto preview
 ```
 
 ## Commit messages and releases

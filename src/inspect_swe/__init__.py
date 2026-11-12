@@ -1,3 +1,10 @@
+from inspect_ai.agent import (
+    AgentBridgeContext,
+    current_agent_bridge_context,
+    is_root_agent,
+    is_sub_agent,
+)
+
 from ._antigravity.antigravity import antigravity
 from ._claude_code.claude_code import claude_code
 from ._codex_cli.codex_cli import codex_cli
@@ -12,6 +19,7 @@ from ._tools.download import (
     download_agent_binary,
     resolve_agent_version,
 )
+from ._util.agentbinary import AgentBinaryInstall, AgentBinaryOrigin
 from ._util.agentwheel import download_wheels_tarball
 from ._util.centaur import CentaurOptions
 from ._util.sandbox import SandboxPlatform
@@ -45,9 +53,15 @@ __all__ = [
     "cached_agent_binaries",
     "resolve_agent_version",
     "AgentBinary",
+    "AgentBinaryInstall",
+    "AgentBinaryOrigin",
     "SandboxPlatform",
     "CentaurOptions",
     "CodexAutoReview",
+    "AgentBridgeContext",
+    "current_agent_bridge_context",
+    "is_root_agent",
+    "is_sub_agent",
     "__version__",
     "download_wheels_tarball",
 ]
