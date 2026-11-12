@@ -21,7 +21,7 @@ jobs:
     if: ${{ github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: meridianlabs-ai/actions/slack-approval-ping@v1
+      - uses: meridianlabs-ai/actions/slack-approval-ping@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
         with:
           webhook: ${{ secrets.SLACK_APPROVALS_WEBHOOK_URL }}
           approvers: "jjallaire dragonstyle epatey"
@@ -92,7 +92,7 @@ jobs:
       #     --python-platform x86_64-unknown-linux-gnu --exclude-newer "7 days" \
       #     --only-binary :all: --upgrade requirements.in -o requirements.txt
       - name: Install build toolchain
-        uses: meridianlabs-ai/actions/install-python-dependencies@3bc608093ab8b8dd7f82764a863d9d5f9dce61a5 # main
+        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
         with:
           versions: hashed-requirements
           python-version: "3.11"
@@ -122,7 +122,7 @@ jobs:
       contents: read
       pages: write
       id-token: write
-    uses: meridianlabs-ai/actions/.github/workflows/publish-docs.yml@62bc8360498822ef3eab7c9584d1bd523de3febf # main
+    uses: meridianlabs-ai/actions/.github/workflows/publish-docs.yml@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
     with:
       python-version: "3.14"
       extras: doc

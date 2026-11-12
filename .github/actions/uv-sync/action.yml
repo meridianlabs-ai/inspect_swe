@@ -24,7 +24,7 @@ runs:
   using: composite
   steps:
     # meridianlabs-ai/actions holds the uv pin. Both actions use the same commit.
-    - uses: meridianlabs-ai/actions/setup-uv@3bc608093ab8b8dd7f82764a863d9d5f9dce61a5 # main
+    - uses: meridianlabs-ai/actions/setup-uv@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -40,7 +40,7 @@ runs:
         fi
         uv lock --upgrade-package inspect-ai
 
-    - uses: meridianlabs-ai/actions/install-python-dependencies@3bc608093ab8b8dd7f82764a863d9d5f9dce61a5 # main
+    - uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
       with:
         versions: locked
         python-version: ${{ inputs.python-version }}
