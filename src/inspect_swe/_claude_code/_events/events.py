@@ -455,6 +455,8 @@ class _EventProcessor:
         self.accumulated_messages: list[Any] = []
         self.pending_tools: dict[str, _PendingTool] = {}
         self.last_timestamp: datetime = _EPOCH
+        # message.ids whose usage has already been attached to a ModelEvent
+        self.usage_message_ids: set[str] = set()
 
     async def process_assistant(
         self,
@@ -469,6 +471,15 @@ class _EventProcessor:
             event, self.accumulated_messages, timestamp=timestamp
         )
         result: list[Event] = [model_event]
+
+        # Fragments of one response that other lines (e.g. tool results) split
+        # apart each carry the whole response's usage; count it only once.
+        message_id = event.message.id
+        if message_id is not None:
+            if message_id in self.usage_message_ids:
+                model_event.output.usage = None
+            elif model_event.output.usage is not None:
+                self.usage_message_ids.add(message_id)
 
         # Add assistant message to accumulated
         if model_event.output and model_event.output.message:
