@@ -12,6 +12,7 @@ from inspect_swe._util.node import (
     create_npm_bundle,
     ensure_node_available,
     install_npm_bundle,
+    resolve_npm_package_version,
 )
 from inspect_swe._util.sandbox import (
     SANDBOX_INSTALL_DIR,
@@ -53,9 +54,10 @@ async def _ensure_acp_installed(
         return acp_binary
 
     async with concurrency("codex-acp-install", 1, visible=False):
+        version = resolve_npm_package_version(_ACP_ADAPTER_PACKAGE)
         bundle_data = create_npm_bundle(
             package=_ACP_ADAPTER_PACKAGE,
-            version="latest",
+            version=version,
             platform=platform,
             cache_name="codex-acp-bundles",
         )

@@ -158,7 +158,8 @@ _resolve_version_lock = threading.Lock()
 _resolved_versions: dict[tuple[str, str, SandboxPlatform], AgentBinaryVersion] = {}
 # per key: (number of failed resolutions so far, exception from the latest
 # one). Lets callers already queued behind a failing resolution share its
-# exception instead of each retrying in turn.
+# exception instead of each retrying in turn — mirrors
+# versioncache.cached_version_resolution's idiom for npm-installed agents.
 _failed_resolutions: dict[tuple[str, str, SandboxPlatform], tuple[int, Exception]] = {}
 
 # SHA-256 of installed host artifacts that have no verified digest (the output
