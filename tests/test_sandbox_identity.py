@@ -14,6 +14,7 @@ from typing import Any, Literal, NamedTuple, overload
 
 import pytest
 from inspect_ai.agent import Agent, AgentState
+from inspect_ai.agent._bridge.sandbox import bridge as sandbox_bridge
 from inspect_ai.log._transcript import Transcript, init_transcript
 from inspect_ai.model import ChatMessageUser
 from inspect_ai.tool import MCPServerConfigHTTP
@@ -27,7 +28,11 @@ from inspect_ai.util._sandbox.context import (
 )
 from inspect_ai.util._sandbox.environment import SandboxEnvironmentConfigType
 from inspect_ai.util._sandbox.events import SandboxEnvironmentProxy
-from inspect_ai.util._sandbox.identity import SandboxIdentityError, sandbox_identity
+from inspect_ai.util._sandbox.identity import (
+    SandboxIdentityError,
+    sandbox_identity,
+    sandbox_identity_user,
+)
 from inspect_swe import (
     antigravity,
     claude_code,
@@ -197,6 +202,17 @@ def bridge(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
     monkeypatch.setattr(codex_cli_module, "_resolve_codex_model_checked", codex_model)
     monkeypatch.setattr(agentbinary, "trace", lambda message: None)
+
+    # the installer has its own tests (test_shared_install.py); here it
+    # returns a fixed path, after checking the user it was given
+    async def fake_install(
+        source: Any, version: str, user: str | None, sandbox: Any, **kwargs: Any
+    ) -> str:
+        assert user == sandbox_identity_user(sandbox, None, strict=False)
+        return f"/var/tmp/install/{source.binary}"
+
+    for module in (claude_code_module, codex_cli_module):
+        monkeypatch.setattr(module, "ensure_agent_binary_installed", fake_install)
     return started
 
 
@@ -216,7 +232,7 @@ async def test_claude_code_runs_as_the_scope_user(
 ) -> None:
     # without a scope cwd, the sandbox's '/' working directory falls back to
     # the member's passwd home, not the image's HOME
-    agent = claude_code(model="mockllm/model", version="auto")
+    agent = claude_code(model="mockllm/model")
     with sample() as stub, sandbox_identity(MEMBER, cwd=scope_cwd):
         options = await _launch(agent)
 
@@ -235,7 +251,7 @@ async def test_claude_code_runs_as_the_scope_user(
 async def test_codex_cli_runs_as_the_scope_user(
     bridge: list[dict[str, Any]], scope_cwd: str | None
 ) -> None:
-    agent = codex_cli(model="mockllm/model", version="auto", system_prompt="be brief")
+    agent = codex_cli(model="mockllm/model", system_prompt="be brief")
     with sample() as stub, sandbox_identity(MEMBER, cwd=scope_cwd):
         options = await _launch(agent)
 
@@ -254,7 +270,7 @@ async def test_codex_cli_runs_as_the_scope_user(
 async def test_home_dir_expands_against_the_member_home(
     bridge: list[dict[str, Any]],
 ) -> None:
-    agent = codex_cli(model="mockllm/model", version="auto", home_dir="~/.codex")
+    agent = codex_cli(model="mockllm/model", home_dir="~/.codex")
     with sample() as stub, sandbox_identity(MEMBER, cwd=MEMBER_HOME):
         await _launch(agent)
 
@@ -317,7 +333,7 @@ async def test_centaur_outside_a_scope_starts_as_today(
 async def test_outside_a_scope_nothing_changes(
     bridge: list[dict[str, Any]], make_agent: Any
 ) -> None:
-    agent = make_agent(model="mockllm/model", version="auto")
+    agent = make_agent(model="mockllm/model")
     with sample() as stub:
         options = await _launch(agent)
 
@@ -400,3 +416,24 @@ async def test_a_scope_on_another_sandbox_does_not_refuse() -> None:
     finally:
         sandbox_default_context_var.reset(default)
         sandbox_environments_context_var.reset(envs)
+
+
+@pytest.mark.parametrize("make_agent", [claude_code, codex_cli])
+async def test_an_inspect_ai_bridge_without_the_peer_check_is_refused_in_a_scope(
+    bridge: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    make_agent: Any,
+) -> None:
+    # inspect_ai 0.3.289 has the scope but its bridge serves every user
+    monkeypatch.delattr(sandbox_bridge, "_PEER_USER_ENV")
+    agent = make_agent(model="mockllm/model")
+    with sample() as stub, sandbox_identity(MEMBER, cwd=MEMBER_HOME):
+        with pytest.raises(SandboxIdentityError, match="later than 0.3.289"):
+            await agent(_state())
+    assert stub.execs == []
+    assert bridge == []
+
+    # outside a scope such a release runs as before
+    with sample():
+        options = await _launch(agent)
+    assert options.user is None

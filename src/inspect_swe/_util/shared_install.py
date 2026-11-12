@@ -15,7 +15,10 @@ verify-before-use contracts (design/sandbox-trust-model.md in inspect_ai):
   directory from stdin, never staged at a path another user controls;
 - an existing artifact is used only if every file and directory in it is
   owned by that user and not writable by group or others, and is refused
-  otherwise rather than repaired.
+  otherwise rather than repaired;
+- a package counts as installed only once a marker file is published after
+  its extraction was verified, so an interrupted extraction is extracted
+  again rather than used.
 
 Outside a scope the installer in `agentbinary.py` is unchanged.
 """
@@ -35,22 +38,34 @@ INSTALL_DIR_MODE = 0o755
 INSTALL_FILE_MODE = 0o755
 """Mode of a single-binary artifact."""
 
-# Run in a verified directory. Prints "missing" when the executable $2 does
-# not exist, otherwise checks that $2 is an executable regular file and that
-# every entry under $1 is owned by the user running the check and (symbolic
-# links aside, whose mode means nothing) is not writable by group or others,
-# and prints "ok". A failed check is reported on stderr with exit status 3.
+PACKAGE_COMPLETE = ".inspect-swe-complete"
+"""Marker published in a package directory once its extraction is verified."""
+
+# Run in a verified directory with $1 the artifact (a file, or "." for a
+# package), $2 its executable and $3 the entry whose presence means the
+# install is complete. Prints "missing" when $1 or $3 does not exist; checks
+# that every entry under $1 is owned by the user running the check and
+# (symbolic links aside, whose mode means nothing) is not writable by group or
+# others, even when $3 is missing, so an incomplete install is extracted
+# again only over entries that user made; and, when $3 exists, that $2 is an
+# executable regular file and $3 a regular file, then prints "ok". A failed
+# check is reported on stderr with exit status 3.
 _CHECK = """
 uid=$(id -u) || exit 1
-if [ ! -e "$2" ] && [ ! -L "$2" ]; then echo missing; exit 0; fi
-if [ -L "$2" ] || [ ! -f "$2" ] || [ ! -x "$2" ]; then
-    echo "$2 is not an executable regular file" >&2
-    exit 3
-fi
+if [ ! -e "$1" ] && [ ! -L "$1" ]; then echo missing; exit 0; fi
 bad=$(find "$1" \\( ! -user "$uid" -o \\( ! -type l \\( -perm -020 -o -perm -002 \\) \\) \\) -print) || exit 1
 if [ -n "$bad" ]; then
     printf 'not owned by uid %s, or writable by group or others: %s\\n' \\
         "$uid" "$(printf '%s\\n' "$bad" | head -n 3)" >&2
+    exit 3
+fi
+if [ ! -e "$3" ] && [ ! -L "$3" ]; then echo missing; exit 0; fi
+if [ -L "$2" ] || [ ! -f "$2" ] || [ ! -x "$2" ]; then
+    echo "$2 is not an executable regular file" >&2
+    exit 3
+fi
+if [ -L "$3" ] || [ ! -f "$3" ]; then
+    echo "$3 is not a regular file" >&2
     exit 3
 fi
 echo ok
@@ -74,8 +89,10 @@ async def install_shared_artifact(
 
     A single binary (`package_entrypoint` is `None`) is published as the file
     `install_path`. A package archive is extracted into the directory
-    `install_path`, whose `package_entrypoint` is the binary. An artifact
-    already there is verified and reused, not rewritten.
+    `install_path`, whose `package_entrypoint` is the binary, and is marked
+    complete once the extraction is verified. An artifact already there is
+    verified and reused, not rewritten; an unmarked package is extracted
+    again.
 
     Args:
         sandbox: Sandbox to install into.
@@ -97,8 +114,10 @@ async def install_shared_artifact(
     )
 
     if package_entrypoint is None:
+        # the file is published complete under its name, so it is its own
+        # completion marker
         target = f"./{name}"
-        if await _check(sandbox, install_dir, target, target) == "missing":
+        if await _check(sandbox, install_dir, target, target, target) == "missing":
             await write_file_in_framework_directory(
                 sandbox,
                 install_dir,
@@ -108,14 +127,15 @@ async def install_shared_artifact(
                 mode=INSTALL_DIR_MODE,
                 file_mode=INSTALL_FILE_MODE,
             )
-            await _check(sandbox, install_dir, target, target, required=True)
+            await _check(sandbox, install_dir, target, target, target, required=True)
         return
 
     await ensure_framework_directory(
         sandbox, install_path, user=None, mode=INSTALL_DIR_MODE
     )
     entrypoint = f"./{package_entrypoint}"
-    if await _check(sandbox, install_path, ".", entrypoint) == "missing":
+    marker = f"./{PACKAGE_COMPLETE}"
+    if await _check(sandbox, install_path, ".", entrypoint, marker) == "missing":
         result = await exec_in_framework_directory(
             sandbox,
             install_path,
@@ -128,7 +148,18 @@ async def install_shared_artifact(
             raise RuntimeError(
                 f"Unable to extract {install_path}: {result.stderr.strip()}"
             )
-        await _check(sandbox, install_path, ".", entrypoint, required=True)
+        # verify the extraction (with the entrypoint standing in for the
+        # marker), then mark the package complete
+        await _check(sandbox, install_path, ".", entrypoint, entrypoint, required=True)
+        await write_file_in_framework_directory(
+            sandbox,
+            install_path,
+            PACKAGE_COMPLETE,
+            b"",
+            user=None,
+            mode=INSTALL_DIR_MODE,
+            file_mode=0o644,
+        )
 
 
 async def _check(
@@ -136,17 +167,18 @@ async def _check(
     directory: str,
     tree: str,
     executable: str,
+    complete: str,
     required: bool = False,
 ) -> str:
     """Verify `tree` and `executable` inside the verified `directory`.
 
-    Returns "ok", or "missing" when `executable` does not exist (an error
-    when `required`).
+    Returns "ok", or "missing" when `tree` or `complete` does not exist (an
+    error when `required`).
     """
     result = await exec_in_framework_directory(
         sandbox,
         directory,
-        ["sh", "-c", _CHECK, "sh", tree, executable],
+        ["sh", "-c", _CHECK, "sh", tree, executable, complete],
         user=None,
         mode=INSTALL_DIR_MODE,
     )

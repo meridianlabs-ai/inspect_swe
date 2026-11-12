@@ -32,15 +32,16 @@ from inspect_ai.util._sandbox.context import (
 )
 from inspect_ai.util._sandbox.environment import SandboxEnvironmentConfigType
 from inspect_ai.util._sandbox.events import SandboxEnvironmentProxy
-from inspect_ai.util._sandbox.identity import sandbox_identity
+from inspect_ai.util._sandbox.identity import SandboxIdentityError, sandbox_identity
 from inspect_swe._util import agentbinary
 from inspect_swe._util.agentbinary import (
+    AgentBinaryDownload,
     AgentBinarySource,
     AgentBinaryVersion,
     ensure_agent_binary_installed,
 )
 from inspect_swe._util.sandbox import SANDBOX_INSTALL_DIR, SandboxPlatform
-from inspect_swe._util.shared_install import _CHECK, _EXTRACT
+from inspect_swe._util.shared_install import _CHECK, _EXTRACT, PACKAGE_COMPLETE
 
 MEMBER = "swarm-w-1"
 VERSION = "9.9.9"
@@ -60,13 +61,18 @@ class Call(NamedTuple):
 class InstallSandbox(SandboxEnvironment):
     """Answers the verified-directory script, and records what it wraps.
 
-    `artifacts` maps an artifact's path to "ok" or "tampered"; a path absent
-    from it is missing until it is written or extracted.
+    `artifacts` maps an artifact's path to "ok", "partial" (a package with its
+    entrypoint but no completion marker) or "tampered"; a path absent from it
+    is missing until it is written or extracted. With `fail_extract`, an
+    extraction writes the entrypoint and then fails.
     """
 
-    def __init__(self, artifacts: dict[str, str] | None = None) -> None:
+    def __init__(
+        self, artifacts: dict[str, str] | None = None, fail_extract: bool = False
+    ) -> None:
         super().__init__()
         self.artifacts = dict(artifacts or {})
+        self.fail_extract = fail_extract
         self.calls: list[Call] = []
 
     async def exec(
@@ -90,12 +96,19 @@ class InstallSandbox(SandboxEnvironment):
         stdout, returncode, stderr = "", 0, ""
         if wrapped and wrapped[2] == _CHECK:
             tree = os.path.normpath(f"{directory}/{wrapped[4]}")
+            executable, complete = wrapped[5], wrapped[6]
             state = self.artifacts.get(tree, "missing")
+            if state == "partial":
+                state = "ok" if complete == executable else "missing"
             if state == "tampered":
                 returncode, stderr = 3, "not owned by uid 0: ./x"
             else:
                 stdout = f"{state}\n"
         elif wrapped and wrapped[2] == _EXTRACT:
+            self.artifacts[directory] = "partial"
+            if self.fail_extract:
+                returncode, stderr = 2, "tar: unexpected end of archive"
+        elif wrapped and wrapped[4] == PACKAGE_COMPLETE:
             self.artifacts[directory] = "ok"
         elif wrapped:  # the publish of a single file
             self.artifacts[f"{directory}/{wrapped[4]}"] = "ok"
@@ -245,10 +258,38 @@ async def test_package_is_extracted_and_verified(tmp_path: Path) -> None:
         (install_dir, "check"),
         (install_dir, "extract"),
         (install_dir, "check"),
+        (install_dir, "write"),
     ]
-    [extract] = [c for c in stub.calls if c.input is not None]
+    [extract, marker] = [c for c in stub.calls if c.input is not None]
     assert extract.input == data
+    assert marker.command[4] == PACKAGE_COMPLETE
+    assert stub.artifacts[install_dir] == "ok"
     _assert_framework_operations(stub)
+
+
+async def test_interrupted_package_install_is_extracted_again(
+    tmp_path: Path,
+) -> None:
+    # an extraction that fails after writing the entrypoint leaves no
+    # completion marker, so the next install extracts again rather than
+    # running a partial package
+    install_dir = f"{SANDBOX_INSTALL_DIR}/codex-{VERSION}-{PLATFORM}"
+    stub = InstallSandbox(fail_extract=True)
+    with pytest.raises(RuntimeError, match="Unable to extract"):
+        await _install(tmp_path, stub, package=True)
+    assert stub.artifacts[install_dir] == "partial"
+
+    stub.fail_extract = False
+    stub.calls.clear()
+    await _install(tmp_path, stub, package=True)
+
+    assert [kind for _, kind in stub.wrapped()][-4:] == [
+        "check",
+        "extract",
+        "check",
+        "write",
+    ]
+    assert stub.artifacts[install_dir] == "ok"
 
 
 @pytest.mark.parametrize("package", [False, True])
@@ -277,11 +318,69 @@ async def test_tampered_artifact_is_refused_before_use(
     _assert_framework_operations(stub)
 
 
+@pytest.mark.parametrize("package", [False, True])
+async def test_auto_installs_a_verified_copy_in_a_scope(
+    tmp_path: Path, package: bool
+) -> None:
+    # a binary on the member's PATH may have been planted by a peer, so
+    # inside a scope "auto" never looks for one and never runs it
+    source = _source(tmp_path, package)
+    data = b"package-archive" if package else b"binary"
+    resolved = AgentBinaryVersion(VERSION, "digest", "https://example.com/x", package)
+    stub = InstallSandbox()
+    with (
+        patch.object(
+            agentbinary, "detect_sandbox_platform", AsyncMock(return_value=PLATFORM)
+        ),
+        patch.object(agentbinary, "trace", lambda message: None),
+        patch.object(
+            agentbinary,
+            "download_agent_binary_async",
+            AsyncMock(return_value=AgentBinaryDownload(data, resolved, True, None)),
+        ),
+        scope(stub) as sandbox,
+    ):
+        probe = AsyncMock(return_value="9.9.9")
+        path = await ensure_agent_binary_installed(
+            source, "auto", MEMBER, sandbox, sandbox_version=probe
+        )
+
+    assert path.startswith(f"{SANDBOX_INSTALL_DIR}/")
+    assert not any("which" in " ".join(c.command) for c in stub.calls)
+    probe.assert_not_awaited()
+    _assert_framework_operations(stub)
+
+
+async def test_sandbox_version_is_refused_in_a_scope(tmp_path: Path) -> None:
+    stub = InstallSandbox()
+    with scope(stub) as sandbox:
+        with pytest.raises(SandboxIdentityError, match="version='sandbox'"):
+            await ensure_agent_binary_installed(
+                _source(tmp_path, False), "sandbox", MEMBER, sandbox
+            )
+    assert stub.calls == []
+
+
+async def test_auto_outside_a_scope_still_uses_the_sandbox_binary(
+    tmp_path: Path,
+) -> None:
+    stub = InstallSandbox()
+    with patch.object(agentbinary, "trace", lambda message: None):
+        await ensure_agent_binary_installed(
+            _source(tmp_path, False), "auto", None, SandboxEnvironmentProxy(stub)
+        )
+    assert [c.command[-1] for c in stub.calls] == ["which claude"]
+
+
 # The two scripts, run for real. They use only POSIX sh, find, tar and chmod.
 
 
 def _check(
-    directory: Path, tree: str, executable: str, uid: int | None = None
+    directory: Path,
+    tree: str,
+    executable: str,
+    complete: str | None = None,
+    uid: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     if uid is not None:
@@ -293,12 +392,15 @@ def _check(
         (fake / "id").chmod(0o755)
         env["PATH"] = f"{fake}:{env['PATH']}"
     return subprocess.run(
-        ["sh", "-c", _CHECK, "sh", tree, executable],
+        ["sh", "-c", _CHECK, "sh", tree, executable, complete or executable],
         cwd=directory,
         env=env,
         capture_output=True,
         text=True,
     )
+
+
+MARKER = f"./{PACKAGE_COMPLETE}"
 
 
 @pytest.fixture
@@ -358,9 +460,22 @@ def test_check_refuses_a_writable_entry_anywhere_in_a_package(
     (install_dir / "bin" / "codex").chmod(0o755)
     (install_dir / "lib").mkdir()
     (install_dir / "lib").chmod(0o777)
-    assert _check(install_dir, ".", "./bin/codex").returncode == 3
+    # refused whether or not the package was marked complete
+    assert _check(install_dir, ".", "./bin/codex", MARKER).returncode == 3
+    (install_dir / MARKER).write_bytes(b"")
+    assert _check(install_dir, ".", "./bin/codex", MARKER).returncode == 3
     (install_dir / "lib").chmod(0o755)
-    assert _check(install_dir, ".", "./bin/codex").stdout == "ok\n"
+    assert _check(install_dir, ".", "./bin/codex", MARKER).stdout == "ok\n"
+
+
+def test_check_reports_an_unmarked_package_as_missing(install_dir: Path) -> None:
+    # the entrypoint alone (an interrupted extraction) is not an install
+    (install_dir / "bin").mkdir(mode=0o755)
+    (install_dir / "bin" / "codex").write_bytes(b"codex")
+    (install_dir / "bin" / "codex").chmod(0o755)
+    assert _check(install_dir, ".", "./bin/codex", MARKER).stdout == "missing\n"
+    (install_dir / MARKER).write_bytes(b"")
+    assert _check(install_dir, ".", "./bin/codex", MARKER).stdout == "ok\n"
 
 
 def _archive(*members: tuple[str, int, bytes | None]) -> bytes:

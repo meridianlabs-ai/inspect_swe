@@ -221,6 +221,9 @@ def codex_cli(
             - "sandbox": Use the version of codex cli in the sandbox (raises `RuntimeError` if codex is not available in the sandbox)
             - "latest": Download and use the very latest version of codex cli.
             - "x.x.x": Download and use a specific version of codex cli.
+            Inside a sandbox identity scope, "auto" downloads a verified copy
+            rather than using one found in the sandbox, and "sandbox" raises an
+            error.
         config_overrides: Additional Codex CLI configuration overrides.
             Each key-value pair is passed as `-c key=value` to the CLI, except
             `approval_policy` and `sandbox_mode`, which are intercepted and

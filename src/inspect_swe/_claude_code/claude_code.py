@@ -247,6 +247,9 @@ def claude_code(
             - "stable": Download and use the current stable version of claude code.
             - "latest": Download and use the very latest version of claude code.
             - "x.x.x": Download and use a specific version of claude code.
+            Inside a sandbox identity scope, "auto" downloads a verified copy
+            rather than using one found in the sandbox, and "sandbox" raises an
+            error.
         debug: Add `--debug` cli flag and trace all debug output.
         allowlist_mcp_tools: Whether to add static caller-provided MCP tools to
             `--allowed-tools` (default `True`). It matters in every permission

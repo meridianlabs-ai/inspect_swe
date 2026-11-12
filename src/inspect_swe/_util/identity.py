@@ -8,6 +8,7 @@ scope; every other agent refuses to run inside one.
 
 from typing import NamedTuple
 
+from inspect_ai.agent._bridge.sandbox import bridge as sandbox_bridge
 from inspect_ai.util import SandboxEnvironment
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox.identity import (
@@ -49,10 +50,21 @@ async def resolve_agent_identity(
     (an explicit other user raises `SandboxIdentityError`), an omitted `cwd`
     becomes the scope's, and `HOME` is looked up in the sandbox's passwd
     database rather than inherited from the image.
+
+    Raises:
+        SandboxIdentityError: Inside a scope, if `user` is another user, or if
+            the installed inspect_ai's agent bridge does not serve only the
+            scope's user.
     """
     sbox = _scoped_sandbox(sandbox)
     if sbox is None:
         return AgentIdentity(user, cwd, None, False)
+    if not bridge_serves_only_scope_user():
+        raise SandboxIdentityError(
+            "Running an agent inside a sandbox identity scope needs an inspect_ai "
+            "release whose agent bridge serves only the scope's user (later than "
+            "0.3.289). Upgrade inspect_ai."
+        )
     return AgentIdentity(
         user=sandbox_identity_user(sbox, user, strict=True),
         cwd=sandbox_identity_cwd(sbox, cwd),
@@ -94,3 +106,13 @@ def _scoped_sandbox(sandbox: str | None) -> SandboxEnvironment | None:
         return None
     sbox = sandbox_env(sandbox)
     return sbox if sandbox_identity_active(sbox) else None
+
+
+def bridge_serves_only_scope_user() -> bool:
+    """Whether inspect_ai's agent bridge serves only the scope's user.
+
+    inspect_ai 0.3.289 has the sandbox identity scope but its bridge serves
+    any user in the sandbox; the peer check came later (the bridge passes the
+    scope's user to its proxy under this name).
+    """
+    return hasattr(sandbox_bridge, "_PEER_USER_ENV")
