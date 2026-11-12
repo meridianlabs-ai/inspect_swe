@@ -22,6 +22,42 @@ from .sandbox import SANDBOX_INSTALL_DIR, SandboxPlatform, bash_command, sandbox
 NODE_VERSION = "20.11.0"
 
 
+# npm gained --libc in 10.3.0. Earlier versions ignore `--libc=...` and
+# select native packages by the host libc. Bundles from those versions
+# must not be stored under the "-libc" cache name.
+_NPM_LIBC_VERSION = (10, 3, 0)
+
+
+def _parse_npm_version(text: str) -> tuple[int, int, int] | None:
+    """Parse `npm --version` output into a (major, minor, patch) tuple."""
+    token = text.strip().split()[0] if text.strip() else ""
+    parts = token.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        major = int(parts[0])
+        minor = int(parts[1])
+        patch = int(parts[2].split("-")[0]) if len(parts) > 2 else 0
+    except ValueError:
+        return None
+    return (major, minor, patch)
+
+
+def _npm_version() -> tuple[int, int, int] | None:
+    result = subprocess.run(
+        ["npm", "--version"],
+        cwd=".",
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        return None
+    return _parse_npm_version(result.stdout)
+
+
+
+
 async def ensure_node_available(
     sandbox: SandboxEnvironment,
     platform: SandboxPlatform,
@@ -224,9 +260,13 @@ def create_npm_bundle(
 
         bundle_data = buffer.getvalue()
 
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    with open(cache_path, "wb") as f:
-        f.write(bundle_data)
+    # npm < 10.3 ignores --libc, so the bundle may follow the host libc.
+    # Do not store it under the "-libc" cache name; a later npm upgrade
+    # would reuse that broken bundle.
+    if (_npm_version() or (0, 0, 0)) >= _NPM_LIBC_VERSION:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "wb") as f:
+            f.write(bundle_data)
 
     return bundle_data
 
