@@ -104,6 +104,7 @@ def test_bundle_cached_without_libc_is_rebuilt(
     with pytest.raises(RuntimeError, match="npm is required"):
         node.create_npm_bundle("pkg", "1.0.0", "linux-x64", "pkg-bundles")
 
+
 def test_parse_npm_version() -> None:
     assert node._parse_npm_version("10.2.0\n") == (10, 2, 0)
     assert node._parse_npm_version("10.3.0") == (10, 3, 0)
@@ -116,7 +117,7 @@ def test_parse_npm_version() -> None:
 def test_bundle_not_cached_when_npm_lacks_libc(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """npm < 10.3 ignores --libc; do not store that bundle under the -libc name."""
+    """On npm before 10.3, --libc is ignored; do not cache that bundle under the -libc name."""
     pkgs = tmp_path / "pkgs"
     pkgs.mkdir()
     _write_npm_tarball(
@@ -134,7 +135,9 @@ def test_bundle_not_cached_when_npm_lacks_libc(
         {
             "name": "cli",
             "version": "1.0.0",
-            "optionalDependencies": {"native-glibc": f"file:{pkgs / 'native-glibc.tgz'}"},
+            "optionalDependencies": {
+                "native-glibc": f"file:{pkgs / 'native-glibc.tgz'}"
+            },
         },
     )
     real_run = subprocess.run

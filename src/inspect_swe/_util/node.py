@@ -56,8 +56,6 @@ def _npm_version() -> tuple[int, int, int] | None:
     return _parse_npm_version(result.stdout)
 
 
-
-
 async def ensure_node_available(
     sandbox: SandboxEnvironment,
     platform: SandboxPlatform,
