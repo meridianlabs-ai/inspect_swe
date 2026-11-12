@@ -30,8 +30,10 @@ updates:
   # counts whole days, so those packages' 6-hour cooldown is left to uv. They
   # get their own group, so a broken update elsewhere can't hold them up. It
   # comes first because a package that matches both groups goes to the first.
-  # inspect-ai is ignored: it comes from inspect_ai main, which CI moves to the
-  # latest commit on every run.
+  # inspect-ai comes from inspect_ai main. CI moves it to the latest commit on
+  # every run, but Dependabot resolves against the commit in uv.lock. Dependabot
+  # updates that commit too, or its other updates fail once they need a newer
+  # inspect-ai.
   - package-ecosystem: "uv"
     versioning-strategy: "lockfile-only"
     directory: "/"
@@ -42,14 +44,14 @@ updates:
       exclude:
         - "anthropic"
         - "google-genai"
+        - "inspect-ai"
         - "openai"
-    ignore:
-      - dependency-name: "inspect-ai"
     groups:
       six-hour-cooldown:
         patterns:
           - "anthropic"
           - "google-genai"
+          - "inspect-ai"
           - "openai"
       python-packages:
         patterns:
