@@ -15,6 +15,7 @@ from .._util.sandbox import (
     bash_command,
     detect_sandbox_platform,
 )
+from .._util.trace import trace
 from .._util.versioncache import cached_version_resolution
 
 _GEMINI_CLI_PACKAGE = "@google/gemini-cli"
@@ -29,8 +30,23 @@ async def ensure_gemini_cli_setup(
 
     Returns (gemini_binary, node_binary) paths.
     """
+    # look in the sandbox first if we need to (before any node setup, so
+    # "sandbox" fails fast when there is no gemini)
+    sandbox_gemini: str | None = None
+    if version == "auto" or version == "sandbox":
+        result = await sandbox.exec(bash_command("which gemini"), user=user)
+        if result.success:
+            sandbox_gemini = result.stdout.strip()
+        elif version == "sandbox":
+            raise RuntimeError("unable to locate gemini cli in sandbox")
+
     platform = await detect_sandbox_platform(sandbox)
     node_binary = await ensure_node_available(sandbox, platform, user)
+
+    if sandbox_gemini is not None:
+        trace(f"Using gemini cli installed in sandbox: {sandbox_gemini}")
+        return sandbox_gemini, node_binary
+
     gemini_version = await resolve_gemini_version(version)
     gemini_binary = await ensure_gemini_cli_installed(
         sandbox, node_binary, gemini_version, platform, user
