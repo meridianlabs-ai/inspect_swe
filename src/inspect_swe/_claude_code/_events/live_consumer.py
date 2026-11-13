@@ -30,12 +30,26 @@ Three responsibilities, all driven from the same `LiveConsumer` instance:
      2. Register the sub-agent in `_pending_subagents` (mapping
         `tool_use_id → prompt`).
 
-   When sub-agent's first bridge call arrives, `_attribute` scans its
-   first user message text for any pending sub-agent prompt as a
-   substring. A single hit identifies the sub-agent and we look up its
-   already-open span. Zero hits → main-agent call (outer span). Multiple
-   hits (rare; concurrent sub-agents with substring-overlapping prompts)
-   → outer span as defensive default.
+   When sub-agent's first bridge call arrives, `_attribute` scans the
+   text of its opening user messages (everything before its first
+   assistant turn) for any pending sub-agent prompt as a substring. A
+   single hit identifies the sub-agent and we look up its already-open
+   span. Zero hits → main-agent call (outer span). Multiple hits (rare;
+   concurrent sub-agents with substring-overlapping prompts) → outer span
+   as defensive default. The whole opening is scanned, not just the first
+   user message: Claude Code 2.1.311 leads a sub-agent's conversation with
+   `<system-reminder>` text and the Task prompt can arrive in a later part.
+
+   Two structural signals keep other threads out of sub-agent spans
+   whatever their text quotes: a main-thread model slug (see `classify`),
+   and Claude Code's billing header (`x-anthropic-billing-header`, sent as
+   the first system block), which carries `cc_is_subagent=true` on every
+   sub-agent request. Once that flag has been seen, a request whose header
+   lacks it is not a sub-agent's (the main thread, or a side call such as
+   the auto-mode permission classifier, whose input quotes the transcript).
+   The header's `cc_version=<version>.<3 hex>` suffix is *not* used to tell
+   threads apart: it is a hash of three characters of the thread's first
+   prompt, so parallel sub-agents with similar prompts share it.
 
    Doing both open + register in `on_complete` (rather than from JSONL)
    eliminates a race: the sub-agent's bridge call arrives at the bridge
@@ -45,13 +59,17 @@ Three responsibilities, all driven from the same `LiveConsumer` instance:
 
    This works for every sub-agent call (not just the first) because
    Claude Code re-sends the sub-agent's full conversation history on
-   each request, with the original Task prompt always at `input[0]`.
-   `_pending_subagents` and the open span are cleared in `_handle_user`
-   when the matching `tool_result` arrives.
+   each request, with the original Task prompt always in its opening.
+   `_pending_subagents` and the open span are cleared when the sub-agent's
+   own work ends: on the matching `tool_result` for a foreground Task, or
+   on the `task_notification` system event for one launched in the
+   background (whose `tool_result` only says it was launched, and arrives
+   before the sub-agent has made its first request).
 
 2. **JSONL consumer** — `process_jsonl_line` reads each line printed by
    Claude Code's `--output-format stream-json` and emits agent
-   `SpanEndEvent` (on `tool_result` for Task/Agent), and emits
+   `SpanEndEvent` (on `tool_result` for a foreground Task/Agent, on
+   `task_notification` for a background one), and emits
    `CompactionEvent` for `compact_boundary` system events. Span
    *opening* is no longer driven from JSONL — see callback (1) above.
 
@@ -67,6 +85,7 @@ Three responsibilities, all driven from the same `LiveConsumer` instance:
    presented slug. See `classify`'s docstring for the full truth table.
 """
 
+import re
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
@@ -115,6 +134,18 @@ _MIN_PROMPT_LENGTH = 16
 # sub-agent's very first call; a second one is drift.
 _SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD = 2
 
+# Claude Code's billing header, sent as a system text block on every request
+# (the bridge keeps it as a system message). Sub-agent requests add
+# `cc_is_subagent=true`; main-thread and side requests (e.g. the auto-mode
+# permission classifier) don't.
+_BILLING_HEADER = re.compile(r"^x-anthropic-billing-header:(.*)$", re.MULTILINE)
+_SUBAGENT_FLAG = re.compile(r"(?:^|;)\s*cc_is_subagent=true\s*(?:;|$)")
+
+# Text of the tool_result Claude Code returns when a Task/Agent call was
+# launched in the background. Read only for lines without a structured
+# `tool_use_result` status, which decides whenever it is present.
+_ASYNC_LAUNCH_TEXT = "Async agent launched"
+
 
 @dataclass
 class _OpenAgent:
@@ -150,14 +181,24 @@ class LiveConsumer(ModelEventSink):
         # in `on_complete` when a parent's output contains Task/Agent tool_calls
         # (synchronously, before the response is sent back to Claude Code, so
         # the entry is ready before any sub-agent can make a bridge call).
-        # Cleared in `_handle_user` when the matching tool_result arrives.
+        # Cleared when the sub-agent's work ends (`_end_subagent`): on the
+        # matching tool_result, or on `task_notification` for a Task whose
+        # tool_result only reported a background launch.
         self._pending_subagents: dict[str, str] = {}
 
-        # tool_use_id → Task prompt for sub-agents whose tool_result has
-        # arrived. A backgrounded Task (or a resumed one) keeps running after
-        # that, so its requests can still match a later pending Task with the
-        # same prompt; these only veto a sub-agent id, never attribute one.
+        # tool_use_id → Task prompt for sub-agents that have ended. One can
+        # still send requests afterwards (a background Task on a Claude Code
+        # that reports no launch, or one continued later), so its requests
+        # can match a later pending Task with the same prompt; these only
+        # veto a sub-agent id, never attribute one.
         self._detached_prompts: dict[str, str] = {}
+
+        # Whether any request has carried `cc_is_subagent=true` in its billing
+        # header. Until then a header without the flag proves nothing (a
+        # Claude Code version might not send the flag at all); after it, such
+        # a request is not a sub-agent's. Kept across `reset()`: it describes
+        # the Claude Code build, not one attempt.
+        self._subagent_flag_seen = False
 
         # Track which event objects we've already _event()'d so on_complete
         # knows whether to emit _event_updated (yes if we emitted) vs swallow
@@ -181,6 +222,12 @@ class LiveConsumer(ModelEventSink):
         self._subagent_slug_seen = False
         self._subagent_requests_missing_slug = 0
         self._subagent_slug_drift_warned = False
+
+        # Drift canary for the billing-header flag (`_check_subagent_flag_drift`):
+        # whether we already warned that a subagent-slug request lacked
+        # `cc_is_subagent=true` after the flag had been seen. Kept across
+        # `reset()` like the slug canary.
+        self._subagent_flag_drift_warned = False
 
     @property
     def last_stop_reason(self) -> StopReason | None:
@@ -208,7 +255,8 @@ class LiveConsumer(ModelEventSink):
 
         Deliberately does NOT clear the subagent-slug drift canary fields
         (`_subagent_slug_seen`, `_subagent_slug_drift_warned`,
-        `_subagent_requests_missing_slug`) -- they track this consumer
+        `_subagent_requests_missing_slug`), `_subagent_flag_seen` or
+        `_subagent_flag_drift_warned` -- they track this consumer
         instance's lifetime, not any single attempt, so a slug sighting (or a
         warning already issued, or a slug-less sub-agent request already
         counted) from before a retry still carries over to later attempts.
@@ -337,8 +385,9 @@ class LiveConsumer(ModelEventSink):
         Note: sub-agent span *opening* is no longer driven from JSONL —
         it happens in `on_complete` (synchronous with the parent's bridge
         call, ahead of the race with stdout-buffered JSONL arrival). We
-        only consume `user` (for tool_result → span close) and `system`
-        (for compaction) events here.
+        only consume `user` (tool_result → span close for a foreground
+        Task) and `system` (`task_notification` → span close for a
+        background Task; compaction) events here.
         """
         event_type = raw.get("type")
         if event_type == "user":
@@ -367,12 +416,18 @@ class LiveConsumer(ModelEventSink):
 
         A request under a main-thread slug is the root thread's regardless
         of prompt content (same reasoning as `classify` step 3), so it lands
-        on the outer span. Otherwise the request's owner (`_owner`, shared
-        with `classify`'s identity) picks the sub-agent's span, falling back
-        to the outer span whenever there's no unambiguous owner.
+        on the outer span, as does one whose billing header says it is not a
+        sub-agent's (`_header_rules_out_subagent`; never under the subagent
+        slug, which wins over the header as `classify` step 1 does).
+        Otherwise the request's owner (`_owner`, shared with `classify`'s
+        identity) picks the sub-agent's span, falling back to the outer span
+        whenever there's no unambiguous owner.
         """
         request = current_bridge_request()
-        if self._is_root_slug(request.model if request is not None else None):
+        slug = request.model if request is not None else None
+        if self._is_root_slug(slug):
+            return self.outer_span_id
+        if self._header_rules_out_subagent(input_messages, slug):
             return self.outer_span_id
         tool_use_id = self._owner(input_messages)
         if tool_use_id is not None:
@@ -384,18 +439,19 @@ class LiveConsumer(ModelEventSink):
     def _match_pending_prompt(self, input_messages: list[ChatMessage]) -> str | None:
         """Resolve the pending sub-agent whose prompt matches this call, if any.
 
-        Substring-matches the first user message's text against currently-
-        pending sub-agent prompts (see class docstring for why substring
-        matching, rather than JSONL, drives sub-agent attribution). Returns
-        the matched sub-agent's tool_use_id, or `None` when there are no
-        pending sub-agents, no first-user-message text, or the match is
-        ambiguous (zero or multiple hits) — callers treat all of those the
-        same way (fall back to the outer span / a non-subagent verdict).
+        Substring-matches the text of the request's opening user messages
+        (`_opening_user_text`) against currently-pending sub-agent prompts
+        (see class docstring for why substring matching, rather than JSONL,
+        drives sub-agent attribution). Returns the matched sub-agent's
+        tool_use_id, or `None` when there are no pending sub-agents, no
+        opening user text, or the match is ambiguous (zero or multiple hits)
+        — callers treat all of those the same way (fall back to the outer
+        span / a non-subagent verdict).
         """
         if not self._pending_subagents:
             return None
 
-        user_text = self._first_user_text(input_messages)
+        user_text = self._opening_user_text(input_messages)
         if not user_text:
             return None
 
@@ -410,16 +466,17 @@ class LiveConsumer(ModelEventSink):
         """The running Task this request belongs to, when it can be told.
 
         The unique pending-prompt match, unless the request also carries the
-        prompt of a Task whose tool_result already arrived: a backgrounded
-        or resumed sub-agent still running under that prompt sends the same
-        text, so the request could be either. Both span placement and the
+        prompt of a Task that has ended (its tool_result, or for a background
+        launch its `task_notification`, arrived): a sub-agent resumed or
+        continued after that sends the same text, so the request could be
+        either. Both span placement and the
         filter-time identity use this, so neither credits the pending Task
         with a request that may be the detached one's.
         """
         tool_use_id = self._match_pending_prompt(input_messages)
         if tool_use_id is None:
             return None
-        user_text = self._first_user_text(input_messages) or ""
+        user_text = self._opening_user_text(input_messages) or ""
         if any(
             len(prompt) >= _MIN_PROMPT_LENGTH and prompt in user_text
             for prompt in self._detached_prompts.values()
@@ -468,10 +525,17 @@ class LiveConsumer(ModelEventSink):
            verbatim excerpt of it, so a content match alone would stamp the
            root thread "subagent" for the whole delegation window -- the
            harmful direction for an `is_root_agent()` gate.
-        4. pending-subagent prompt match → "subagent" (inferred; only
+        4. billing header carries `cc_is_subagent=true` → "subagent"
+           (structural, from Claude Code itself; covers a sub-agent request
+           whose slug isn't recognized)
+        5. pending-subagent prompt match → "subagent" (inferred; only
            reached for an unrecognized or missing slug, i.e. it covers
-           slug-bypass drift rather than overriding a structural answer)
-        5. otherwise (unrecognized slug, or no request info available) →
+           slug-bypass drift rather than overriding a structural answer),
+           unless the billing header rules a sub-agent out
+           (`_header_rules_out_subagent`: the flag has been seen on other
+           requests but this one lacks it -- e.g. the auto-mode permission
+           classifier, whose input quotes the transcript and so the prompt)
+        6. otherwise (unrecognized slug, or no request info available) →
            "root" if no sub-agents are currently pending, else "unknown"
            (honest admission: an unmatched call could be main-thread or an
            unattributed sub-agent call; we can't tell)
@@ -480,7 +544,7 @@ class LiveConsumer(ModelEventSink):
         match picks exactly one pending Task: `subagent_id` is that Task's
         tool_use id and `subagent_type` its `subagent_type` argument. With
         no unique match (parallel Tasks whose prompts can't be told apart,
-        or a request whose first user message doesn't carry the Task prompt)
+        or a request whose opening user messages don't carry the Task prompt)
         both are None -- the slug says "a sub-agent", not which one. Nor
         does a request that may be a detached Task's (`_owner`); it is placed
         on the outer span rather than in the pending Task's.
@@ -498,7 +562,12 @@ class LiveConsumer(ModelEventSink):
             context = AgentBridgeContext("utility")
         elif self._is_root_slug(slug):
             context = AgentBridgeContext("root")
-        elif self._match_pending_prompt(messages) is not None:
+        elif self._billing_subagent_flag(messages):
+            context = self._subagent_context(messages)
+        elif (
+            not self._header_rules_out_subagent(messages, slug)
+            and self._match_pending_prompt(messages) is not None
+        ):
             context = self._subagent_context(messages)
         else:
             context = AgentBridgeContext(
@@ -506,6 +575,7 @@ class LiveConsumer(ModelEventSink):
             )
 
         self._check_subagent_slug_drift(slug, context)
+        self._check_subagent_flag_drift(slug, messages)
         # the generate this request leads to is placed by the same decision,
         # even if the user's filter rewrites its messages (see `_start`)
         remember_decision(self, Decision(self._attribute(messages)))
@@ -558,16 +628,18 @@ class LiveConsumer(ModelEventSink):
         reached. Any sighting of the subagent slug records that reality
         matches P1 and suppresses the canary for good. Otherwise the only
         event counted is the direct evidence of drift: a request `classify`
-        attributed to a sub-agent via the pending-prompt match (its step 4,
-        reached only when the slug is neither the subagent slug nor a
-        main-thread slug) — i.e. a request that should have carried the
-        subagent slug and didn't. Main-thread, small-fast and unmatched
-        unknown-slug requests are not evidence either way, so a Task run in
+        attributed to a sub-agent by its billing-header flag or the
+        pending-prompt match (its steps 4-5, reached only when the slug is
+        neither the subagent slug nor a main-thread slug) — i.e. a request
+        that should have carried the subagent slug and didn't. Main-thread,
+        small-fast and unmatched unknown-slug requests are not evidence
+        either way, so a Task run in
         the background while the main thread keeps working, or a refused
         request re-run through the filter once per retry attempt, cannot
         trip it. A Task that dies inside Claude Code before any sub-agent
-        request reaches the bridge is cleared from `_pending_subagents` in
-        `_handle_user`, so nothing can match its prompt afterwards.
+        request reaches the bridge is cleared from `_pending_subagents` when
+        its tool_result (or `task_notification`) arrives, so nothing can
+        match its prompt afterwards.
 
         `_SUBAGENT_SLUG_DRIFT_WARN_THRESHOLD` tolerates the documented race
         where the subagent env var hasn't propagated to a sub-agent's very
@@ -594,56 +666,182 @@ class LiveConsumer(ModelEventSink):
                 "version drift or slug rejection likely"
             )
 
-    @staticmethod
-    def _first_user_text(input_messages: list[ChatMessage]) -> str | None:
-        """Return the text of the first ChatMessageUser past leading system messages."""
+    def _billing_subagent_flag(self, input_messages: list[ChatMessage]) -> bool | None:
+        """Whether the request's billing header marks it a sub-agent's.
+
+        `None` when the request carries no billing header (older Claude Code,
+        or a filter removed it). Seeing the flag records that this Claude
+        Code sends it (`_subagent_flag_seen`).
+        """
         for msg in input_messages:
-            if isinstance(msg, ChatMessageSystem):
+            if not isinstance(msg, ChatMessageSystem):
                 continue
-            if isinstance(msg, ChatMessageUser):
-                return msg.text
-            break
+            header = _BILLING_HEADER.search(msg.text)
+            if header is None:
+                continue
+            flagged = _SUBAGENT_FLAG.search(header.group(1)) is not None
+            if flagged:
+                self._subagent_flag_seen = True
+            return flagged
         return None
+
+    def _header_rules_out_subagent(
+        self, input_messages: list[ChatMessage], slug: str | None
+    ) -> bool:
+        """Whether the billing header says this request is not a sub-agent's.
+
+        True only when the header is present without `cc_is_subagent=true`
+        and an earlier request carried that flag: before any sighting, a
+        missing flag may just mean this Claude Code doesn't send it. Never
+        under the subagent slug: the slug wins over the header in both
+        directions, as a main-thread slug does in `classify`, so the
+        filter-time label and the span agree. The header is read first
+        whatever the slug, so a flagged subagent-slug request still records
+        that this Claude Code sends the flag.
+        """
+        flag = self._billing_subagent_flag(input_messages)
+        return (
+            flag is False and self._subagent_flag_seen and slug != self._models.subagent
+        )
+
+    def _check_subagent_flag_drift(
+        self, slug: str | None, messages: list[ChatMessage]
+    ) -> None:
+        """Warn (once, per consumer instance) if the header flag goes missing.
+
+        After `cc_is_subagent=true` has been seen, a header without it rules
+        a request out of sub-agent spans (`_header_rules_out_subagent`). A
+        request under the subagent slug whose header lacks the flag is the
+        direct evidence that this no longer holds: it is still placed by its
+        slug, but a sub-agent request with an unrecognized slug and no flag
+        would now be kept out of its span silently. The mirror image of
+        `_check_subagent_slug_drift`.
+        """
+        if (
+            slug != self._models.subagent
+            or self._subagent_flag_drift_warned
+            or not self._subagent_flag_seen
+            or self._billing_subagent_flag(messages) is not False
+        ):
+            return
+        self._subagent_flag_drift_warned = True
+        logger.warning(
+            "a claude code request carrying the subagent model slug "
+            f"{self._models.subagent!r} has a billing header without "
+            "cc_is_subagent=true, which earlier subagent requests carried -- "
+            "requests without the flag are kept out of subagent spans; CC "
+            "version drift likely"
+        )
+
+    @staticmethod
+    def _opening_user_text(input_messages: list[ChatMessage]) -> str | None:
+        """Text of the user messages before the first assistant turn.
+
+        A sub-agent's opening carries its Task prompt, but not necessarily
+        as the first user message's only text: Claude Code 2.1.311 sends
+        `<system-reminder>` text first, sometimes as a message of its own.
+        System messages (hoisted header and prompt blocks) are skipped.
+        """
+        texts: list[str] = []
+        for msg in input_messages:
+            if isinstance(msg, ChatMessageAssistant):
+                break
+            if isinstance(msg, ChatMessageUser):
+                texts.append(msg.text)
+        return "\n".join(texts) if texts else None
 
     # ------------------------------------------------------------------
     # JSONL event handlers
     # ------------------------------------------------------------------
 
     def _handle_user(self, raw: dict[str, Any]) -> None:
-        """Close agent spans and clear pending-sub-agent entries for tool_result blocks."""
+        """End the sub-agents whose Task/Agent tool_result reports them done.
+
+        A tool_result that only reports a background launch leaves the
+        sub-agent running (`_handle_system` ends it on `task_notification`).
+        """
         message = raw.get("message", {})
         content = message.get("content", [])
         if not isinstance(content, list):
             return
 
-        for block in content:
-            if not isinstance(block, dict):
+        tool_results = [
+            block
+            for block in content
+            if isinstance(block, dict)
+            and block.get("type") == "tool_result"
+            and block.get("tool_use_id")
+        ]
+        for block in tool_results:
+            tool_use_id = block["tool_use_id"]
+            if (
+                tool_use_id not in self._open_agents
+                and tool_use_id not in self._pending_subagents
+            ):
+                continue  # not a Task/Agent tool_result
+            if self._launched_in_background(raw, block, len(tool_results)):
                 continue
-            if block.get("type") != "tool_result":
-                continue
-            tool_use_id = block.get("tool_use_id")
-            if not tool_use_id:
-                continue
-            # Clear pending-subagent entry (no-op for non-Task tool_results).
-            prompt = self._pending_subagents.pop(tool_use_id, None)
-            if prompt is not None:
-                self._detached_prompts[tool_use_id] = prompt
-            agent = self._open_agents.pop(tool_use_id, None)
-            if agent is None:
-                continue
+            self._end_subagent(tool_use_id)
+
+    @staticmethod
+    def _launched_in_background(
+        raw: dict[str, Any], block: dict[str, Any], tool_result_count: int
+    ) -> bool:
+        """Whether a Task/Agent tool_result only reports a background launch.
+
+        Claude Code 2.1.311 describes the result in the line's structured
+        `tool_use_result`: `status: "async_launched"` and `isAsync: true` for a
+        background launch, `status: "completed"` for a foreground sub-agent
+        that finished. It describes the line's only tool_result, so it is read
+        only then, and when it carries a status it decides: a finished
+        sub-agent's answer may itself start with the launch text.
+
+        The result text is the fallback, for lines with no structured status:
+        a line with several tool_results, or a Claude Code build that doesn't
+        send the structured result.
+        """
+        structured = raw.get("tool_use_result", raw.get("toolUseResult"))
+        if tool_result_count == 1 and isinstance(structured, dict):
+            status = structured.get("status")
+            is_async = structured.get("isAsync")
+            if isinstance(status, str) or isinstance(is_async, bool):
+                return status == "async_launched" or is_async is True
+        result = block.get("content")
+        if isinstance(result, list):
+            result = "\n".join(
+                str(part.get("text", ""))
+                for part in result
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        return isinstance(result, str) and result.lstrip().startswith(
+            _ASYNC_LAUNCH_TEXT
+        )
+
+    def _end_subagent(self, tool_use_id: str) -> None:
+        """Close a sub-agent's span and retire its pending entry (idempotent)."""
+        prompt = self._pending_subagents.pop(tool_use_id, None)
+        if prompt is not None:
+            self._detached_prompts[tool_use_id] = prompt
+        agent = self._open_agents.pop(tool_use_id, None)
+        if agent is not None:
             transcript()._event(SpanEndEvent(id=agent.span_id))
 
     def _handle_system(self, raw: dict[str, Any]) -> None:
-        """Handle system events (only compaction boundaries today).
+        """Handle system events: background sub-agent ends and compaction.
 
-        Sub-agent lifecycle (`task_started`/`task_notification`) intentionally
-        ignored: registration happens in `on_complete` (synchronous with the
-        parent's bridge call, ahead of any race), and cleanup happens in
-        `_handle_user` on the matching tool_result.
+        `task_notification` reports that a Task/Agent sub-agent finished
+        (completed, failed or stopped); for one launched in the background
+        it is the first sign its work is over. `task_started` is ignored:
+        registration happens in `on_complete` (synchronous with the parent's
+        bridge call, ahead of any race).
         """
         subtype = raw.get("subtype")
         if subtype == "compact_boundary":
             self._handle_compact_boundary(raw)
+        elif subtype == "task_notification":
+            tool_use_id = raw.get("tool_use_id")
+            if isinstance(tool_use_id, str) and tool_use_id:
+                self._end_subagent(tool_use_id)
 
     def _handle_compact_boundary(self, raw: dict[str, Any]) -> None:
         parent_tool_use_id = raw.get("parent_tool_use_id")
