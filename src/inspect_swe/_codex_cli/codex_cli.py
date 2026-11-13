@@ -730,9 +730,9 @@ def codex_cli(
                     "codex_attempt_count", lambda: attempt_count, 0
                 )
                 while True:
-                    # append prompt
+                    # prompt on stdin (`-`): Linux caps one argv entry at 128 KiB
                     agent_cmd = cmd.copy()
-                    agent_cmd.append(agent_prompt)
+                    agent_cmd.append("-")
 
                     # resume previous conversation
                     if (
@@ -762,11 +762,16 @@ def codex_cli(
                             required=True,
                         )
 
+                    # exec_remote closes stdin after writing `input`, giving
+                    # codex the EOF it needs
                     result = await sbox.exec_remote(
-                        cmd=["bash", "-c", 'exec 0</dev/null; "$@"', "bash"]
-                        + agent_cmd,
+                        cmd=agent_cmd,
                         options=ExecRemoteAwaitableOptions(
-                            cwd=agent_cwd, env=agent_env, user=user, concurrency=False
+                            input=agent_prompt,
+                            cwd=agent_cwd,
+                            env=agent_env,
+                            user=user,
+                            concurrency=False,
                         ),
                         stream=False,
                     )
