@@ -403,6 +403,12 @@ def codex_mcp_server_config(
     contract, mirroring the readiness-gate scoping.
     """
     server_config = mcp_server.model_dump(exclude={"name", "tools"}, exclude_none=True)
+    # config.toml is readable by the agent, so HTTP auth headers are not
+    # written there (credential boundary in AGENTS.md)
+    server_config.pop("headers", None)
+    # codex reads a tool allowlist as `enabled_tools` (RawMcpServerConfig)
+    if isinstance(mcp_server.tools, list):
+        server_config["enabled_tools"] = list(mcp_server.tools)
     if mcp_server.name in bridged_server_names:
         server_config["required"] = True
         if bridged_startup_timeout is not None:
