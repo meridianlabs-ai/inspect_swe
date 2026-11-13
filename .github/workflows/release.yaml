@@ -10,7 +10,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: meridianlabs-ai/actions/.github/workflows/release-please-python.yml@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
+    uses: meridianlabs-ai/actions/.github/workflows/release-please-python.yml@57adfb7a3247f06e4f1c033f461a54e0d83d04f5 # main
     with:
       # Publish + the approval gate live in publish.yml (a separate `on: release`
       # run), so the approval ping is posted from there (deep-links to the paused
