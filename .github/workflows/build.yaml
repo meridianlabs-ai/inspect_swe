@@ -145,7 +145,7 @@ jobs:
       # pin every file.
       - name: Install build toolchain
         if: needs.changes.outputs.build == 'true'
-        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
+        uses: meridianlabs-ai/actions/install-python-dependencies@6245f003b5628736e543468ca41f61a42549643f # main
         with:
           versions: hashed-requirements
           python-version: ${{ matrix.python-version }}
