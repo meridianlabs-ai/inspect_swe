@@ -1,7 +1,7 @@
 """Claude Code sub-agent attribution by the bridge's `ModelEventSink` (`LiveConsumer`).
 
 A parent's Task/Agent tool call opens a sub-agent span in `on_complete`. Each
-later request is attributed by substring-matching its first user message
+later request is attributed by substring-matching its opening user messages
 against the pending sub-agent prompts: in `on_start` on an inspect_ai with
 `ModelEventSink.on_start` (once per generate, which inspect_ai then runs under
 the span), else in `on_pending`.
