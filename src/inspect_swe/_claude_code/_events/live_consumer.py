@@ -37,7 +37,7 @@ Three responsibilities, all driven from the same `LiveConsumer` instance:
    span. Zero hits → main-agent call (outer span). Multiple hits (rare;
    concurrent sub-agents with substring-overlapping prompts) → outer span
    as defensive default. The whole opening is scanned, not just the first
-   user message: Claude Code 2.1.3xx leads a sub-agent's conversation with
+   user message: Claude Code 2.1.311 leads a sub-agent's conversation with
    `<system-reminder>` text and the Task prompt can arrive in a later part.
 
    Two structural signals keep other threads out of sub-agent spans
@@ -738,7 +738,7 @@ class LiveConsumer(ModelEventSink):
         """Text of the user messages before the first assistant turn.
 
         A sub-agent's opening carries its Task prompt, but not necessarily
-        as the first user message's only text: Claude Code 2.1.3xx sends
+        as the first user message's only text: Claude Code 2.1.311 sends
         `<system-reminder>` text first, sometimes as a message of its own.
         System messages (hoisted header and prompt blocks) are skipped.
         """
@@ -789,7 +789,7 @@ class LiveConsumer(ModelEventSink):
     ) -> bool:
         """Whether a Task/Agent tool_result only reports a background launch.
 
-        Claude Code 2.1.3xx describes the result in the line's structured
+        Claude Code 2.1.311 describes the result in the line's structured
         `tool_use_result` (`status: "async_launched"`, `isAsync: true`); that
         describes the line's only tool_result, so it is read only then. The
         result text is the fallback.

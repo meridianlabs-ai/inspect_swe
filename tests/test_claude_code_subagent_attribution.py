@@ -1,4 +1,4 @@
-"""Claude Code sub-agent span attribution against the request shapes of 2.1.3xx.
+"""Claude Code sub-agent span attribution against Claude Code 2.1.311 requests.
 
 Each request below mirrors what Claude Code 2.1.311 sends through the bridge
 (captured from live runs): a billing header system block that carries
