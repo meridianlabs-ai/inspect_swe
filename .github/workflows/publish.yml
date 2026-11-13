@@ -21,7 +21,7 @@ jobs:
     if: ${{ github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: meridianlabs-ai/actions/slack-approval-ping@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
+      - uses: meridianlabs-ai/actions/slack-approval-ping@6245f003b5628736e543468ca41f61a42549643f # main
         with:
           webhook: ${{ secrets.SLACK_APPROVALS_WEBHOOK_URL }}
           approvers: "jjallaire dragonstyle epatey"
@@ -76,7 +76,7 @@ jobs:
     needs: check-ref
     permissions:
       contents: read
-    uses: meridianlabs-ai/actions/.github/workflows/build-python-dist.yml@b6f97e6b72216233d805ce570ceb7fa2071f8a93 # main
+    uses: meridianlabs-ai/actions/.github/workflows/build-python-dist.yml@6245f003b5628736e543468ca41f61a42549643f # main
     with:
       python-version: "3.11"
 
@@ -108,7 +108,7 @@ jobs:
       contents: read
       pages: write
       id-token: write
-    uses: meridianlabs-ai/actions/.github/workflows/publish-docs.yml@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
+    uses: meridianlabs-ai/actions/.github/workflows/publish-docs.yml@6245f003b5628736e543468ca41f61a42549643f # main
     with:
       python-version: "3.14"
       extras: doc
