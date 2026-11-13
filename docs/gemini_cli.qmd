@@ -47,16 +47,20 @@ For example, here we specify a custom system prompt:
 
 ## Installation
 
-By default, the agent will download the current stable version of {{< meta agent_name >}} and copy it to the sandbox. You can override this behaviour using the `version` option:
+By default, the agent will download the `"latest"` version of {{< meta agent_name >}} described below and copy it to the sandbox. You can override this behaviour using the `version` option:
 
 | Option | Description |
 |------------------------------------|------------------------------------|
-| `"auto"` | Use any available version of {{< meta agent_name >}} in the sandbox, otherwise download the latest version. |
+| `"auto"` | Use any available version of {{< meta agent_name >}} in the sandbox, otherwise download the same version as `"latest"`. |
 | `"sandbox"` | Use the version of {{< meta agent_name >}} in the sandbox (raises `RuntimeError` if not available in the sandbox) |
-| `"latest"` | Download and use the very latest version. |
-| `"x.x.x-preview.y"` | Download and use a specific version number. |
+| `"latest"` | Download and use the newest release that is at least 7 days old. |
+| `"x.x.x"` | Download and use a specific version number. |
 
 : {tbl-colwidths=\[25,75\]}
+
+{{< meta agent_name >}} is installed with `npm install` on the host and then copied to the sandbox. The install uses only releases that have been on npm for at least 7 days, for {{< meta agent_name >}} and for each of its dependencies. A specific version that is less than 7 days old fails to install. Package install scripts do not run.
+
+On npm 11.10 to 11.14, a `min-release-age` setting in your `.npmrc` makes this install fail with "--min-release-age cannot be provided when using --before". Upgrade to npm 11.15 or later, or remove the setting.
 
 {{< include _snippets/agent_installation.md >}}
 

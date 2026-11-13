@@ -7,12 +7,15 @@ and/or npm packages installed in sandboxes.
 import json
 import lzma
 import os
+import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from logging import getLogger
+from typing import Any
 
 from inspect_ai._util.logger import warn_once
 from inspect_ai.util import SandboxEnvironment, concurrency
@@ -24,6 +27,15 @@ from .sandbox import SANDBOX_INSTALL_DIR, SandboxPlatform, bash_command, sandbox
 logger = getLogger(__name__)
 
 NODE_VERSION = "20.11.0"
+
+NPM_RELEASE_COOLDOWN = timedelta(days=7)
+"""How long an npm release must be public before it is installed on the host.
+
+Applies to every package in the installed tree. A compromised or broken
+release is usually found and removed or deprecated within this time.
+"""
+
+_STABLE_SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
 # npm gained --libc in 10.3.0. Earlier versions ignore `--libc=...` and
@@ -148,8 +160,26 @@ async def _download_and_install_node(
     return node_path
 
 
+def npm_cooldown_cutoff() -> datetime:
+    """Return the newest publish time an npm install may use (whole seconds)."""
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    return now - NPM_RELEASE_COOLDOWN
+
+
 def resolve_npm_package_version(package: str) -> str:
-    """Get the latest version of an npm package from the registry.
+    """Get the newest version of an npm package that is past the cooldown.
+
+    Returns the ``latest`` version if it was published by
+    ``npm_cooldown_cutoff()``, otherwise the highest plain ``X.Y.Z`` version
+    below it that was. Unpublished versions keep their ``time`` entry but
+    leave ``versions``, so they are skipped.
+
+    This is not left to ``npm install {package}@latest --before``: when
+    ``latest`` is inside the cooldown, npm prefers versions whose ``engines``
+    accept the host's Node, which is not the sandbox's, so the result would
+    depend on the host. ``npm view`` ignores ``--before``, so the choice is
+    made here from one metadata request. Unlike npm's fallback, this does not
+    skip deprecated versions.
 
     Requires ``npm`` to be available on the host.
     """
@@ -159,15 +189,61 @@ def resolve_npm_package_version(package: str) -> str:
             "Please install Node.js (https://nodejs.org/) and ensure npm is on "
             "your PATH."
         )
-    result = subprocess.run(
-        ["npm", "view", package, "version"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    # an empty directory, as for create_npm_bundle, so a project .npmrc in the
+    # caller's working directory applies to neither
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(
+            ["npm", "view", package, "time", "versions", "dist-tags", "--json"],
+            cwd=tmpdir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
     if result.returncode != 0:
         raise RuntimeError(f"Failed to resolve version of {package}: {result.stderr}")
-    return result.stdout.strip()
+    packument = json.loads(result.stdout)
+    cutoff = npm_cooldown_cutoff()
+    version = _latest_version_before(packument, cutoff)
+    if version is None:
+        raise RuntimeError(
+            f"No release of {package} up to its latest version "
+            f"({packument['dist-tags']['latest']}) was published before "
+            f"{cutoff.isoformat()} (the {NPM_RELEASE_COOLDOWN.days}-day cooldown)."
+        )
+    return version
+
+
+def _latest_version_before(packument: dict[str, Any], cutoff: datetime) -> str | None:
+    latest = str(packument["dist-tags"]["latest"])
+    versions = set(packument["versions"])
+    published = {
+        version: datetime.fromisoformat(time.replace("Z", "+00:00"))
+        for version, time in packument["time"].items()
+        if version in versions
+    }
+    if latest in published and published[latest] <= cutoff:
+        return latest
+
+    latest_key = _semver_key(re.split(r"[-+]", latest)[0])
+    if latest_key is None:
+        raise RuntimeError(f"Unexpected latest dist-tag version: {latest}")
+    candidates = [
+        (key, version)
+        for version, time in published.items()
+        if time <= cutoff
+        and (key := _semver_key(version)) is not None
+        and key < latest_key
+    ]
+    return max(candidates)[1] if candidates else None
+
+
+def _semver_key(version: str) -> tuple[int, int, int] | None:
+    """Return a sort key for a stable ``X.Y.Z`` version, or None otherwise."""
+    match = _STABLE_SEMVER.match(version)
+    if match is None:
+        return None
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch)
 
 
 def create_npm_bundle(
@@ -175,7 +251,6 @@ def create_npm_bundle(
     version: str,
     platform: SandboxPlatform,
     cache_name: str,
-    ignore_scripts: bool = False,
 ) -> bytes:
     """Create an npm package bundle with dependencies for the target platform.
 
@@ -190,28 +265,33 @@ def create_npm_bundle(
     cached under the name used before ``--libc`` was passed, so the
     libc-specific bundle is built once npm is upgraded.
 
+    The install passes ``--before`` with ``npm_cooldown_cutoff()``, so every
+    package in the tree is a release at least ``NPM_RELEASE_COOLDOWN`` old;
+    a ``version`` published after the cutoff fails to install. It also passes ``--ignore-scripts``:
+    install scripts would run on the host and build for the host's platform,
+    not the sandbox's. The agent CLIs bundled with this need none
+    (gemini-cli's optional ``node-pty`` and ``@github/keytar`` builds are
+    unused; it loads the prebuilt ``@lydell/node-pty`` package instead).
+
     Args:
         package: npm package name (e.g. ``"@google/gemini-cli"``).
         version: Exact semver version string.
         platform: Target sandbox platform.
         cache_name: Subdirectory name inside the package cache for
             storing the tarball (also used as the cache-key prefix).
-        ignore_scripts: If ``True``, pass ``--ignore-scripts`` so package
-            lifecycle scripts (notably ``postinstall``) do not run on the
-            host. Useful when the postinstall is host-platform-specific
-            and must instead run inside the sandbox after extraction.
     """
     cpu = platform.split("-")[1]
     libc = "musl" if platform.endswith("-musl") else "glibc"
 
     cache_dir = package_cache_dir(cache_name)
-    suffix = "-noscripts" if ignore_scripts else ""
-    # bundles cached before --libc was passed can lack the sandbox's
-    # libc-specific packages or hold the wrong ones; "-libc" rebuilds them
-    cache_path = cache_dir / f"{cache_name}-{version}-{platform}-libc{suffix}.tar.gz"
+    # bundles cached before --libc, the cooldown and --ignore-scripts were
+    # passed lack the "-libc-noscripts" suffix, so they are rebuilt
+    cache_path = cache_dir / f"{cache_name}-{version}-{platform}-libc-noscripts.tar.gz"
     # npm < 10.3 ignores --libc and builds what was built before it was
     # passed, so those bundles keep the pre-libc name
-    no_libc_cache_path = cache_dir / f"{cache_name}-{version}-{platform}{suffix}.tar.gz"
+    no_libc_cache_path = (
+        cache_dir / f"{cache_name}-{version}-{platform}-noscripts.tar.gz"
+    )
 
     if cache_path.exists():
         with open(cache_path, "rb") as f:
@@ -255,6 +335,8 @@ def create_npm_bundle(
             if no_libc_cache_path.exists():
                 return no_libc_cache_path.read_bytes()
 
+        before = npm_cooldown_cutoff().isoformat()
+
         npm_cmd = [
             "npm",
             "install",
@@ -266,9 +348,14 @@ def create_npm_bundle(
             cpu,
             # npm before 10.3 lacks --libc; "--libc glibc" would install "glibc"
             f"--libc={libc}",
+            "--ignore-scripts",
+            "--before",
+            before,
+            # npm 11.17+ lets a user's min-release-age-exclude lift --before
+            "--min-release-age-exclude=",
+            # the host's Node is not the sandbox's, so its engines don't apply
+            "--engine-strict=false",
         ]
-        if ignore_scripts:
-            npm_cmd.append("--ignore-scripts")
 
         result = subprocess.run(
             npm_cmd,
@@ -280,7 +367,9 @@ def create_npm_bundle(
 
         if result.returncode != 0:
             raise RuntimeError(
-                f"Failed to run npm install for {package}@{version}:\n"
+                f"Failed to run npm install for {package}@{version} with "
+                f"releases published before {before} "
+                f"(the {NPM_RELEASE_COOLDOWN.days}-day cooldown):\n"
                 f"stdout: {result.stdout}\n"
                 f"stderr: {result.stderr}"
             )
