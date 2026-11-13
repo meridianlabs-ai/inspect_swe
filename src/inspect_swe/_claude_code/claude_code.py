@@ -57,6 +57,7 @@ from inspect_swe._util.websearch import web_search_tool_disallowed
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
 from .._util.agentcontext import classify_filter
+from .._util.identity import refuse_centaur_in_scope, resolve_agent_identity
 from .._util.messages import build_user_prompt
 from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
@@ -235,7 +236,10 @@ def claude_code(
             they override the sandbox defaults inspect_swe sets (see
             `_claude_code/env.py`); e.g. `CLAUDE_CODE_DISABLE_AUTO_MEMORY="0"`
             re-enables auto-memory.
-        user: User to execute claude code with.
+        user: User to execute claude code with. Inside a sandbox identity scope
+            (such as inspect_swarm's users isolation), claude code runs as the scope's
+            user, in the scope's working directory unless `cwd` is set, and
+            `centaur` mode raises an error.
         sandbox: Optional sandbox environment name.
         version: Version of claude code to use. One of:
             - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
@@ -243,6 +247,9 @@ def claude_code(
             - "stable": Download and use the current stable version of claude code.
             - "latest": Download and use the very latest version of claude code.
             - "x.x.x": Download and use a specific version of claude code.
+            Inside a sandbox identity scope, "auto" downloads a verified copy
+            rather than using one found in the sandbox, and "sandbox" raises an
+            error.
         debug: Add `--debug` cli flag and trace all debug output.
         allowlist_mcp_tools: Whether to add static caller-provided MCP tools to
             `--allowed-tools` (default `True`). It matters in every permission
@@ -315,6 +322,12 @@ def claude_code(
     bridged_tools_specs = resolve_bridged_tools(bridged_tools)
 
     async def execute(state: AgentState) -> AgentState:
+        # inside a sandbox identity scope, run as the scope's user, in its
+        # working directory and with its home, resolved before any setup
+        if centaur is not False:
+            refuse_centaur_in_scope("claude_code", sandbox)
+        identity = await resolve_agent_identity(sandbox, user, cwd)
+
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "claude_code_model_port"
         port = store().get(MODEL_PORT, 3000) + 1
@@ -384,7 +397,10 @@ def claude_code(
 
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
-                claude_code_binary_source(), version, user, sandbox_env(sandbox)
+                claude_code_binary_source(),
+                version,
+                identity.user,
+                sandbox_env(sandbox),
             )
 
             permission_flag = (
@@ -440,17 +456,27 @@ def claude_code(
             sbox = sandbox_env(sandbox)
 
             # resolve working directory (home dir if sandbox default is '/')
-            agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
+            agent_cwd = await resolve_agent_cwd(
+                sbox, identity.user, identity.cwd, identity.home_env
+            )
 
-            # install skills
+            # install skills (inside a scope, an omitted user installs them
+            # as the scope's user)
             if resolved_skills is not None:
                 skills_dir = join_path(agent_cwd, ".claude/skills")
-                await install_skills(resolved_skills, sbox, user, skills_dir)
+                await install_skills(
+                    resolved_skills,
+                    sbox,
+                    None if identity.scoped else identity.user,
+                    skills_dir,
+                )
 
             # define agent env
             agent_env = claude_code_agent_env(
                 bridge_port=bridge.port, models=models, env=env
             )
+            if identity.home_env is not None:
+                agent_env = identity.home_env | agent_env
 
             # Claude Code 2.1.37 reports "has Authorization header: false"
             # despite ANTHROPIC_AUTH_TOKEN being set in the environment,
@@ -458,7 +484,9 @@ def claude_code(
             # output).  Providing an apiKeyHelper in settings.json
             # supplies a key through a path that does work.
             api_key = agent_env.get("ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge")
-            await _seed_claude_config(sbox, api_key, user, agent_cwd)
+            await _seed_claude_config(
+                sbox, api_key, identity.user, agent_cwd, identity.home_env
+            )
 
             # Pre-launch MCP readiness gate. Both centaur (interactive) and
             # non-centaur retry-loop launches read the MCP config at startup,
@@ -566,7 +594,7 @@ def claude_code(
                             options=ExecRemoteStreamingOptions(
                                 cwd=agent_cwd,
                                 env=agent_env,
-                                user=user,
+                                user=identity.user,
                                 concurrency=False,
                             ),
                             stream=True,
@@ -694,12 +722,15 @@ async def _seed_claude_config(
     api_key: str,
     user: str | None,
     cwd: str,
+    home_env: dict[str, str] | None = None,
 ) -> None:
     """Write ~/.claude/settings.json with an apiKeyHelper.
 
     Claude Code 2.1.37 does not use ANTHROPIC_AUTH_TOKEN from the
     environment for API requests.  Providing an apiKeyHelper in
     settings.json supplies the key through a path it does use.
+
+    `home_env` sets the `HOME` the file is written under.
     """
     await sbox.exec(
         cmd=[
@@ -712,6 +743,7 @@ async def _seed_claude_config(
         ],
         user=user,
         cwd=cwd,
+        env=home_env,
     )
 
 
