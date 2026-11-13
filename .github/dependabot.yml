@@ -7,10 +7,7 @@ updates:
   # cooldown gives a compromised release time to be caught before it is
   # proposed; security updates skip it.
   - package-ecosystem: "github-actions"
-    # / covers the workflows; the local composite actions pin actions too.
-    directories:
-      - "/"
-      - "/.github/actions/*"
+    directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
@@ -25,15 +22,12 @@ updates:
     commit-message:
       prefix: "ci"
   # Bumps uv.lock. The cooldown matches `exclude-newer` in pyproject.toml, and
-  # its exclude list matches the "6 hours" entries in `exclude-newer-package`
-  # there (a dated emergency entry is locked by hand): Dependabot's cooldown
-  # counts whole days, so those packages' 6-hour cooldown is left to uv. They
-  # get their own group, so a broken update elsewhere can't hold them up. It
-  # comes first because a package that matches both groups goes to the first.
-  # inspect-ai comes from inspect_ai main. CI moves it to the latest commit on
-  # every run, but Dependabot resolves against the commit in uv.lock. Dependabot
-  # updates that commit too, or its other updates fail once they need a newer
-  # inspect-ai.
+  # its exclude list matches the in-house packages (no uv cooldown, `false`)
+  # and the "6 hours" provider SDKs in `exclude-newer-package` there (a dated
+  # emergency entry is locked by hand): Dependabot's cooldown counts whole
+  # days, so those packages' cooldown is left to uv. They get their own group,
+  # so a broken update elsewhere can't hold them up. It comes first because a
+  # package that matches both groups goes to the first.
   - package-ecosystem: "uv"
     versioning-strategy: "lockfile-only"
     directory: "/"

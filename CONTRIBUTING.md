@@ -24,12 +24,12 @@ make hooks
 
 ### Dependencies
 
-[DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions tells how the Inspect repositories install and change dependencies. It covers the lock file, the cooldown, the canaries, inspect_ai `main`, the release build tools, and the procedures to add or update a dependency. Follow it. It is the same for every Inspect repository, so this file does not repeat it.
+[DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions tells how the Inspect repositories install and change dependencies. It covers the lock file, the cooldown, the canaries, the release build tools, and the procedures to add or update a dependency. Follow it. It is the same for every Inspect repository, so this file does not repeat it.
 
 For this repository:
 
-- inspect_swe needs unreleased inspect_ai changes. `[tool.uv.sources]` in `pyproject.toml` points `inspect-ai` at inspect_ai `main`.
-- The 6-hour packages are in `[tool.uv.exclude-newer-package]` in `pyproject.toml`.
+- inspect-ai comes from PyPI, like every other dependency. To develop against an unreleased inspect_ai, install a local checkout over the locked one with `uv pip install --no-deps -e ../inspect_ai` (a later `uv sync` or `uv run` without `--no-sync` puts the locked one back). That is for local development only: a PR that needs the unreleased inspect_ai can't merge until that inspect_ai is published on PyPI and the `inspect-ai` floor in `pyproject.toml` and `uv.lock` are updated here.
+- The cooldown exceptions are in `[tool.uv.exclude-newer-package]` in `pyproject.toml`: in-house packages have none (`false`), and model provider SDKs have 6 hours.
 
 ## Checks and tests
 
