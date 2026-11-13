@@ -60,6 +60,8 @@ By default, the agent will download the `"latest"` version of {{< meta agent_nam
 
 {{< meta agent_name >}} is installed with `npm install` on the host and then copied to the sandbox. The install uses only releases that have been on npm for at least 7 days, for {{< meta agent_name >}} and for each of its dependencies. A specific version that is less than 7 days old fails to install. Package install scripts do not run.
 
+On npm 11.10 to 11.14, a `min-release-age` setting in your `.npmrc` makes this install fail with "--min-release-age cannot be provided when using --before". Upgrade to npm 11.15 or later, or remove the setting.
+
 {{< include _snippets/agent_installation.md >}}
 
 {{< include _snippets/agent_centaur.md >}}

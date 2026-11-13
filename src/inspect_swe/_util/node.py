@@ -131,7 +131,8 @@ def resolve_npm_package_version(package: str) -> str:
     ``latest`` is inside the cooldown, npm prefers versions whose ``engines``
     accept the host's Node, which is not the sandbox's, so the result would
     depend on the host. ``npm view`` ignores ``--before``, so the choice is
-    made here from one metadata request.
+    made here from one metadata request. Unlike npm's fallback, this does not
+    skip deprecated versions.
 
     Requires ``npm`` to be available on the host.
     """
@@ -269,6 +270,10 @@ def create_npm_bundle(
             "--ignore-scripts",
             "--before",
             before,
+            # npm 11.17+ lets a user's min-release-age-exclude lift --before
+            "--min-release-age-exclude=",
+            # the host's Node is not the sandbox's, so its engines don't apply
+            "--engine-strict=false",
         ]
 
         result = subprocess.run(

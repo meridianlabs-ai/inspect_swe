@@ -1,18 +1,28 @@
 """Tests for the release cooldown and script policy of host npm installs."""
 
+import base64
+import hashlib
+import io
 import json
 import shutil
 import subprocess
-from collections.abc import Iterator
+import tarfile
+import threading
+from collections.abc import Awaitable, Callable, Iterator
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
 import pytest
+from inspect_ai.util import SandboxEnvironment
 from inspect_swe._gemini_cli import agentbinary as gemini_agentbinary
 from inspect_swe._util import node, versioncache
+from inspect_swe.acp._agents.claude_code import agentbinary as claude_acp_agentbinary
+from inspect_swe.acp._agents.codex_cli import agentbinary as codex_acp_agentbinary
 
 from tests.conftest import skip_if_github_action
 
@@ -182,3 +192,194 @@ def test_gemini_latest_resolves_through_npm_cooldown() -> None:
         version = anyio.run(gemini_agentbinary.resolve_gemini_version, "latest")
     assert version == "1.2.0"
     resolve.assert_called_once_with("@google/gemini-cli")
+
+
+# ---------------------------------------------------------------------------
+# Real npm against a local registry
+# ---------------------------------------------------------------------------
+
+needs_npm = pytest.mark.skipif(shutil.which("npm") is None, reason="needs npm")
+
+
+def _ago(days: float) -> str:
+    published = datetime.now(timezone.utc) - timedelta(days=days)
+    return published.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _tarball(manifest: dict[str, Any]) -> bytes:
+    data = json.dumps(manifest).encode()
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        info = tarfile.TarInfo("package/package.json")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+class Registry:
+    """A minimal npm registry serving full packuments and tarballs over HTTP.
+
+    `releases` maps a package name to `(version, days ago, extra manifest
+    fields)` tuples; the last one listed is the `latest` dist-tag.
+    """
+
+    def __init__(
+        self, releases: dict[str, list[tuple[str, float, dict[str, Any]]]]
+    ) -> None:
+        self.files: dict[str, bytes] = {}
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/"
+        for name, versions in releases.items():
+            packument: dict[str, Any] = {
+                "name": name,
+                "dist-tags": {"latest": versions[-1][0]},
+                "versions": {},
+                "time": {"created": _ago(365), "modified": _ago(0)},
+            }
+            for version, days_ago, extra in versions:
+                manifest = {"name": name, "version": version, **extra}
+                tgz = _tarball(manifest)
+                path = f"{name}/-/{name}-{version}.tgz"
+                self.files[path] = tgz
+                digest = base64.b64encode(hashlib.sha512(tgz).digest()).decode()
+                packument["versions"][version] = {
+                    **manifest,
+                    "dist": {
+                        "tarball": self.url + path,
+                        "integrity": f"sha512-{digest}",
+                    },
+                }
+                packument["time"][version] = _ago(days_ago)
+            self.files[name] = json.dumps(packument).encode()
+
+    def _handler(self) -> type[BaseHTTPRequestHandler]:
+        files = self.files
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                body = files.get(self.path.lstrip("/"))
+                self.send_response(200 if body is not None else 404)
+                self.end_headers()
+                self.wfile.write(body or b"{}")
+
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
+
+        return Handler
+
+    def __enter__(self) -> "Registry":
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def npm_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Isolate npm from the developer's config and cache; return the userconfig."""
+    userconfig = tmp_path / "npmrc"
+    userconfig.write_text("")
+    (tmp_path / "global-npmrc").write_text("")
+    monkeypatch.setenv("npm_config_userconfig", str(userconfig))
+    monkeypatch.setenv("npm_config_globalconfig", str(tmp_path / "global-npmrc"))
+    monkeypatch.setenv("npm_config_cache", str(tmp_path / "npm-cache"))
+    monkeypatch.setenv("npm_config_update_notifier", "false")
+    monkeypatch.setattr(node, "package_cache_dir", lambda _: tmp_path / "bundles")
+    return userconfig
+
+
+def _installed_version(bundle: bytes, package: str) -> str:
+    with tarfile.open(fileobj=io.BytesIO(bundle)) as tar:
+        member = tar.extractfile(f"node_modules/{package}/package.json")
+        assert member is not None
+        return str(json.load(member)["version"])
+
+
+# The agent's newest release is inside the cooldown. Below it, 1.1.0 needs a
+# newer Node than any host has and 1.0.0 doesn't. `agent@latest --before`
+# lets npm prefer the release whose `engines` accept the host's Node (1.0.0),
+# so the result would depend on the host, whose Node is not the sandbox's.
+_AGENT_RELEASES: dict[str, list[tuple[str, float, dict[str, Any]]]] = {
+    "agent": [
+        ("1.0.0", 30, {}),
+        ("1.1.0", 20, {"engines": {"node": ">=99"}}),
+        ("1.2.0", 1, {}),
+    ]
+}
+
+
+async def _install_gemini(sandbox: SandboxEnvironment) -> None:
+    version = await gemini_agentbinary.resolve_gemini_version("latest")
+    await gemini_agentbinary.ensure_gemini_cli_installed(
+        sandbox, "node", version, "linux-x64"
+    )
+
+
+async def _install_claude_acp(sandbox: SandboxEnvironment) -> None:
+    await claude_acp_agentbinary._ensure_acp_installed(sandbox, "linux-x64")
+
+
+async def _install_codex_acp(sandbox: SandboxEnvironment) -> None:
+    await codex_acp_agentbinary._ensure_acp_installed(sandbox, "linux-x64")
+
+
+@needs_npm
+@pytest.mark.usefixtures("clear_version_cache")
+@pytest.mark.parametrize(
+    "module,package_attr,install",
+    [
+        (gemini_agentbinary, "_GEMINI_CLI_PACKAGE", _install_gemini),
+        (claude_acp_agentbinary, "_ACP_ADAPTER_PACKAGE", _install_claude_acp),
+        (codex_acp_agentbinary, "_ACP_ADAPTER_PACKAGE", _install_codex_acp),
+    ],
+)
+def test_agent_install_picks_newest_cooled_down_release_whatever_host_node(
+    npm_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    module: ModuleType,
+    package_attr: str,
+    install: Callable[[SandboxEnvironment], Awaitable[None]],
+) -> None:
+    # a user's engine-strict would otherwise refuse 1.1.0 on this host
+    npm_env.write_text("engine-strict=true\n")
+    sandbox = MagicMock()
+    # nothing is installed in the sandbox yet
+    sandbox.exec = AsyncMock(return_value=SimpleNamespace(success=False))
+    install_bundle = AsyncMock(return_value="binary")
+    monkeypatch.setattr(module, package_attr, "agent")
+    monkeypatch.setattr(module, "install_npm_bundle", install_bundle)
+
+    with Registry(_AGENT_RELEASES) as registry:
+        monkeypatch.setenv("npm_config_registry", registry.url)
+        anyio.run(install, sandbox)
+
+    bundle = install_bundle.call_args.kwargs["bundle_data"]
+    assert _installed_version(bundle, "agent") == "1.1.0"
+
+
+def _npm_version() -> tuple[int, ...]:
+    version = subprocess.run(
+        ["npm", "--version"], capture_output=True, text=True, check=True
+    ).stdout
+    return tuple(int(part) for part in version.strip().split(".")[:2])
+
+
+@needs_npm
+def test_user_exclude_does_not_lift_cooldown(
+    npm_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user's min-release-age-exclude must not lift `--before` (npm 11.17+)."""
+    if _npm_version() < (11, 17):
+        pytest.skip("npm before 11.17 has no min-release-age-exclude")
+    npm_env.write_text("min-release-age-exclude=dep\n")
+    releases: dict[str, list[tuple[str, float, dict[str, Any]]]] = {
+        "app": [("1.0.0", 30, {"dependencies": {"dep": "^1.0.0"}})],
+        "dep": [("1.0.0", 30, {}), ("1.1.0", 1, {})],
+    }
+    with Registry(releases) as registry:
+        monkeypatch.setenv("npm_config_registry", registry.url)
+        bundle = node.create_npm_bundle("app", "1.0.0", "linux-x64", "app")
+
+    assert _installed_version(bundle, "dep") == "1.0.0"
