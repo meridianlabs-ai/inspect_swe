@@ -1,15 +1,14 @@
 """Tests for the dependency cooldown in pyproject.toml and the CI jobs around it.
 
-pyproject.toml holds back releases younger than seven days, or six hours for a
-list of model provider SDKs and Inspect packages. Dependabot applies the seven
-days to its uv.lock bumps and leaves that list to uv. CI installs from uv.lock,
-except that inspect-ai moves to inspect_ai main's latest commit first, and the
-build toolchain from scripts/build-dist/requirements.txt, pinned with hashes.
+pyproject.toml holds back releases younger than seven days, or six hours for
+model provider SDKs. In-house packages (inspect-*, petri*) have no cooldown.
+Dependabot applies the seven days to its uv.lock bumps and leaves those
+exceptions to uv. CI installs from uv.lock, and the build toolchain from
+scripts/build-dist/requirements.txt, pinned with hashes.
 Testing against the newest releases happens in meridianlabs-ai/canaries,
 outside this repository.
 """
 
-import importlib.util
 import pathlib
 import re
 import tomllib
@@ -22,10 +21,9 @@ import yaml
 REPO = pathlib.Path(__file__).parents[1]
 GITHUB = REPO / ".github"
 WORKFLOWS = GITHUB / "workflows"
-UV_SYNC_ACTION = "./.github/actions/uv-sync"
 SHARED_ACTIONS = "meridianlabs-ai/actions/"
 SHARED_INSTALLERS = ("setup-uv@", "install-python-dependencies@")
-EXEMPT_COOLDOWN = "6 hours"
+PROVIDER_COOLDOWN = "6 hours"
 BUILD_REQUIREMENTS = "scripts/build-dist/requirements.txt"
 SHARED_BUILD = SHARED_ACTIONS + ".github/workflows/build-python-dist.yml@"
 PUBLISH_STEPS = ("actions/download-artifact@", "pypa/gh-action-pypi-publish@")
@@ -33,29 +31,22 @@ DOWNLOAD_INPUTS = {
     "artifact-ids": "${{ needs.build.outputs.artifact-id }}",
     "path": "dist/",
 }
-RELEASE_BRANCH = "release-please--branches--main"
-INSPECT_AI_MAIN = {
-    "git": "https://github.com/UKGovernmentBEIS/inspect_ai",
-    "branch": "main",
-}
 MATRIX_PYTHON = "${{ matrix.python-version }}"
 LOCKED_JOBS = {
     "py-ruff": {
+        "versions": "locked",
         "python-version": MATRIX_PYTHON,
         "project-install": "skip",
         "extras": "dev",
     },
-    "py-mypy": {"python-version": MATRIX_PYTHON, "extras": "dev"},
-    "py-test": {"python-version": MATRIX_PYTHON, "extras": "dev"},
-    "py-build": {"python-version": MATRIX_PYTHON, "project-install": "skip"},
+    "py-mypy": {"versions": "locked", "python-version": MATRIX_PYTHON, "extras": "dev"},
+    "py-test": {"versions": "locked", "python-version": MATRIX_PYTHON, "extras": "dev"},
+    "py-build": {
+        "versions": "locked",
+        "python-version": MATRIX_PYTHON,
+        "project-install": "skip",
+    },
 }
-
-spec = importlib.util.spec_from_file_location(
-    "inspect_ai_floor", GITHUB / "scripts" / "inspect_ai_floor.py"
-)
-assert spec and spec.loader
-inspect_ai_floor = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(inspect_ai_floor)
 
 
 def pyproject() -> dict[str, Any]:
@@ -71,21 +62,28 @@ def normalize(package: str) -> str:
     return re.sub(r"[-_.]+", "-", package).lower()
 
 
-def direct_dependencies() -> set[str]:
-    """Packages in the pyproject.toml `dependencies` or the `dev` extra."""
+def direct_dependencies(extras: tuple[str, ...] = ("dev",)) -> set[str]:
+    """Packages in the pyproject.toml `dependencies` or the given extras."""
     project = pyproject()["project"]
-    requirements = project["dependencies"] + project["optional-dependencies"]["dev"]
+    requirements = project["dependencies"] + [
+        r for extra in extras for r in project["optional-dependencies"][extra]
+    ]
     return {
         normalize(re.split(r"[^A-Za-z0-9._-]", requirement, maxsplit=1)[0])
         for requirement in requirements
     }
 
 
+def in_house(package: str) -> bool:
+    return normalize(package).startswith(("inspect-", "petri"))
+
+
 def exempt_packages(config: dict[str, Any]) -> list[str]:
+    """In-house packages (no cooldown) and provider SDKs (6 hours)."""
     return sorted(
         package
         for package, cooldown in config["exclude-newer-package"].items()
-        if cooldown == EXEMPT_COOLDOWN
+        if cooldown is False or cooldown == PROVIDER_COOLDOWN
     )
 
 
@@ -143,28 +141,76 @@ def run_lines() -> list[tuple[str, str]]:
 
 
 def verify_exclude_newer_package(
-    config: dict[str, Any], direct: set[str], now: datetime
+    config: dict[str, Any], direct: set[str], runtime: set[str], now: datetime
 ) -> None:
     assert config["exclude-newer"] == "7 days", config["exclude-newer"]
-    # Each entry is "6 hours" or a dated entry younger than the cooldown.
-    for package, cooldown in config["exclude-newer-package"].items():
+    entries = config["exclude-newer-package"]
+    # Each entry is false for an in-house package, "6 hours" for a provider
+    # SDK, or a dated entry younger than the cooldown.
+    for package, cooldown in entries.items():
         assert normalize(package) in direct, f"{package} is not a direct dependency"
-        if cooldown != EXEMPT_COOLDOWN:
+        if cooldown is False:
+            assert in_house(package), f"{package} is not in-house: no cooldown"
+        elif cooldown == PROVIDER_COOLDOWN:
+            assert not in_house(package), f"in-house {package} has a cooldown"
+        else:
+            assert isinstance(cooldown, str) and re.match(
+                r"\d{4}-\d{2}-\d{2}T", cooldown
+            ), f"{package} = {cooldown!r} is not a date"
             age = now - datetime.fromisoformat(cooldown)
             assert timedelta(0) <= age < timedelta(days=7), (
                 f'dated entry {package} = "{cooldown}" is in the future or stale'
             )
+    # Every in-house runtime dependency skips the cooldown. Dev-only test
+    # tools (inspect-evals, inspect_k8s_sandbox) keep the 7 days.
+    missing = sorted(
+        package
+        for package in runtime
+        if in_house(package) and package not in {normalize(name) for name in entries}
+    )
+    assert missing == [], f"in-house packages without an entry: {missing}"
 
 
 def test_exclude_newer_package_entries() -> None:
-    verify_exclude_newer_package(uv_config(), direct_dependencies(), datetime.now(UTC))
+    verify_exclude_newer_package(
+        uv_config(), direct_dependencies(), direct_dependencies(()), datetime.now(UTC)
+    )
 
 
 def test_non_direct_entry_is_caught() -> None:
     config = uv_config()
-    config["exclude-newer-package"]["certifi"] = EXEMPT_COOLDOWN
+    config["exclude-newer-package"]["certifi"] = PROVIDER_COOLDOWN
     with pytest.raises(AssertionError, match="not a direct dependency"):
-        verify_exclude_newer_package(config, direct_dependencies(), datetime.now(UTC))
+        verify_exclude_newer_package(
+            config, direct_dependencies(), direct_dependencies(()), datetime.now(UTC)
+        )
+
+
+@pytest.mark.parametrize(
+    "package,cooldown,match",
+    [
+        ("inspect-ai", "false", "not a date"),
+        ("inspect-ai", "0 hours", "not a date"),
+        ("inspect-ai", PROVIDER_COOLDOWN, "in-house inspect-ai has a cooldown"),
+        ("openai", False, "openai is not in-house"),
+    ],
+)
+def test_wrong_cooldown_is_caught(package: str, cooldown: object, match: str) -> None:
+    config = uv_config()
+    config["exclude-newer-package"][package] = cooldown
+    with pytest.raises(AssertionError, match=match):
+        verify_exclude_newer_package(
+            config, direct_dependencies(), direct_dependencies(()), datetime.now(UTC)
+        )
+
+
+def test_missing_in_house_entry_is_caught() -> None:
+    config = uv_config()
+    del config["exclude-newer-package"]["inspect-ai"]
+    with pytest.raises(AssertionError, match="without an entry"):
+        verify_exclude_newer_package(
+            config, direct_dependencies(), direct_dependencies(()), datetime.now(UTC)
+        )
 
 
 @pytest.mark.parametrize(
@@ -178,26 +224,48 @@ def test_dated_entry_age(age: timedelta, caught: bool) -> None:
     config["exclude-newer-package"]["httpx"] = (now - age).isoformat()
     if caught:
         with pytest.raises(AssertionError, match="dated entry"):
-            verify_exclude_newer_package(config, direct_dependencies(), now)
+            verify_exclude_newer_package(
+                config, direct_dependencies(), direct_dependencies(()), now
+            )
     else:
-        verify_exclude_newer_package(config, direct_dependencies(), now)
+        verify_exclude_newer_package(
+            config, direct_dependencies(), direct_dependencies(()), now
+        )
 
 
-def test_dependabot_cooldown_matches_pyproject() -> None:
-    dependabot = dependabot_uv()
+def verify_dependabot_cooldown(
+    dependabot: dict[str, Any], config: dict[str, Any]
+) -> None:
     assert dependabot["cooldown"]["default-days"] == 7
-    # Dependabot resolves against the inspect-ai commit in uv.lock, so it must
-    # be able to update it.
-    assert "ignore" not in dependabot
-    # Dependabot's cooldown counts whole days, so it leaves the "6 hours"
-    # entries to uv. Dated entries are locked by hand.
-    exempt = exempt_packages(uv_config())
+    # Dependabot updates every package, inspect-ai included.
+    assert not dependabot.get("ignore"), dependabot["ignore"]
+    # Dependabot's cooldown counts whole days, so it leaves the in-house
+    # (false) and "6 hours" entries to uv. Dated entries are locked by hand.
+    exempt = exempt_packages(config)
     assert sorted(dependabot["cooldown"]["exclude"]) == exempt
     # The exempt packages have their own group, listed before the catch-all.
     groups = dependabot["groups"]
     assert list(groups) == ["six-hour-cooldown", "python-packages"]
     assert sorted(groups["six-hour-cooldown"]["patterns"]) == exempt
     assert groups["python-packages"]["patterns"] == ["*"]
+
+
+def test_dependabot_cooldown_matches_pyproject() -> None:
+    verify_dependabot_cooldown(dependabot_uv(), uv_config())
+
+
+def test_dependabot_ignore_is_caught() -> None:
+    dependabot = dependabot_uv()
+    dependabot["ignore"] = [{"dependency-name": "inspect-ai"}]
+    with pytest.raises(AssertionError):
+        verify_dependabot_cooldown(dependabot, uv_config())
+
+
+def test_dependabot_missing_in_house_package_is_caught() -> None:
+    dependabot = dependabot_uv()
+    dependabot["cooldown"]["exclude"].remove("inspect-ai")
+    with pytest.raises(AssertionError):
+        verify_dependabot_cooldown(dependabot, uv_config())
 
 
 def test_python_comes_from_the_shared_actions() -> None:
@@ -242,18 +310,12 @@ def test_jobs_that_can_write_use_no_cache() -> None:
         if permissions == "write-all"
         or "write" in (permissions.values() if isinstance(permissions, dict) else [])
         for step in job.get("steps", [])
-        if step.get("uses") == UV_SYNC_ACTION
-        or (
-            step.get("uses", "").startswith(
-                SHARED_ACTIONS + "install-python-dependencies@"
-            )
-            and step["with"].get("actions-cache") != "none"
+        if step.get("uses", "").startswith(
+            SHARED_ACTIONS + "install-python-dependencies@"
         )
+        and step["with"].get("actions-cache") != "none"
     ]
-    assert cached == [], (
-        f"use actions-cache: none (not {UV_SYNC_ACTION}, which always uses "
-        f"the cache) in {cached}"
-    )
+    assert cached == [], f"use actions-cache: none in {cached}"
 
 
 def test_ruff_comes_from_uv_lock() -> None:
@@ -366,14 +428,6 @@ def test_no_workflow_opts_out_of_the_cooldown() -> None:
     assert floating == []
 
 
-def test_pyproject_tracks_inspect_ai_main_with_one_floor() -> None:
-    project = pyproject()
-    assert project["tool"]["uv"]["sources"] == {"inspect-ai": INSPECT_AI_MAIN}
-    # release-pin-deps.yml rewrites this one requirement with sed.
-    floors = [d for d in project["project"]["dependencies"] if "inspect-ai>=" in d]
-    assert len(floors) == 1, floors
-
-
 @pytest.mark.parametrize("name,inputs", LOCKED_JOBS.items())
 def test_locked_jobs_install_from_the_lockfile(
     name: str, inputs: dict[str, str]
@@ -382,51 +436,13 @@ def test_locked_jobs_install_from_the_lockfile(
     installs = [
         step.get("with", {})
         for step in job["steps"]
-        if step.get("uses") == UV_SYNC_ACTION
+        if step.get("uses", "").startswith(
+            SHARED_ACTIONS + "install-python-dependencies@"
+        )
+        and step["with"]["versions"] == "locked"
     ]
     assert installs == [inputs]
     assert not [line for line in step_lines(job["steps"]) if line.startswith("uv sync")]
-
-
-def test_uv_sync_action_moves_only_inspect_ai() -> None:
-    # Moving inspect-ai re-locks, which would also absorb a pyproject.toml
-    # change nobody locked, so the committed lock is checked first. The
-    # release PR resolves without sources, and later steps see the committed
-    # uv.lock.
-    action = yaml.safe_load((GITHUB / "actions" / "uv-sync" / "action.yml").read_text())
-    setup, move, install, restore = action["runs"]["steps"]
-    assert setup["uses"].startswith(SHARED_ACTIONS + "setup-uv@")
-    assert setup["with"] == {"python-version": "${{ inputs.python-version }}"}
-    assert move["env"]["HEAD_REF"] == "${{ github.head_ref }}"
-    assert step_lines([move]) == [
-        "uv lock --check",
-        f'if [ "$HEAD_REF" = "{RELEASE_BRANCH}" ]; then',
-        "export UV_NO_SOURCES=1",
-        'echo "UV_NO_SOURCES=1" >> "$GITHUB_ENV"',
-        "fi",
-        "uv lock --upgrade-package inspect-ai",
-    ]
-    assert install["uses"].startswith(SHARED_ACTIONS + "install-python-dependencies@")
-    assert install["with"] == {
-        "versions": "locked",
-        "python-version": "${{ inputs.python-version }}",
-        "extras": "${{ inputs.extras }}",
-        "project-install": "${{ inputs.project-install }}",
-    }
-    assert step_lines([restore]) == ["git checkout -- uv.lock"]
-
-
-def test_release_branch_name_matches_everywhere() -> None:
-    # A misspelt name silently runs the release PR as a dev PR.
-    names = {
-        where: set(re.findall(r"release-please--branches--[\w-]+", text))
-        for where, text in [
-            *[(path.name, path.read_text()) for path in WORKFLOWS.glob("*.y*ml")],
-            ("uv-sync", (GITHUB / "actions" / "uv-sync" / "action.yml").read_text()),
-        ]
-    }
-    assert set().union(*names.values()) == {RELEASE_BRANCH}
-    assert names["uv-sync"] and names["release-pin-deps.yml"]
 
 
 # A bare `uv run` or `uv sync` re-resolves an out-of-date uv.lock and installs
@@ -443,19 +459,3 @@ def test_uv_never_relocks() -> None:
         )
     ]
     assert unlocked == []
-
-
-def test_floor_script_requires_a_released_inspect_ai() -> None:
-    lock = """
-[[package]]
-name = "inspect-ai"
-version = "0.3.287.dev30"
-source = { git = "https://github.com/UKGovernmentBEIS/inspect_ai?branch=main#abc" }
-"""
-    with pytest.raises(ValueError, match="not locked from PyPI"):
-        inspect_ai_floor.locked_inspect_ai(lock)
-    released = lock.replace('version = "0.3.287.dev30"', 'version = "0.3.287"').replace(
-        'git = "https://github.com/UKGovernmentBEIS/inspect_ai?branch=main#abc"',
-        'registry = "https://pypi.org/simple"',
-    )
-    assert inspect_ai_floor.locked_inspect_ai(released) == "0.3.287"

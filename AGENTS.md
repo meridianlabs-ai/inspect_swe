@@ -17,7 +17,7 @@ This file provides guidance to AI coding agents working in this repository.
 ## Dependencies
 
 - After changing dependencies in `pyproject.toml`, run `uv lock` and commit `uv.lock`; CI fails on a stale lock. Don't override the 7-day `exclude-newer` cooldown.
-- Every other dependency rule and procedure (the lock file, the cooldown, inspect_ai tracked from `main`, the build toolchain) is in [DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions. Read it before you change dependencies, `[tool.uv]` or `.github/dependabot.yml`.
+- Every other dependency rule and procedure (the lock file, the cooldown, the build toolchain) is in [DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions. Read it before you change dependencies, `[tool.uv]` or `.github/dependabot.yml`.
 
 ## Test Suite Topology
 
