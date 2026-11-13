@@ -142,8 +142,8 @@ _BILLING_HEADER = re.compile(r"^x-anthropic-billing-header:(.*)$", re.MULTILINE)
 _SUBAGENT_FLAG = re.compile(r"(?:^|;)\s*cc_is_subagent=true\s*(?:;|$)")
 
 # Text of the tool_result Claude Code returns when a Task/Agent call was
-# launched in the background, for lines without a structured
-# `tool_use_result` (the structured `status: "async_launched"` is preferred).
+# launched in the background. Read only for lines without a structured
+# `tool_use_result` status, which decides whenever it is present.
 _ASYNC_LAUNCH_TEXT = "Async agent launched"
 
 
@@ -790,16 +790,22 @@ class LiveConsumer(ModelEventSink):
         """Whether a Task/Agent tool_result only reports a background launch.
 
         Claude Code 2.1.311 describes the result in the line's structured
-        `tool_use_result` (`status: "async_launched"`, `isAsync: true`); that
-        describes the line's only tool_result, so it is read only then. The
-        result text is the fallback.
+        `tool_use_result`: `status: "async_launched"` and `isAsync: true` for a
+        background launch, `status: "completed"` for a foreground sub-agent
+        that finished. It describes the line's only tool_result, so it is read
+        only then, and when it carries a status it decides: a finished
+        sub-agent's answer may itself start with the launch text.
+
+        The result text is the fallback, for lines with no structured status:
+        a line with several tool_results, or a Claude Code build that doesn't
+        send the structured result.
         """
         structured = raw.get("tool_use_result", raw.get("toolUseResult"))
         if tool_result_count == 1 and isinstance(structured, dict):
-            if structured.get("status") == "async_launched":
-                return True
-            if structured.get("isAsync") is True:
-                return True
+            status = structured.get("status")
+            is_async = structured.get("isAsync")
+            if isinstance(status, str) or isinstance(is_async, bool):
+                return status == "async_launched" or is_async is True
         result = block.get("content")
         if isinstance(result, list):
             result = "\n".join(

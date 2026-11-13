@@ -17,6 +17,7 @@ then `on_start` for the generate, in the request's own context.
 import contextvars
 from typing import Any
 
+import pytest
 from inspect_ai.agent import AgentBridgeContext
 from inspect_ai.agent._bridge.context import bridged_request_scope
 from inspect_ai.event import SpanBeginEvent, SpanEndEvent
@@ -129,14 +130,16 @@ def _classifier_request() -> list[ChatMessage]:
     ]
 
 
-def _launch(consumer: LiveConsumer, *calls: tuple[str, str]) -> None:
-    """The main thread's output launches one Agent call per (tool_use_id, prompt)."""
+def _launch(
+    consumer: LiveConsumer, *calls: tuple[str, str], tool: str = "Agent"
+) -> None:
+    """The main thread's output launches one `tool` call per (tool_use_id, prompt)."""
     message = ChatMessageAssistant(
         content="",
         tool_calls=[
             ToolCall(
                 id=tool_use_id,
-                function="Agent",
+                function=tool,
                 arguments={"prompt": prompt, "subagent_type": "general-purpose"},
             )
             for tool_use_id, prompt in calls
@@ -311,6 +314,64 @@ def test_launch_text_marks_a_background_result_without_structured_data(
     )
     consumer.process_jsonl_line(launched)
     assert stub.ended() == ["agent-toolu_b"]
+    assert "toolu_a" in consumer._pending_subagents
+
+
+def _completed_line(
+    tool_use_id: str, answer: str, metadata_key: str, text_blocks: bool
+) -> dict[str, Any]:
+    """A foreground Task/Agent's final tool_result, as 2.1.311 prints one.
+
+    The structured result carries `status: "completed"` and no `isAsync`.
+    """
+    content: Any = [{"type": "text", "text": answer}] if text_blocks else answer
+    return {
+        "type": "user",
+        "message": {
+            "content": [
+                {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
+            ]
+        },
+        metadata_key: {
+            "status": "completed",
+            "agentId": f"agent_{tool_use_id}",
+            "content": [{"type": "text", "text": answer}],
+        },
+    }
+
+
+@pytest.mark.parametrize("text_blocks", [False, True], ids=["string", "text-blocks"])
+@pytest.mark.parametrize("metadata_key", ["tool_use_result", "toolUseResult"])
+@pytest.mark.parametrize("tool", ["Task", "Agent"])
+def test_completed_result_quoting_the_launch_text_ends_the_subagent(
+    monkeypatch: Any, tool: str, metadata_key: str, text_blocks: bool
+) -> None:
+    """A structured completed status wins over an answer that quotes the launch text.
+
+    No `task_notification` follows a foreground result on older Claude Code,
+    so the tool_result must end the sub-agent.
+    """
+    consumer, stub = _consumer(monkeypatch)
+    _launch(consumer, ("toolu_a", UNAME), tool=tool)
+    answer = "Async agent launched successfully. That is what the tool printed."
+    consumer.process_jsonl_line(
+        _completed_line("toolu_a", answer, metadata_key, text_blocks)
+    )
+    assert stub.ended() == ["agent-toolu_a"]
+    assert "toolu_a" not in consumer._pending_subagents
+
+
+@pytest.mark.parametrize("metadata_key", ["tool_use_result", "toolUseResult"])
+def test_structured_async_flag_marks_a_background_launch(
+    monkeypatch: Any, metadata_key: str
+) -> None:
+    """`isAsync: true` alone, with result text that doesn't match, is a launch."""
+    consumer, stub = _consumer(monkeypatch)
+    _launch(consumer, ("toolu_a", UNAME))
+    line = _tool_result_line("toolu_a", "launched")
+    line[metadata_key] = {"isAsync": True}
+    consumer.process_jsonl_line(line)
+    assert stub.ended() == []
     assert "toolu_a" in consumer._pending_subagents
 
 
