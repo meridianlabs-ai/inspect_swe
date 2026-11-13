@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/meridianlabs-ai/inspect_swe/compare/0.3.0...0.3.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* agent CLIs installed from npm wait 7 days for new releases and skip install scripts ([#234](https://github.com/meridianlabs-ai/inspect_swe/issues/234)) ([6cdf0b0](https://github.com/meridianlabs-ai/inspect_swe/commit/6cdf0b0125e1643efca7794a25a3caafc04348a9))
+* Claude ACP agent fails in Linux sandboxes when run from a macOS host ([#235](https://github.com/meridianlabs-ai/inspect_swe/issues/235)) ([5e105e6](https://github.com/meridianlabs-ai/inspect_swe/commit/5e105e69bdf44161cf0105cb8cad4235543458a9))
+
 ## [0.3.0](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.72...0.3.0) (2026-11-11)
 
 
