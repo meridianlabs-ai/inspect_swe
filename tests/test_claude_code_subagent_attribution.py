@@ -413,3 +413,65 @@ def test_header_flag_makes_an_unrecognized_slug_a_subagent(monkeypatch: Any) -> 
     )
     assert context == AgentBridgeContext("subagent")
     assert span_id is None
+
+
+# ---------------------------------------------------------------------------
+# the slug wins over the header flag, in both directions
+# ---------------------------------------------------------------------------
+
+_FLAG_LOGGER = "inspect_swe._claude_code._events.live_consumer"
+
+
+def _flag_warnings(caplog: Any) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == _FLAG_LOGGER and "cc_is_subagent" in r.getMessage()
+    ]
+
+
+def test_subagent_slug_without_the_flag_keeps_label_and_span_together(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """After the latch, a subagent-slug request missing the flag is still placed.
+
+    The filter-time label and the transcript span must agree: both say the
+    sub-agent, because the slug wins over the header as a main-thread slug
+    does. The flag going missing under the subagent slug warns once.
+    """
+    consumer, _ = _consumer(monkeypatch)
+    sub = consumer._models.subagent
+    _launch(consumer, ("toolu_a", UNAME))
+    assert _span(consumer, _subagent_request(UNAME, "6f9"), sub) == "agent-toolu_a"
+    assert consumer._subagent_flag_seen
+
+    unflagged = _subagent_request(UNAME, "6f9", 1)
+    unflagged[0] = _header("6f9", subagent=False)
+    with caplog.at_level("WARNING", logger=_FLAG_LOGGER):
+        for _ in range(3):
+            context, span_id = _request(consumer, unflagged, sub)
+            assert context == AgentBridgeContext(
+                "subagent", subagent_id="toolu_a", subagent_type="general-purpose"
+            )
+            assert span_id == "agent-toolu_a"
+    assert len(_flag_warnings(caplog)) == 1
+
+
+def test_flag_drift_canary_quiet_for_flagged_and_non_subagent_requests(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    consumer, _ = _consumer(monkeypatch)
+    sub = consumer._models.subagent
+    _launch(consumer, ("toolu_a", UNAME))
+    with caplog.at_level("WARNING", logger=_FLAG_LOGGER):
+        # a subagent-slug request without the flag before the flag was seen
+        early = _subagent_request(UNAME, "6f9")
+        early[0] = _header("6f9", subagent=False)
+        _request(consumer, early, sub)
+        # flagged requests, and unflagged main-thread / classifier requests
+        _request(consumer, _subagent_request(UNAME, "6f9"), sub)
+        _request(consumer, _main_request(), consumer._models.presented)
+        _request(consumer, _classifier_request(), consumer._models.presented)
+        # no header at all
+        _request(consumer, _subagent_request(UNAME, "6f9", header=False), sub)
+    assert _flag_warnings(caplog) == []

@@ -223,6 +223,12 @@ class LiveConsumer(ModelEventSink):
         self._subagent_requests_missing_slug = 0
         self._subagent_slug_drift_warned = False
 
+        # Drift canary for the billing-header flag (`_check_subagent_flag_drift`):
+        # whether we already warned that a subagent-slug request lacked
+        # `cc_is_subagent=true` after the flag had been seen. Kept across
+        # `reset()` like the slug canary.
+        self._subagent_flag_drift_warned = False
+
     @property
     def last_stop_reason(self) -> StopReason | None:
         """Stop reason of the last completed model event this attempt."""
@@ -249,8 +255,8 @@ class LiveConsumer(ModelEventSink):
 
         Deliberately does NOT clear the subagent-slug drift canary fields
         (`_subagent_slug_seen`, `_subagent_slug_drift_warned`,
-        `_subagent_requests_missing_slug`) or `_subagent_flag_seen` -- they
-        track this consumer
+        `_subagent_requests_missing_slug`), `_subagent_flag_seen` or
+        `_subagent_flag_drift_warned` -- they track this consumer
         instance's lifetime, not any single attempt, so a slug sighting (or a
         warning already issued, or a slug-less sub-agent request already
         counted) from before a retry still carries over to later attempts.
@@ -411,15 +417,17 @@ class LiveConsumer(ModelEventSink):
         A request under a main-thread slug is the root thread's regardless
         of prompt content (same reasoning as `classify` step 3), so it lands
         on the outer span, as does one whose billing header says it is not a
-        sub-agent's (`_header_rules_out_subagent`). Otherwise the request's
-        owner (`_owner`, shared with `classify`'s identity) picks the
-        sub-agent's span, falling back to the outer span whenever there's no
-        unambiguous owner.
+        sub-agent's (`_header_rules_out_subagent`; never under the subagent
+        slug, which wins over the header as `classify` step 1 does).
+        Otherwise the request's owner (`_owner`, shared with `classify`'s
+        identity) picks the sub-agent's span, falling back to the outer span
+        whenever there's no unambiguous owner.
         """
         request = current_bridge_request()
-        if self._is_root_slug(request.model if request is not None else None):
+        slug = request.model if request is not None else None
+        if self._is_root_slug(slug):
             return self.outer_span_id
-        if self._header_rules_out_subagent(input_messages):
+        if self._header_rules_out_subagent(input_messages, slug):
             return self.outer_span_id
         tool_use_id = self._owner(input_messages)
         if tool_use_id is not None:
@@ -458,9 +466,10 @@ class LiveConsumer(ModelEventSink):
         """The running Task this request belongs to, when it can be told.
 
         The unique pending-prompt match, unless the request also carries the
-        prompt of a Task whose tool_result already arrived: a backgrounded
-        or resumed sub-agent still running under that prompt sends the same
-        text, so the request could be either. Both span placement and the
+        prompt of a Task that has ended (its tool_result, or for a background
+        launch its `task_notification`, arrived): a sub-agent resumed or
+        continued after that sends the same text, so the request could be
+        either. Both span placement and the
         filter-time identity use this, so neither credits the pending Task
         with a request that may be the detached one's.
         """
@@ -535,7 +544,7 @@ class LiveConsumer(ModelEventSink):
         match picks exactly one pending Task: `subagent_id` is that Task's
         tool_use id and `subagent_type` its `subagent_type` argument. With
         no unique match (parallel Tasks whose prompts can't be told apart,
-        or a request whose first user message doesn't carry the Task prompt)
+        or a request whose opening user messages don't carry the Task prompt)
         both are None -- the slug says "a sub-agent", not which one. Nor
         does a request that may be a detached Task's (`_owner`); it is placed
         on the outer span rather than in the pending Task's.
@@ -556,7 +565,7 @@ class LiveConsumer(ModelEventSink):
         elif self._billing_subagent_flag(messages):
             context = self._subagent_context(messages)
         elif (
-            not self._header_rules_out_subagent(messages)
+            not self._header_rules_out_subagent(messages, slug)
             and self._match_pending_prompt(messages) is not None
         ):
             context = self._subagent_context(messages)
@@ -566,6 +575,7 @@ class LiveConsumer(ModelEventSink):
             )
 
         self._check_subagent_slug_drift(slug, context)
+        self._check_subagent_flag_drift(slug, messages)
         # the generate this request leads to is placed by the same decision,
         # even if the user's filter rewrites its messages (see `_start`)
         remember_decision(self, Decision(self._attribute(messages)))
@@ -675,16 +685,52 @@ class LiveConsumer(ModelEventSink):
             return flagged
         return None
 
-    def _header_rules_out_subagent(self, input_messages: list[ChatMessage]) -> bool:
+    def _header_rules_out_subagent(
+        self, input_messages: list[ChatMessage], slug: str | None
+    ) -> bool:
         """Whether the billing header says this request is not a sub-agent's.
 
         True only when the header is present without `cc_is_subagent=true`
         and an earlier request carried that flag: before any sighting, a
-        missing flag may just mean this Claude Code doesn't send it.
+        missing flag may just mean this Claude Code doesn't send it. Never
+        under the subagent slug: the slug wins over the header in both
+        directions, as a main-thread slug does in `classify`, so the
+        filter-time label and the span agree. The header is read first
+        whatever the slug, so a flagged subagent-slug request still records
+        that this Claude Code sends the flag.
         """
+        flag = self._billing_subagent_flag(input_messages)
         return (
-            self._billing_subagent_flag(input_messages) is False
-            and self._subagent_flag_seen
+            flag is False and self._subagent_flag_seen and slug != self._models.subagent
+        )
+
+    def _check_subagent_flag_drift(
+        self, slug: str | None, messages: list[ChatMessage]
+    ) -> None:
+        """Warn (once, per consumer instance) if the header flag goes missing.
+
+        After `cc_is_subagent=true` has been seen, a header without it rules
+        a request out of sub-agent spans (`_header_rules_out_subagent`). A
+        request under the subagent slug whose header lacks the flag is the
+        direct evidence that this no longer holds: it is still placed by its
+        slug, but a sub-agent request with an unrecognized slug and no flag
+        would now be kept out of its span silently. The mirror image of
+        `_check_subagent_slug_drift`.
+        """
+        if (
+            slug != self._models.subagent
+            or self._subagent_flag_drift_warned
+            or not self._subagent_flag_seen
+            or self._billing_subagent_flag(messages) is not False
+        ):
+            return
+        self._subagent_flag_drift_warned = True
+        logger.warning(
+            "a claude code request carrying the subagent model slug "
+            f"{self._models.subagent!r} has a billing header without "
+            "cc_is_subagent=true, which earlier subagent requests carried -- "
+            "requests without the flag are kept out of subagent spans; CC "
+            "version drift likely"
         )
 
     @staticmethod
