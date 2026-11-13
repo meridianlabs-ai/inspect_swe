@@ -60,8 +60,9 @@ jobs:
           persist-credentials: false
       # Ruff only reads the source, so the project itself does not install.
       - if: needs.changes.outputs.build == 'true'
-        uses: ./.github/actions/uv-sync
+        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
         with:
+          versions: locked
           python-version: ${{ matrix.python-version }}
           project-install: skip
           extras: dev
@@ -87,8 +88,9 @@ jobs:
         with:
           persist-credentials: false
       - if: needs.changes.outputs.build == 'true'
-        uses: ./.github/actions/uv-sync
+        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
         with:
+          versions: locked
           python-version: ${{ matrix.python-version }}
           extras: dev
       - name: Run mypy
@@ -110,8 +112,9 @@ jobs:
         with:
           persist-credentials: false
       - if: needs.changes.outputs.build == 'true'
-        uses: ./.github/actions/uv-sync
+        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
         with:
+          versions: locked
           python-version: ${{ matrix.python-version }}
           extras: dev
       - name: Run tests
@@ -135,14 +138,15 @@ jobs:
       # The project's locked dependencies, not the project itself: the step
       # after the build installs the wheel.
       - if: needs.changes.outputs.build == 'true'
-        uses: ./.github/actions/uv-sync
+        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
         with:
+          versions: locked
           python-version: ${{ matrix.python-version }}
           project-install: skip
       # The build toolchain that publish.yml uses, pinned with hashes, in its
       # own environment. To update the file, see publish.yml. The default
-      # actions-cache matches the setup-uv that uv-sync ran; the hashes still
-      # pin every file.
+      # actions-cache matches the setup-uv that the step above ran; the hashes
+      # still pin every file.
       - name: Install build toolchain
         if: needs.changes.outputs.build == 'true'
         uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
