@@ -186,11 +186,12 @@ def test_dated_entry_age(age: timedelta, caught: bool) -> None:
 def test_dependabot_cooldown_matches_pyproject() -> None:
     dependabot = dependabot_uv()
     assert dependabot["cooldown"]["default-days"] == 7
-    # CI moves inspect-ai to inspect_ai main, so Dependabot leaves it alone.
-    assert dependabot["ignore"] == [{"dependency-name": "inspect-ai"}]
+    # Dependabot resolves against the inspect-ai commit in uv.lock, so it must
+    # be able to update it.
+    assert "ignore" not in dependabot
     # Dependabot's cooldown counts whole days, so it leaves the "6 hours"
     # entries to uv. Dated entries are locked by hand.
-    exempt = [p for p in exempt_packages(uv_config()) if p != "inspect-ai"]
+    exempt = exempt_packages(uv_config())
     assert sorted(dependabot["cooldown"]["exclude"]) == exempt
     # The exempt packages have their own group, listed before the catch-all.
     groups = dependabot["groups"]
