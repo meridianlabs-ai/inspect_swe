@@ -1,0 +1,481 @@
+"""Regression tests for Codex rollout-file event conversion."""
+
+import asyncio
+from collections.abc import Sequence
+from typing import Any
+
+import pytest
+from inspect_ai.event import Event, InfoEvent, ModelEvent, SpanBeginEvent, ToolEvent
+from inspect_swe._codex_cli._events.rollout import process_rollout_events
+from inspect_swe._codex_cli._events.rollout_extraction import (
+    is_context_message,
+    output_to_result,
+)
+from inspect_swe._codex_cli._events.rollout_models import (
+    SubAgentActivityEvent,
+    parse_rollout_event,
+    parse_rollout_events,
+)
+
+
+def _line(line_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "timestamp": "2026-08-10T20:05:06.000Z",
+        "type": line_type,
+        "payload": payload,
+    }
+
+
+def _message(role: str, text: str) -> dict[str, Any]:
+    return _line(
+        "response_item",
+        {
+            "type": "message",
+            "role": role,
+            "content": [{"type": "input_text", "text": text}],
+        },
+    )
+
+
+async def _convert(raw_lines: Sequence[dict[str, Any]]) -> list[Event]:
+    events = parse_rollout_events(list(raw_lines))
+    return [event async for event in process_rollout_events(events)]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<recommended_plugins>\n<plugin>example</plugin>\n</recommended_plugins>",
+        "# AGENTS.md instructions for /workspace\n\n<INSTRUCTIONS>...</INSTRUCTIONS>",
+    ],
+)
+def test_modern_injected_messages_are_context(text: str) -> None:
+    assert is_context_message(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A genuine user message may start with the AGENTS.md heading; only
+        # the full injected shape (with the closing marker) is context.
+        "# AGENTS.md instructions are being ignored, why?",
+        "# AGENTS.md instructions\n\nplease review my draft below",
+    ],
+)
+def test_agents_md_prefix_alone_is_genuine_user_speech(text: str) -> None:
+    assert not is_context_message(text)
+
+
+def test_output_to_result_unwraps_legacy_form() -> None:
+    legacy = (
+        '{"output": "hello\\n", "metadata": {"exit_code": 1, "duration_seconds": 0.2}}'
+    )
+    assert output_to_result(legacy) == ("hello\n", 1)
+    assert output_to_result('{"output": "ok"}') == ("ok", None)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Genuine tool output that happens to be JSON with an "output" key
+        # (e.g. `cat config.json`) must pass through verbatim.
+        '{"output": "x", "metadata": {"exit_code": 1}, "extra": true}',
+        '{"output": {"nested": 1}, "metadata": {"exit_code": 1}}',
+        '{"output": "x", "metadata": "not-a-dict"}',
+    ],
+)
+def test_output_to_result_passes_through_non_legacy_json(text: str) -> None:
+    assert output_to_result(text) == (text, None)
+
+
+def test_context_messages_do_not_shift_rollback_boundary() -> None:
+    scout_events = asyncio.run(
+        _convert(
+            [
+                _message("user", "first user turn"),
+                _message("assistant", "first response"),
+                _message("user", "<recommended_plugins>plugins</recommended_plugins>"),
+                _message("user", "second user turn"),
+                _message("assistant", "second response"),
+                _message(
+                    "user",
+                    "# AGENTS.md instructions for /workspace\n\n"
+                    "<INSTRUCTIONS>be helpful</INSTRUCTIONS>",
+                ),
+                _line("event_msg", {"type": "thread_rolled_back", "num_turns": 1}),
+                _message("user", "replacement user turn"),
+                _message("assistant", "replacement response"),
+            ]
+        )
+    )
+
+    final_model_event = next(
+        event for event in reversed(scout_events) if isinstance(event, ModelEvent)
+    )
+    input_text = "\n".join(message.text for message in final_model_event.input)
+    assert "first user turn" in input_text
+    assert "second user turn" not in input_text
+    assert "second response" not in input_text
+    assert "replacement user turn" in input_text
+
+
+def test_genuine_agents_md_prefixed_turn_is_a_rollback_boundary() -> None:
+    """AGENTS.md-heading user speech is a genuine turn.
+
+    A real user message starting with the AGENTS.md heading (no closing
+    marker) must count as a genuine turn, so num_turns=1 rolls back only it.
+    """
+    scout_events = asyncio.run(
+        _convert(
+            [
+                _message("user", "first user turn"),
+                _message("assistant", "first response"),
+                _message("user", "# AGENTS.md instructions are being ignored, why?"),
+                _message("assistant", "second response"),
+                _line("event_msg", {"type": "thread_rolled_back", "num_turns": 1}),
+                _message("user", "replacement user turn"),
+                _message("assistant", "replacement response"),
+            ]
+        )
+    )
+
+    final_model_event = next(
+        event for event in reversed(scout_events) if isinstance(event, ModelEvent)
+    )
+    input_text = "\n".join(message.text for message in final_model_event.input)
+    assert "first user turn" in input_text
+    assert "first response" in input_text
+    assert "AGENTS.md instructions are being ignored" not in input_text
+    assert "second response" not in input_text
+    assert "replacement user turn" in input_text
+
+
+def test_idless_web_search_fallback_ids_are_unique_across_responses() -> None:
+    def web_search(query: str) -> dict[str, Any]:
+        return _line(
+            "response_item",
+            {
+                "type": "web_search_call",
+                "status": "completed",
+                "action": {"type": "search", "query": query},
+            },
+        )
+
+    scout_events = asyncio.run(
+        _convert(
+            [
+                _message("user", "look these up"),
+                web_search("first"),
+                _message("assistant", "found the first"),
+                _message("user", "and another"),
+                web_search("second"),
+                _message("assistant", "found the second"),
+            ]
+        )
+    )
+
+    tool_ids = [
+        event.id
+        for event in scout_events
+        if isinstance(event, ToolEvent) and event.function == "web_search"
+    ]
+    assert tool_ids == ["web_search_0", "web_search_1"]
+
+
+def test_review_mode_payload_is_surfaced_on_info_event() -> None:
+    scout_events = asyncio.run(
+        _convert(
+            [
+                _line(
+                    "event_msg",
+                    {
+                        "type": "entered_review_mode",
+                        "prompt": "review the diff",
+                        "user_facing_hint": "current changes",
+                    },
+                ),
+                _line("event_msg", {"type": "exited_review_mode"}),
+            ]
+        )
+    )
+
+    entered, exited = (event for event in scout_events if isinstance(event, InfoEvent))
+    assert entered.data == {
+        "type": "entered_review_mode",
+        "review": {"prompt": "review the diff", "user_facing_hint": "current changes"},
+    }
+    # no payload beyond the discriminator -> no review key
+    assert exited.data == {"type": "exited_review_mode"}
+
+
+def test_payload_timestamp_is_fallback_for_missing_envelope_timestamp() -> None:
+    event = parse_rollout_event(
+        {
+            "type": "session_meta",
+            "payload": {"id": "thread-1", "timestamp": "2026-08-10T20:05:06.000Z"},
+        }
+    )
+    assert event is not None
+    assert event.timestamp == "2026-08-10T20:05:06.000Z"
+
+
+def test_compaction_summary_without_replacement_history_is_user_role() -> None:
+    """Compaction summary fallback carries the user role.
+
+    Codex re-injects the compaction summary via a user-role bridge message
+    (build_compacted_history), so the accumulated context must match.
+    """
+    scout_events = asyncio.run(
+        _convert(
+            [
+                _message("user", "long conversation"),
+                _message("assistant", "long response"),
+                _line("compacted", {"message": "summary of the thread"}),
+                _message("user", "next question"),
+                _message("assistant", "next answer"),
+            ]
+        )
+    )
+
+    final_model_event = next(
+        event for event in reversed(scout_events) if isinstance(event, ModelEvent)
+    )
+    summary = next(
+        message
+        for message in final_model_event.input
+        if "summary of the thread" in message.text
+    )
+    assert summary.role == "user"
+
+
+def test_model_event_usage_is_set_when_yielded() -> None:
+    """Usage is present on ModelEvents at yield time.
+
+    Streaming consumers may serialize each event as it arrives, so usage
+    must be attached before the ModelEvent is yielded, not after.
+    """
+    parsed = parse_rollout_events(
+        [
+            _message("user", "hi"),
+            _message("assistant", "hello"),
+            _line(
+                "event_msg",
+                {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {"total_tokens": 30},
+                        "last_token_usage": {
+                            "input_tokens": 20,
+                            "output_tokens": 10,
+                            "total_tokens": 30,
+                        },
+                    },
+                },
+            ),
+            _message("user", "thanks"),
+            _message("assistant", "any time"),
+        ]
+    )
+
+    async def stream() -> list[tuple[ModelEvent, bool]]:
+        seen: list[tuple[ModelEvent, bool]] = []
+        async for event in process_rollout_events(parsed):
+            if isinstance(event, ModelEvent):
+                seen.append((event, event.output.usage is not None))
+        return seen
+
+    seen = asyncio.run(stream())
+    assert len(seen) == 2
+    first_event, first_had_usage = seen[0]
+    assert first_had_usage, "usage must be present at yield time"
+    assert first_event.output.usage is not None
+    assert first_event.output.usage.total_tokens == 30
+    # the second response has no token_count after it
+    assert seen[1][0].output.usage is None
+
+
+def test_subagent_activity_links_modern_spawn_result_to_child_thread() -> None:
+    loader_calls: list[tuple[str, int]] = []
+
+    async def fake_loader(thread_id: str, max_depth: int) -> list[Event]:
+        loader_calls.append((thread_id, max_depth))
+        return []
+
+    parsed = parse_rollout_events(
+        [
+            _message("user", "delegate this"),
+            _line(
+                "response_item",
+                {
+                    "type": "function_call",
+                    "name": "spawn_agent",
+                    "arguments": '{"task_name":"importer_qa_fixture"}',
+                    "call_id": "call_spawn",
+                },
+            ),
+            _line(
+                "event_msg",
+                {
+                    "type": "sub_agent_activity",
+                    "event_id": "call_spawn",
+                    "agent_thread_id": "019fed47-6294-7070-b852-b370a8e708cc",
+                    "agent_path": "/root/importer_qa_fixture",
+                    "kind": "started",
+                },
+            ),
+            _line(
+                "response_item",
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_spawn",
+                    "output": '{"task_name":"/root/importer_qa_fixture"}',
+                },
+            ),
+        ]
+    )
+    assert isinstance(parsed[2], SubAgentActivityEvent)
+
+    async def convert() -> list[Event]:
+        return [
+            event
+            async for event in process_rollout_events(parsed, child_loader=fake_loader)
+        ]
+
+    scout_events = asyncio.run(convert())
+
+    assert loader_calls == [("019fed47-6294-7070-b852-b370a8e708cc", 4)]
+    agent_span = next(
+        event
+        for event in scout_events
+        if isinstance(event, SpanBeginEvent) and event.type == "agent"
+    )
+    assert agent_span.name == "importer_qa_fixture"
+    # Keys are present only when known (same shape as the live bridge).
+    assert agent_span.metadata == {
+        "task_name": "importer_qa_fixture",
+        "thread_id": "019fed47-6294-7070-b852-b370a8e708cc",
+        "agent_path": "/root/importer_qa_fixture",
+    }
+
+
+def _spawn_lines(output: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """A spawn_agent call + activity event, optionally followed by its output."""
+    lines = [
+        _message("user", "delegate this"),
+        _line(
+            "response_item",
+            {
+                "type": "function_call",
+                "name": "spawn_agent",
+                "arguments": '{"task_name":"qa"}',
+                "call_id": "call_spawn",
+            },
+        ),
+        _line(
+            "event_msg",
+            {
+                "type": "sub_agent_activity",
+                "event_id": "call_spawn",
+                "agent_thread_id": "thread-1",
+                "agent_path": "/root/qa",
+                "kind": "started",
+            },
+        ),
+    ]
+    if output is not None:
+        lines.append(_line("response_item", output))
+    return lines
+
+
+@pytest.mark.parametrize(
+    "trailing_lines",
+    [
+        # Turn aborted before the spawn's output was written
+        [{"type": "event_msg", "payload": {"type": "turn_aborted", "reason": "user"}}],
+        # File truncated while the sub-agent was still running
+        [],
+    ],
+)
+def test_dangling_spawn_still_emits_agent_span_and_loads_child(
+    trailing_lines: list[dict[str, Any]],
+) -> None:
+    loader_calls: list[str] = []
+
+    async def fake_loader(thread_id: str, max_depth: int) -> list[Event]:
+        loader_calls.append(thread_id)
+        return []
+
+    lines = _spawn_lines(output=None) + [
+        _line(raw["type"], raw["payload"]) for raw in trailing_lines
+    ]
+
+    async def convert() -> list[Event]:
+        parsed = parse_rollout_events(lines)
+        return [
+            event
+            async for event in process_rollout_events(parsed, child_loader=fake_loader)
+        ]
+
+    scout_events = asyncio.run(convert())
+
+    assert loader_calls == ["thread-1"]
+    agent_span = next(
+        event
+        for event in scout_events
+        if isinstance(event, SpanBeginEvent) and event.type == "agent"
+    )
+    assert agent_span.name == "qa"
+    assert agent_span.metadata is not None
+    assert agent_span.metadata["thread_id"] == "thread-1"
+
+
+def test_later_activity_event_does_not_erase_agent_path() -> None:
+    lines = _spawn_lines(output=None)
+    # A second lifecycle event without agent_path must not erase the bound path
+    lines.append(
+        _line(
+            "event_msg",
+            {
+                "type": "sub_agent_activity",
+                "event_id": "call_spawn",
+                "agent_thread_id": "thread-1",
+            },
+        )
+    )
+    lines.append(
+        _line(
+            "response_item",
+            {
+                "type": "function_call_output",
+                "call_id": "call_spawn",
+                "output": '{"task_name":"/root/qa"}',
+            },
+        )
+    )
+
+    scout_events = asyncio.run(_convert(lines))
+    agent_span = next(
+        event
+        for event in scout_events
+        if isinstance(event, SpanBeginEvent) and event.type == "agent"
+    )
+    assert agent_span.metadata is not None
+    assert agent_span.metadata["agent_path"] == "/root/qa"
+
+
+def test_v2_spawn_result_nickname_names_the_agent_span() -> None:
+    """V2 results carry nickname without agent_id; the nickname must win."""
+    lines = _spawn_lines(
+        output={
+            "type": "function_call_output",
+            "call_id": "call_spawn",
+            "output": '{"task_name":"/root/qa","nickname":"Ivy"}',
+        }
+    )
+    scout_events = asyncio.run(_convert(lines))
+    agent_span = next(
+        event
+        for event in scout_events
+        if isinstance(event, SpanBeginEvent) and event.type == "agent"
+    )
+    assert agent_span.name == "Ivy"
