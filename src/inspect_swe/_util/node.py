@@ -12,14 +12,61 @@ import subprocess
 import tarfile
 import tempfile
 from io import BytesIO
+from logging import getLogger
 
+from inspect_ai._util.logger import warn_once
 from inspect_ai.util import SandboxEnvironment, concurrency
 
 from .appdirs import package_cache_dir
 from .download import download_file
 from .sandbox import SANDBOX_INSTALL_DIR, SandboxPlatform, bash_command, sandbox_exec
 
+logger = getLogger(__name__)
+
 NODE_VERSION = "20.11.0"
+
+
+# npm gained --libc in 10.3.0. Earlier versions ignore `--libc=...` and
+# select native packages by the host libc, giving the same bundle as before
+# --libc was passed. Those bundles are cached under the pre-libc name, never
+# under the "-libc" one.
+_NPM_LIBC_VERSION = (10, 3, 0)
+
+
+def _parse_npm_version(text: str) -> tuple[int, int, int] | None:
+    """Parse `npm --version` output into a (major, minor, patch) tuple."""
+    token = text.strip().split()[0] if text.strip() else ""
+    parts = token.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        major = int(parts[0])
+        minor = int(parts[1])
+        patch = int(parts[2].split("-")[0]) if len(parts) > 2 else 0
+    except ValueError:
+        return None
+    return (major, minor, patch)
+
+
+def _npm_version(cwd: str) -> tuple[int, int, int] | None:
+    """Return the version of the npm that runs in `cwd`, or None if unknown.
+
+    Run it in the install directory: version managers (Volta, asdf,
+    corepack) pick npm by directory.
+    """
+    try:
+        result = subprocess.run(
+            ["npm", "--version"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return _parse_npm_version(result.stdout)
 
 
 async def ensure_node_available(
@@ -133,8 +180,15 @@ def create_npm_bundle(
     """Create an npm package bundle with dependencies for the target platform.
 
     Runs ``npm install`` on the host and bundles the ``node_modules``
-    directory into a tarball.  Uses ``--os`` and ``--cpu`` to get native
-    modules for the sandbox architecture.  Results are cached locally.
+    directory into a tarball.  Uses ``--os``, ``--cpu`` and ``--libc`` to
+    get native modules for the sandbox platform. Without ``--libc`` npm uses
+    the host's: on macOS it skips every optional package that declares a
+    libc (e.g. ``@anthropic-ai/claude-agent-sdk-linux-*``), and on a glibc
+    host it picks glibc packages for a musl sandbox. Results are cached
+    locally. npm before 10.3 ignores ``--libc``: with such an npm, or when
+    the npm version cannot be read, a warning is logged and the bundle is
+    cached under the name used before ``--libc`` was passed, so the
+    libc-specific bundle is built once npm is upgraded.
 
     Args:
         package: npm package name (e.g. ``"@google/gemini-cli"``).
@@ -148,10 +202,16 @@ def create_npm_bundle(
             and must instead run inside the sandbox after extraction.
     """
     cpu = platform.split("-")[1]
+    libc = "musl" if platform.endswith("-musl") else "glibc"
 
     cache_dir = package_cache_dir(cache_name)
     suffix = "-noscripts" if ignore_scripts else ""
-    cache_path = cache_dir / f"{cache_name}-{version}-{platform}{suffix}.tar.gz"
+    # bundles cached before --libc was passed can lack the sandbox's
+    # libc-specific packages or hold the wrong ones; "-libc" rebuilds them
+    cache_path = cache_dir / f"{cache_name}-{version}-{platform}-libc{suffix}.tar.gz"
+    # npm < 10.3 ignores --libc and builds what was built before it was
+    # passed, so those bundles keep the pre-libc name
+    no_libc_cache_path = cache_dir / f"{cache_name}-{version}-{platform}{suffix}.tar.gz"
 
     if cache_path.exists():
         with open(cache_path, "rb") as f:
@@ -177,6 +237,24 @@ def create_npm_bundle(
         with open(package_json_path, "w") as f:
             json.dump(package_json, f)
 
+        # probe in tmpdir, where the install runs: version managers pick
+        # npm by directory
+        npm_version = _npm_version(tmpdir)
+        npm_has_libc = npm_version is not None and npm_version >= _NPM_LIBC_VERSION
+        if not npm_has_libc:
+            if npm_version is None:
+                problem = "Could not read the host npm version, so npm may not"
+            else:
+                shown = ".".join(map(str, npm_version))
+                problem = f"Host npm {shown} is older than 10.3 and cannot"
+            warn_once(
+                logger,
+                f"{problem} select the sandbox's libc-specific packages. "
+                "Use npm 10.3 or later.",
+            )
+            if no_libc_cache_path.exists():
+                return no_libc_cache_path.read_bytes()
+
         npm_cmd = [
             "npm",
             "install",
@@ -186,6 +264,8 @@ def create_npm_bundle(
             "linux",
             "--cpu",
             cpu,
+            # npm before 10.3 lacks --libc; "--libc glibc" would install "glibc"
+            f"--libc={libc}",
         ]
         if ignore_scripts:
             npm_cmd.append("--ignore-scripts")
@@ -215,8 +295,11 @@ def create_npm_bundle(
 
         bundle_data = buffer.getvalue()
 
+    # npm < 10.3 ignores --libc, so the bundle may follow the host libc.
+    # Store it under the pre-libc name, not "-libc": a later npm upgrade
+    # would otherwise reuse that bundle instead of building the right one.
     cache_dir.mkdir(parents=True, exist_ok=True)
-    with open(cache_path, "wb") as f:
+    with open(cache_path if npm_has_libc else no_libc_cache_path, "wb") as f:
         f.write(bundle_data)
 
     return bundle_data
