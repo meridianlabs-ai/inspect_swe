@@ -196,13 +196,8 @@ def test_bundle_cached_under_pre_libc_name_when_npm_lacks_libc(
     assert node.create_npm_bundle("cli", "1.0.0", "linux-x64", "cli-bundles") == bundle
     assert installs == 1
 
-    # the real npm: a libc-aware npm builds and caches the "-libc" bundle
-    monkeypatch.setenv("PATH", real_path)
-    real_version = node._parse_npm_version(
-        real_run([real_npm, "--version"], capture_output=True, text=True).stdout
-    )
-    if real_version is None or real_version < (10, 3, 0):
-        pytest.skip(f"real npm {real_version} is older than 10.3")
+    # after an upgrade to npm 10.3, the bundle is built again and cached as "-libc"
+    fake_npm.write_text(fake_npm.read_text().replace("echo 10.2.0", "echo 10.3.0"))
     bundle2 = node.create_npm_bundle("cli", "1.0.0", "linux-x64", "cli-bundles")
     assert installs == 2
     assert libc_cache.read_bytes() == bundle2

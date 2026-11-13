@@ -242,12 +242,15 @@ def create_npm_bundle(
         npm_version = _npm_version(tmpdir)
         npm_has_libc = npm_version is not None and npm_version >= _NPM_LIBC_VERSION
         if not npm_has_libc:
-            shown = ".".join(map(str, npm_version)) if npm_version else "unknown"
+            if npm_version is None:
+                problem = "Could not read the host npm version, so npm may not"
+            else:
+                shown = ".".join(map(str, npm_version))
+                problem = f"Host npm {shown} is older than 10.3 and cannot"
             warn_once(
                 logger,
-                f"Host npm version {shown} is not 10.3 or later, so it cannot "
-                "select the sandbox's libc-specific packages. Upgrade npm to 10.3 "
-                "or later.",
+                f"{problem} select the sandbox's libc-specific packages. "
+                "Use npm 10.3 or later.",
             )
             if no_libc_cache_path.exists():
                 return no_libc_cache_path.read_bytes()
