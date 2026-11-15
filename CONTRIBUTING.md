@@ -55,6 +55,14 @@ collected via:
 pytest --co
 ```
 
+## Adding a coding agent
+
+Read [contributing/agents.md](contributing/agents.md) before you start a new
+agent. It is the checklist reviewers use for agent PRs. It covers binary
+acquisition, model routing, sub-agent and utility classification, transcript
+spans and viewer rendering, feature parity, docs, and tests. Most of the work
+is in the trajectory sections, and PRs most often fall short there.
+
 ## Documentation
 
 The docs packages (including Quarto) are in the `[doc]` extra, which `[dev]` does
