@@ -116,14 +116,23 @@ def _catalog_models(catalog: dict[str, Any] | None) -> list[dict[str, Any]]:
 def latest_openai_slug(catalog: dict[str, Any] | None) -> str | None:
     """Return the "latest" general coding slug in the catalog.
 
-    "Latest" is the entry with the highest priority (lowest ``priority`` value),
-    excluding ``-mini`` variants when any non-mini entry exists. Returns ``None``
-    if the catalog has no usable entries.
+    "Latest" is the entry with the highest priority (lowest ``priority`` value)
+    among the entries Codex itself would offer: those whose ``visibility`` is not
+    ``"hide"`` (Codex's picker filters hidden entries out and only marks a
+    visible one as its default -- ``ModelPreset::mark_default_by_picker_visibility``
+    in ``codex-rs/models-manager``). Hidden entries are staged rollouts, retired
+    models with an ``upgrade`` pointer, codenames, and the auto-review guardian;
+    a slug the user could not pick in Codex is not "latest" for aliasing
+    purposes either. ``-mini`` variants are likewise excluded when any non-mini
+    entry exists. Each filter falls back to the unfiltered list when it would
+    leave nothing (a catalog with only hidden or only mini entries). Returns
+    ``None`` if the catalog has no usable entries.
     """
     models = _catalog_models(catalog)
     if not models:
         return None
-    preferred = [m for m in models if not m["slug"].endswith("-mini")] or models
+    visible = [m for m in models if m.get("visibility") != "hide"] or models
+    preferred = [m for m in visible if not m["slug"].endswith("-mini")] or visible
     preferred.sort(key=lambda m: m.get("priority", 1_000_000))
     return str(preferred[0]["slug"])
 
@@ -140,6 +149,17 @@ def _matched_entry(
     if not matches:
         return None
     return max(matches, key=lambda m: len(m["slug"]))
+
+
+def codex_catalog_tool_mode(slug: str, catalog: dict[str, Any] | None) -> Any:
+    """The ``tool_mode`` of the catalog entry Codex resolves ``slug`` to.
+
+    Codex runs a model whose entry sets ``tool_mode = "code_mode_only"`` in code
+    mode: the model gets an ``exec`` tool and calls MCP tools from the
+    JavaScript it writes. ``None`` when no entry matches or it sets no mode.
+    """
+    entry = _matched_entry(slug, _catalog_models(catalog))
+    return entry.get("tool_mode") if entry is not None else None
 
 
 def _gpt_version(name: str) -> tuple[int, int] | None:
@@ -194,7 +214,8 @@ def resolve_codex_model_slug(
       (gpt-5.4+), in which case it returns ``_GENERIC_FALLBACK_SLUG`` to force
       Codex's generic prompt (no ``apply_patch``, no ``tool_search``) and avoid a
       ``tool_search`` 400. (Catalog ``supports_search_tool`` reflects Codex's own
-      backend, not the public Responses API the bridge uses.)
+      backend, not the public Responses API the bridge uses.) It raises
+      ``ValueError`` when a catalog entry matches that slug.
     - An OpenAI model *not* in the catalog returns the latest catalog slug —
       getting the full coding prompt + ``apply_patch`` + ``tool_search`` — when it
       supports ``tool_search`` (gpt-5.4+, see ``_supports_tool_search``) or is a
@@ -209,8 +230,9 @@ def resolve_codex_model_slug(
     Args:
         model_name: The real model's name without provider prefix (e.g. ``gpt-5``).
         api: The real model's provider/api (e.g. ``openai``).
-        catalog: The version-matched Codex model catalog, or ``None`` if
-            unavailable (in which case we defer to Codex's own bundled catalog).
+        catalog: The Codex model catalog (the caller's ``model_catalog_json``
+            or the version-matched one), or ``None`` if unavailable (in which
+            case we defer to Codex's own bundled catalog).
         override: Explicit ``model_config`` value, or ``None`` to derive.
         is_latest: Whether the provider flags this as a "latest"/codename model
             (see ``is_latest_openai_model``) — a pre-deployment frontier model, so
@@ -249,6 +271,16 @@ def resolve_codex_model_slug(
         if matched.get("supports_search_tool") and not tool_search_ok:
             # catalog would bind tool_search, but this real model predates the
             # public-API boundary → force generic fallback to avoid a 400.
+            captor = _matched_entry(_GENERIC_FALLBACK_SLUG, models)
+            if captor is not None:
+                # a custom catalog can name an entry that the sentinel matches
+                raise ValueError(
+                    f"codex_cli runs '{model_name}' with Codex's generic prompt "
+                    "(it predates tool_search) through the slug "
+                    f"'{_GENERIC_FALLBACK_SLUG}', but the Codex catalog entry "
+                    f"'{captor['slug']}' matches that slug. Rename the entry or "
+                    "set model_config."
+                )
             return CodexModelResolution(
                 slug=_GENERIC_FALLBACK_SLUG,
                 reason=(

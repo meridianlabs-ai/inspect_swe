@@ -1,8 +1,7 @@
 """Unit tests for in-process caching of upstream version resolution.
 
 npm-installed agents resolve their version on every sample, so without
-caching a single multi-sample eval issues one api.github.com request per
-sample and can exhaust the 60/hour unauthenticated rate limit on its own.
+caching a single multi-sample eval issues one registry request per sample.
 """
 
 from typing import Any, Iterator
@@ -68,10 +67,10 @@ def test_latest_resolution_fetches_once_across_calls(
 ) -> None:
     """Repeated 'latest' resolution (one per sample) hits the API once."""
     resolve = getattr(module, resolve_name)
-    fetch = AsyncMock(return_value={"tag_name": "v1.2.3"})
+    fetch = AsyncMock(return_value="1.2.3")
 
     async def run() -> None:
-        with patch.object(module, "_fetch_latest_release", fetch):
+        with patch.object(module, "_fetch_latest_version", fetch):
             for _ in range(5):
                 assert await resolve("latest") == "1.2.3"
 
@@ -88,10 +87,10 @@ def test_latest_resolution_fetches_once_across_calls(
 def test_version_aliases_share_a_cache_entry(module: Any, resolve_name: str) -> None:
     """auto/sandbox/stable/latest all mean 'the latest release' -> one fetch."""
     resolve = getattr(module, resolve_name)
-    fetch = AsyncMock(return_value={"tag_name": "v1.2.3"})
+    fetch = AsyncMock(return_value="1.2.3")
 
     async def run() -> None:
-        with patch.object(module, "_fetch_latest_release", fetch):
+        with patch.object(module, "_fetch_latest_version", fetch):
             for alias in ("auto", "sandbox", "stable", "latest"):
                 assert await resolve(alias) == "1.2.3"
 
@@ -108,10 +107,10 @@ def test_version_aliases_share_a_cache_entry(module: Any, resolve_name: str) -> 
 def test_explicit_version_never_fetches(module: Any, resolve_name: str) -> None:
     """An explicit semver is returned as-is and is not cached as 'latest'."""
     resolve = getattr(module, resolve_name)
-    fetch = AsyncMock(return_value={"tag_name": "v9.9.9"})
+    fetch = AsyncMock(return_value="9.9.9")
 
     async def run() -> None:
-        with patch.object(module, "_fetch_latest_release", fetch):
+        with patch.object(module, "_fetch_latest_version", fetch):
             assert await resolve("1.14.30") == "1.14.30"
 
     anyio.run(run)
@@ -133,16 +132,16 @@ def test_concurrent_resolution_makes_one_request(
     calls = 0
     results: list[str] = []
 
-    async def fetch() -> dict[str, str]:
+    async def fetch() -> str:
         nonlocal calls
         calls += 1
         # suspend so the other tasks reach the cache miss while this one
         # is still in flight
         await anyio.sleep(0.05)
-        return {"tag_name": "v1.2.3"}
+        return "1.2.3"
 
     async def run() -> None:
-        with patch.object(module, "_fetch_latest_release", fetch):
+        with patch.object(module, "_fetch_latest_version", fetch):
 
             async def one() -> None:
                 results.append(await resolve("latest"))
@@ -168,7 +167,7 @@ def test_concurrent_failure_is_shared(module: Any, resolve_name: str) -> None:
     calls = 0
     errors: list[Exception] = []
 
-    async def fetch() -> dict[str, str]:
+    async def fetch() -> str:
         nonlocal calls
         calls += 1
         # suspend so the other tasks reach the cache miss while this one
@@ -177,7 +176,7 @@ def test_concurrent_failure_is_shared(module: Any, resolve_name: str) -> None:
         raise RuntimeError("403 rate limited")
 
     async def run() -> None:
-        with patch.object(module, "_fetch_latest_release", fetch):
+        with patch.object(module, "_fetch_latest_version", fetch):
 
             async def one() -> None:
                 try:
@@ -195,10 +194,10 @@ def test_concurrent_failure_is_shared(module: Any, resolve_name: str) -> None:
     assert all(error is errors[0] for error in errors)
 
     # a genuinely later call (after the failure completed) retries
-    recovered = AsyncMock(return_value={"tag_name": "v1.2.3"})
+    recovered = AsyncMock(return_value="1.2.3")
 
     async def retry() -> None:
-        with patch.object(module, "_fetch_latest_release", recovered):
+        with patch.object(module, "_fetch_latest_version", recovered):
             assert await resolve("latest") == "1.2.3"
 
     anyio.run(retry)
@@ -214,10 +213,10 @@ def test_concurrent_failure_is_shared(module: Any, resolve_name: str) -> None:
 def test_failed_resolution_is_not_cached(module: Any, resolve_name: str) -> None:
     """A failed fetch doesn't poison the cache; the next caller retries."""
     resolve = getattr(module, resolve_name)
-    fetch = AsyncMock(side_effect=[RuntimeError("boom"), {"tag_name": "v1.2.3"}])
+    fetch = AsyncMock(side_effect=[RuntimeError("boom"), "1.2.3"])
 
     async def run() -> None:
-        with patch.object(module, "_fetch_latest_release", fetch):
+        with patch.object(module, "_fetch_latest_version", fetch):
             with pytest.raises(RuntimeError):
                 await resolve("latest")
             assert await resolve("latest") == "1.2.3"

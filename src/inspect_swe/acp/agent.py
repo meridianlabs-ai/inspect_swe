@@ -6,7 +6,7 @@ setup and return the running ``ExecRemoteProcess`` plus bridge handle.
 
 import logging
 from abc import abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -17,10 +17,11 @@ from acp.schema import HttpMcpServer
 from inspect_ai.agent import Agent, AgentState, BridgedToolsSpec, SandboxAgentBridge
 from inspect_ai.log._samples import sample_active
 from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, get_model
-from inspect_ai.tool import MCPServerConfig, MCPServerConfigHTTP
+from inspect_ai.tool import MCPServerConfig, MCPServerConfigHTTP, Tool
 from inspect_ai.util import ExecRemoteProcess
 from typing_extensions import TypedDict, Unpack
 
+from inspect_swe._util.bridged_tools import resolve_bridged_tools
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -53,7 +54,8 @@ class ACPAgentParams(TypedDict, total=False):
     Attributes:
         model: Model name or instance (defaults to the task's main model).
         filter: Filter for intercepting bridged model API requests.
-        bridged_tools: Host-side Inspect tools exposed to the agent via MCP.
+        bridged_tools: Host-side Inspect tools exposed to the agent via MCP
+            (plain Tools are grouped into one MCP server named ``tools``).
         mcp_servers: Additional MCP servers (HTTP configs are converted
             to ACP format for ``new_session``).
         system_prompt: Appended to the agent's default system prompt.
@@ -69,7 +71,7 @@ class ACPAgentParams(TypedDict, total=False):
 
     model: str | Model | None
     filter: GenerateFilter | None
-    bridged_tools: list[BridgedToolsSpec] | None
+    bridged_tools: Sequence[Tool | BridgedToolsSpec] | None
     mcp_servers: list[MCPServerConfig] | None
     system_prompt: str | None
     retry_refusals: int | None
@@ -107,7 +109,9 @@ class ACPAgent(Agent):
 
         self.model: str | Model = kwargs.get("model") or get_model()
         self.filter = kwargs.get("filter")
-        self.bridged_tools: list[BridgedToolsSpec] = kwargs.get("bridged_tools") or []
+        self.bridged_tools: list[BridgedToolsSpec] = (
+            resolve_bridged_tools(kwargs.get("bridged_tools")) or []
+        )
         self.mcp_servers: list[MCPServerConfig] = kwargs.get("mcp_servers") or []
         self.system_prompt = kwargs.get("system_prompt")
         self.retry_refusals = kwargs.get("retry_refusals")

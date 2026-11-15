@@ -6,8 +6,10 @@ in `inspect_swe._codex_cli.model_catalog`.
 
 from typing import Any
 
+import pytest
 from inspect_swe._codex_cli.model_catalog import (
     _GENERIC_FALLBACK_SLUG,
+    codex_catalog_tool_mode,
     is_latest_openai_model,
     is_openai_derived_api,
     latest_openai_slug,
@@ -156,6 +158,20 @@ def test_catalog_present_sub_boundary_model_forces_generic_fallback() -> None:
         )
 
 
+@pytest.mark.parametrize("captor", [_GENERIC_FALLBACK_SLUG, "inspect"])
+@pytest.mark.parametrize("name", ["gpt-5.2", "gpt-5.3-codex"])
+def test_generic_fallback_refuses_a_catalog_entry_that_matches_it(
+    captor: str, name: str
+) -> None:
+    # a custom catalog entry the sentinel matches would bind its tools again
+    catalog = {"models": [*CATALOG["models"], {"slug": captor}]}
+    with pytest.raises(ValueError, match=f"entry '{captor}' matches that slug"):
+        _slug(name, catalog=catalog)
+    # an explicit model_config, and models that do not need the fallback, run
+    assert _slug(name, catalog=catalog, override="gpt-5.2") == "gpt-5.2"
+    assert _slug("gpt-5.5", catalog=catalog) == "gpt-5.5"
+
+
 def test_catalog_present_entry_without_search_stays_native() -> None:
     # a sub-5.4 catalog entry that does NOT bind tool_search is safe to use natively
     assert _slug("gpt-5.0-lite") == "gpt-5.0-lite"
@@ -286,3 +302,61 @@ def test_openai_service_model_name_falls_back_when_not_openai() -> None:
 def test_openai_service_model_name_falls_back_when_method_absent() -> None:
     # OpenAI-derived but without service_model_name() (defensive) -> fallback
     assert openai_service_model_name(OpenAIAPI(), "gpt-5") == "gpt-5"
+
+
+def test_latest_openai_slug_skips_hidden_entries() -> None:
+    """A hidden higher-priority entry (staged rollout, codename) is not "latest".
+
+    Mirrors Codex's picker, which filters ``visibility: "hide"`` entries out
+    before marking a default; e.g. rust-v0.153.2 lists ``gpt-6-astra`` at
+    priority 1 but hidden, with ``gpt-5.6-sol`` the first visible entry.
+    """
+    catalog = {
+        "models": [
+            {"slug": "gpt-6-astra", "priority": 1, "visibility": "hide"},
+            {"slug": "gpt-5.6-sol", "priority": 6, "visibility": "list"},
+            {"slug": "gpt-daybreak-blue-latest", "priority": 10, "visibility": "hide"},
+        ]
+    }
+    assert latest_openai_slug(catalog) == "gpt-5.6-sol"
+
+
+def test_latest_openai_slug_falls_back_to_hidden_when_nothing_is_visible() -> None:
+    catalog = {"models": [{"slug": "gpt-6-astra", "priority": 1, "visibility": "hide"}]}
+    assert latest_openai_slug(catalog) == "gpt-6-astra"
+
+
+def test_latest_openai_slug_treats_missing_visibility_as_visible() -> None:
+    """Older snapshots/catalogs without the field keep their previous behaviour."""
+    catalog = {
+        "models": [
+            {"slug": "gpt-5.6-sol", "priority": 1},
+            {"slug": "gpt-5.5", "priority": 12, "visibility": "list"},
+        ]
+    }
+    assert latest_openai_slug(catalog) == "gpt-5.6-sol"
+
+
+TOOL_MODE_CATALOG: dict[str, Any] = {
+    "models": [
+        {"slug": "gpt-5.6-sol", "tool_mode": "code_mode_only"},
+        {"slug": "gpt-5.6-sol-direct", "tool_mode": "direct"},
+        {"slug": "gpt-5.5"},
+    ]
+}
+
+
+def test_codex_catalog_tool_mode_reads_the_matched_entry() -> None:
+    assert codex_catalog_tool_mode("gpt-5.6-sol", TOOL_MODE_CATALOG) == "code_mode_only"
+    # longest-prefix match, as Codex resolves a dated or suffixed name
+    assert (
+        codex_catalog_tool_mode("gpt-5.6-sol-2026-09-01", TOOL_MODE_CATALOG)
+        == "code_mode_only"
+    )
+    assert codex_catalog_tool_mode("gpt-5.6-sol-direct", TOOL_MODE_CATALOG) == "direct"
+
+
+def test_codex_catalog_tool_mode_none_without_a_mode() -> None:
+    assert codex_catalog_tool_mode("gpt-5.5", TOOL_MODE_CATALOG) is None
+    assert codex_catalog_tool_mode("inspect-generic", TOOL_MODE_CATALOG) is None
+    assert codex_catalog_tool_mode("gpt-5.6-sol", None) is None

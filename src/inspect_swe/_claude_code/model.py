@@ -7,6 +7,7 @@ The real model is reached through the bridge. This module bundles that
 resolution so ``claude_code()`` stays readable.
 """
 
+from collections.abc import Set
 from copy import copy
 from dataclasses import dataclass
 from typing import Literal
@@ -26,6 +27,13 @@ class ClaudeCodeModels:
     presented name to its served ``Model`` so the bridge routes it to the real
     model; ``bridge_model`` is the sentinel fallback for any id the inner agent
     emits that isn't one of those names.
+
+    ``subagent`` is always distinct from ``presented``, ``opus``, ``sonnet``,
+    and ``haiku`` (never inherits any of them, even when the caller left
+    ``subagent_model`` unset) — see the invariant enforced in
+    ``resolve_claude_code_models``. This lets the bridge tell subagent
+    traffic apart from main-thread and small-fast/utility traffic by
+    requested slug alone.
     """
 
     presented: str
@@ -35,6 +43,29 @@ class ClaudeCodeModels:
     subagent: str
     aliases: dict[str, str | Model]
     bridge_model: str
+
+
+def distinct_subagent_name(presented: str, taken: Set[str]) -> str:
+    """Return the synthetic subagent slug for ``presented`` that is not in ``taken``.
+
+    The slug is ``"<presented>-subagent"``, or ``"<presented>-subagent-N"`` for
+    the first free ``N >= 2`` when a role already claims that name (a caller's
+    opus/sonnet/haiku model can legitimately resolve to
+    ``"<presented>-subagent"``). This is the one place that defines the shape
+    of the synthetic slug, and the reason ``models.subagent`` is guaranteed
+    distinct from every other presented role name in both the native
+    (`resolve_claude_code_models`) and ACP
+    (`inspect_swe.acp._agents.claude_code.claude_code.resolve_claude_code_acp_models`)
+    resolvers -- the bridge-side classifiers rely on that distinctness to
+    tell sub-agent traffic apart by requested slug alone. Claude Code shows
+    unrecognized model ids verbatim, so the synthetic name is cosmetic.
+    """
+    subagent = f"{presented}-subagent"
+    n = 2
+    while subagent in taken:
+        subagent = f"{presented}-subagent-{n}"
+        n += 1
+    return subagent
 
 
 def resolve_claude_code_models(
@@ -53,11 +84,27 @@ def resolve_claude_code_models(
     The presented identity defaults to the real served model's name (override
     with ``model_config``); Claude Code renders the genuine name/cutoff for
     recognized Anthropic ids and shows anything else verbatim. Each
-    opus/sonnet/haiku/subagent role inherits the primary presented name unless it
-    is set, in which case it gets its own name *and* its own alias so it actually
-    routes to its intended model (the bridge sentinel fallback would otherwise
-    collapse them onto the main model). Caller-supplied ``model_aliases`` take
-    precedence over the names we derive.
+    opus/sonnet/haiku role inherits the primary presented name unless it is
+    set, in which case it gets its own name *and* its own alias so it
+    actually routes to its intended model (the bridge sentinel fallback would
+    otherwise collapse them onto the main model).
+
+    The subagent role is different: it never inherits ``presented``,
+    ``opus``, ``sonnet``, or ``haiku`` as-is. An unset ``subagent_model``
+    still routes to the same served model as the primary, but is
+    *presented* as ``"<presented>-subagent"`` so that ``models.subagent``
+    never collides with any of the other role names (Claude Code requests
+    subagent traffic using this slug, and small-fast/opus/sonnet traffic
+    using their own, so a collision would make one role's traffic
+    indistinguishable from another's at the bridge). Caller-supplied
+    ``model_aliases`` take precedence over the names we derive; and because
+    an unset subagent is only a *label* for the primary's route, its
+    synthetic slug follows wherever the presented name routes after those
+    aliases are applied (so aliasing the presented name reroutes sub-agent
+    traffic too, as it did when both roles shared one slug) -- unless the
+    caller aliased the synthetic slug themselves, which wins outright. An
+    explicit ``subagent_model`` is the caller's own choice and is never
+    redirected by an alias on the presented name.
 
     ``effort`` is set on every served model this function resolves (the primary
     served model and any role that gets its own alias) by merging
@@ -98,11 +145,65 @@ def resolve_claude_code_models(
     opus = role_name(opus_model)
     sonnet = role_name(sonnet_model)
     haiku = role_name(haiku_model)
-    subagent = role_name(subagent_model)
+
+    # Subagent traffic is structurally distinguishable at the wire (probe P1
+    # of the agent-bridge-context plan, live-verified against CC 2.1.220):
+    # every Task-tool subagent request — including custom agents with their
+    # own `model:` front-matter — arrives carrying CLAUDE_CODE_SUBAGENT_MODEL's
+    # value as its raw requested slug, while main-thread requests carry
+    # ANTHROPIC_MODEL's value (`presented`), small-fast/utility traffic
+    # (when distinguishable at all) carries ANTHROPIC_SMALL_FAST_MODEL's
+    # value (`haiku`), and opus/sonnet swaps carry their own role's value.
+    # That only works as a classifier if `subagent` doesn't collide with
+    # ANY of those other slugs — a collision with `haiku` in particular
+    # would make the classifier's subagent branch shadow its utility
+    # branch for every small-fast request (see the LiveConsumer.classify
+    # truth table). So `models.subagent` not in
+    # `{presented, opus, sonnet, haiku}` is enforced here as an invariant
+    # rather than left to fall out of whatever the caller configured:
+    #
+    # - an unset `subagent_model` would otherwise inherit `presented`
+    #   verbatim (same as `role_name`'s None branch) — give it a synthetic
+    #   "<presented>-subagent" name instead, aliased to the SAME route as
+    #   the presented name (see the follow-up after `model_aliases` below),
+    #   so routing is byte-for-byte unchanged and only the presented label
+    #   differs.
+    # - an explicit `subagent_model` that happens to *resolve* to the same
+    #   name as `presented`, `opus`, `sonnet`, or `haiku` hits the identical
+    #   collision (the degenerate case: the caller deliberately points
+    #   subagents at one of the other roles — e.g. the natural "cheap model
+    #   for background AND subagents" config of setting `subagent_model`
+    #   equal to `haiku_model`) — apply the same synthetic suffix, aliased
+    #   to the caller's resolved subagent model rather than `served_model`
+    #   (respecting the caller's explicit choice even though the two
+    #   currently coincide).
+    #
+    # Either way the existing role aliases are left untouched — only a new
+    # alias key is added. `distinct_subagent_name` re-checks the synthetic
+    # name against the role names so it never overwrites an alias a role
+    # already claimed. opus/sonnet/haiku must already be resolved above so
+    # all four names are known here.
+    role_names = {presented, opus, sonnet, haiku}
+    if subagent_model is None:
+        subagent = distinct_subagent_name(presented, role_names)
+        subagent_route: Model = served_model
+    else:
+        subagent_route = served(subagent_model)
+        subagent = subagent_route.name
+        if subagent in role_names:
+            subagent = distinct_subagent_name(presented, role_names)
+    aliases[subagent] = subagent_route
 
     # caller-supplied aliases take precedence over the names we derived
     if model_aliases:
         aliases.update(model_aliases)
+        # an unset subagent is only a label for the primary's route: if the
+        # caller re-aliased the presented name, the synthetic slug follows it
+        # (otherwise main-thread traffic would take the override while Task
+        # sub-agent traffic silently stayed on `served_model`). A caller alias
+        # on the synthetic slug itself is the caller's explicit choice and wins.
+        if subagent_model is None and subagent not in model_aliases:
+            aliases[subagent] = aliases[presented]
 
     # bridge sentinel — unchanged routing for any id the inner agent emits that
     # isn't one of the presented names above

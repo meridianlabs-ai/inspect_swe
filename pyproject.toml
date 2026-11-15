@@ -11,11 +11,11 @@ dynamic = ["version"]
 description = "Software engineering agents for Inspect AI."
 authors = [{ name = "Meridian Labs" }]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT License" }
 dependencies = [
     "httpx",
-    "inspect_ai>=0.3.255",
+    "inspect-ai>=0.3.289",
     "nest_asyncio",
     "platformdirs",
     "pydantic>=2.13.0",
@@ -40,15 +40,26 @@ dev = [
     "ruff",
     "mypy",
     "pytest",
-    "anthropic",
-    "openai",
+    # The nightly slow suite (meridianlabs-ai/actions
+    # inspect-swe-nightly-tests.yml) installs this extra from uv.lock and
+    # runs pytest with -n auto and --timeout; google-genai lets the
+    # gemini_cli tests run there (with GOOGLE_API_KEY set they fail with
+    # PrerequisiteError without it, rather than skip).
+    "pytest-timeout",
+    "pytest-xdist",
+    "google-genai>=3.0.0",  # inspect_ai's Google provider floor (providers.py)
+    # Floors required by inspect_ai's sandbox agent bridge (see
+    # inspect_ai/model/_providers/providers.py). Without explicit floors a lock
+    # regeneration can resolve below them, and bridge-backed tests then fail
+    # with an opaque "Model proxy process exited unexpectedly".
+    "anthropic>=1.0.0",
+    "openai>=3.1.0",
     "pytest-dotenv",
     "types-PyYAML",
     "IPython",
     "inspect-evals",
     "inspect_k8s_sandbox",
     "mini-swe-agent",
-    "inspect_swe[doc]",
 ]
 doc = [
     "quarto-cli>=1.9.36",
@@ -57,6 +68,22 @@ doc = [
     "markdown",
     "rich",
 ]
+
+[tool.uv]
+# 0.11.8 is the first uv that keeps uv.lock stable with a relative exclude-newer,
+# and 0.13.4 the first that no longer trusts the compromised emSign root
+# (GHSA-hq85-5cpj-mr62).
+required-version = ">=0.13.4"
+# Only resolve releases at least 7 days old (see CONTRIBUTING.md).
+exclude-newer = "7 days"
+
+# 6 hours only for direct dependencies that are a model provider SDK. In-house
+# packages (inspect-*, petri*) have no cooldown (false). See CONTRIBUTING.md.
+[tool.uv.exclude-newer-package]
+anthropic = "6 hours"
+google-genai = "6 hours"
+inspect-ai = false
+openai = "6 hours"
 
 [tool.hatch.build]
 only-packages = true
@@ -70,9 +97,6 @@ version-file = "src/inspect_swe/_version.py"
 
 [tool.hatch.version.raw-options]
 local_scheme = "no-local-version" # Important for PyPI compatibility
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.ruff]
 extend-exclude = ["docs"]

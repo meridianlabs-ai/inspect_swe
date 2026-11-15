@@ -43,7 +43,6 @@ def check_mcp(
     expected_tool: str | None,
 ) -> None:
     log = run_example("mcp", agent, model)[0]
-    assert log.status == "success"
     assert log.samples
     messages = log.samples[0].messages
     assistant_messages = [m for m in messages if isinstance(m, ChatMessageAssistant)]

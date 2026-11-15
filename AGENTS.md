@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents working in this repository.
 
 ## Build/Lint/Test Commands
 
-- Install dev environment: `pip install -e ".[dev]"`, or with uv: `make sync`
+- Install dev environment: `uv sync --locked --extra dev` (uv 0.13.4 or later)
 - Format, lint, and type check: `make check` (runs `ruff format`, `ruff check --fix`, `mypy`)
 - Run fast tests: `make test` (or `pytest`)
 - Run a single test: `pytest tests/test_file.py::test_name -v`
@@ -12,7 +12,12 @@ This file provides guidance to AI coding agents working in this repository.
 ## Type Checking
 
 - mypy runs with `strict = true` over `src` and `tests`. All functions need type annotations, and an unused `type: ignore` comment is a hard error (`warn_unused_ignores`).
-- CI installs the latest unpinned mypy, so a new mypy release can turn `main` red with no code change (e.g. a `type: ignore` that a newer mypy considers unused). If the mypy check fails on a line your diff didn't touch, check whether `main` has the same failure before debugging your change — and if so, fix it in your PR and note that it was pre-existing.
+- CI installs the mypy that `uv.lock` pins, so a mypy release reaches CI only through a `uv.lock` update (usually a Dependabot PR). If the mypy check fails on a line your diff didn't touch, check whether `main` has the same failure before debugging your change — and if so, fix it in your PR and note that it was pre-existing.
+
+## Dependencies
+
+- After changing dependencies in `pyproject.toml`, run `uv lock` and commit `uv.lock`; CI fails on a stale lock. Don't override the 7-day `exclude-newer` cooldown.
+- Every other dependency rule and procedure (the lock file, the cooldown, the build toolchain) is in [DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions. Read it before you change dependencies, `[tool.uv]` or `.github/dependabot.yml`.
 
 ## Test Suite Topology
 
@@ -31,6 +36,11 @@ This file provides guidance to AI coding agents working in this repository.
 - After opening a PR, don't stop at creation: watch its checks (`gh pr checks <number> --watch`) until they complete, report the outcome, and investigate and fix any failures. If the branch falls behind `main`, update it so CI runs against current code.
 - See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines
 
+## Agent Guardrails
+
+- **Credential boundary**: treat the evaluated sandbox as untrusted. By default, bridge-owned model-provider credentials never enter it—only the dummy key used to authenticate with the in-sandbox model bridge reaches inference. A `claude_code(env=...)` caller can explicitly override its environment, including `ANTHROPIC_AUTH_TOKEN`, so caller-provided credentials must be treated as sandbox-exposed. Other real credentials (e.g. MCP auth headers) may enter the sandbox for transport, but must stay outside every model- and tool-readable path.
+- **Public API evolution**: add new parameters at the end of the signature, using `Literal` types with runtime validation for constrained options. Renaming or removing a released parameter needs a `**deprecated_args: Unpack[...]` shim; new public surface needs a concrete use case first.
+
 ## Agent Review Disclosure
 
 When an AI agent authored or co-authored a change, include an `### Agent review` section in the PR description summarizing the pre-PR review passes described above: what model/tool reviewed, whether the review ran in a fresh context and/or on a different model from the author, how many passes, and the findings — issues found, which were fixed, and which were dismissed with a one-line reason each. Maintainers weight the disclosed reviewer model and pass count when deciding how much independent review a PR still needs. If no review pass was run, say so explicitly — never report a review that didn't happen; a content-free claim ("reviewed, looks good") is worse than disclosing none. Example:
@@ -41,3 +51,7 @@ When an AI agent authored or co-authored a change, include an `### Agent review`
 - Findings: 3 — 2 fixed, 1 dismissed (flagged a missing None check that is
   guarded upstream)
 ```
+
+## Reviewing other people's pull requests
+
+Unless a maintainer asked for your review, submit any review on someone else's pull request as a **Comment**, never **Approve** or **Request changes**. In this repository those are maintainer decisions: a non-maintainer's verdict doesn't count toward merging and misleads the author about where their PR stands. Put any confirmation or concern in the comment text, and say that you are an AI agent and not a maintainer. This does not apply to agents acting for project maintainers.
