@@ -52,8 +52,8 @@ dev = [
     # inspect_ai/model/_providers/providers.py). Without explicit floors a lock
     # regeneration can resolve below them, and bridge-backed tests then fail
     # with an opaque "Model proxy process exited unexpectedly".
-    "anthropic>=1.0.0",
-    "openai>=3.1.0",
+    "anthropic>=2.0.0",
+    "openai>=3.4.0",
     "pytest-dotenv",
     "types-PyYAML",
     "IPython",
