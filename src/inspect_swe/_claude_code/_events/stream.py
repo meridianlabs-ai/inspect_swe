@@ -7,7 +7,8 @@ gets a single `async for` loop and doesn't have to manage line-buffering
 or JSON parsing inline.
 
 Yields exactly one `ExitEvent` before terminating; trailing partial
-stdout lines are flushed before that.
+stdout lines are flushed before that. A stream that ends without one (the
+process was killed, so there is no exit status) raises `RuntimeError`.
 """
 
 import json
@@ -63,8 +64,13 @@ async def claude_code_event_stream(
     Malformed lines surface as `JsonlParseError`; the caller decides how to
     handle them (typically: append to a debug log). Trailing partial lines
     are flushed when `ExecCompleted` arrives, before the final `ExitEvent`.
+
+    Raises:
+        RuntimeError: If the stream ends without an `ExecCompleted`, i.e. the
+            process was killed and has no exit status to report.
     """
     buffer = ""
+    exited = False
     async for event in proc:
         if isinstance(event, ExecStdout):
             buffer += event.data
@@ -88,3 +94,10 @@ async def claude_code_event_stream(
                     yield JsonlParseError(line=tail)
                 buffer = ""
             yield ExitEvent(code=event.exit_code)
+            exited = True
+
+    if not exited:
+        raise RuntimeError(
+            "Claude Code process ended without reporting an exit status "
+            "(the process was killed before it completed)."
+        )
