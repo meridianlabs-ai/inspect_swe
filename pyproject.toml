@@ -47,7 +47,7 @@ dev = [
     # PrerequisiteError without it, rather than skip).
     "pytest-timeout",
     "pytest-xdist",
-    "google-genai>=3.0.0",  # inspect_ai's Google provider floor (providers.py)
+    "google-genai>=3.3.0",  # inspect_ai's Google provider floor (providers.py)
     # Floors required by inspect_ai's sandbox agent bridge (see
     # inspect_ai/model/_providers/providers.py). Without explicit floors a lock
     # regeneration can resolve below them, and bridge-backed tests then fail
