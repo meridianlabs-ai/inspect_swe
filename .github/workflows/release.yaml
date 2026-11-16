@@ -18,4 +18,10 @@ jobs:
       approval-ping: false
       # Empty on push → default branch. On workflow_dispatch, targets the given
       # maintenance branch to cut a hotfix release from a released tag.
-    secrets: inherit
+    # Only the secrets the reusable workflow uses, not `secrets: inherit`, so
+    # the other repository and organization secrets stay out of it.
+    # SLACK_APPROVALS_WEBHOOK_URL is left out: the workflow uses it only when
+    # approval-ping is true.
+    secrets:
+      RELEASE_PLEASE_APP_ID: ${{ secrets.RELEASE_PLEASE_APP_ID }}
+      RELEASE_PLEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
