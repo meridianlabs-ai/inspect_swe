@@ -39,6 +39,8 @@ Inspect SWE runs coding agents such as Claude Code and Codex CLI inside an Inspe
 ### Out of scope
 
 - What an agent does inside its sandbox. The sandbox exists to contain it.
+- An agent's own permission prompts or sandboxing being bypassed. Inspect SWE turns these off by default.
+- A process in the sandbox using or tampering with the model bridge in its own sandbox, including after escalating from the `user` you chose to root, where the only effect is on that sandbox's own sample. The transcript of a bridged agent is the agent's own account of its tool use.
 - Credentials you pass to an agent yourself, for example through `env`. Code in the sandbox can read them.
 - Tools you give an agent that run on the host, such as `bridged_tools`. They run with the arguments the agent chooses.
 - The local cache of agent binaries. Anyone who can write to it can already run code as you.

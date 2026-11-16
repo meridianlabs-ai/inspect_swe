@@ -50,3 +50,19 @@ Then, try out one or more of the available agents:
 
 
 : {tbl-colwidths=\[30,70\]}
+
+## Adversarial Models {#adversarial-models}
+
+Some evaluations run models that may try to bypass controls, tamper with evidence, or manipulate the evaluation (for example, a model without safeguards in a cyber evaluation). Inspect SWE agents run inside the sample sandbox, which has consequences in that setting. These follow from the design, not from any particular bug:
+
+-   **Any process in the sandbox can use the model bridge.** Inspect cannot tell the agent from another process in the same sandbox.
+
+-   **Inspect sees model calls, not tool runs.** The agent executes its own tools, and the conversation history and tool results in each model request are the agent's own account of what happened. The transcript is therefore not a tamper-proof record. If an evaluation depends on tool-level auditing, use a native Inspect agent such as [`react()`](https://inspect.aisi.org.uk/react-agent.html).
+
+-   **Do not rely on a non-root user as a boundary.** The `user` option runs an agent as a non-root user, which raises the cost of interfering with the bridge. Assume a capable model can still escalate to root inside its container, and that root controls the sandbox end of the bridge, including the responses the agent receives.
+
+-   **The agent's own permission system is not a control.** Inspect SWE runs agents unattended with their permission prompts turned off by default (for example, Claude Code with `--dangerously-skip-permissions` and Codex CLI with `approval_policy="never"`), so those prompts do not limit what the agent does.
+
+-   **Web search is granted by default.** Most Inspect SWE agents let the model use the provider's web search. It runs at the model provider, so it works whatever the sandbox's network policy and gives the model a channel out of a sandbox with no network. For an adversarial model, turn it off: `claude_code(disallowed_tools=["WebSearch"])`, `codex_cli(web_search="disabled")`, or `gemini_cli(web_search=False)`. `kimi_code()` and `opencode()` always grant it (the `disallowed_tools` option of `kimi_code()` configures the Kimi CLI, not the grant).
+
+By default the model provider keys stay on the host, and provider-side code execution and remote MCP servers are withheld. Weigh the constraints above when deciding whether an agent that runs inside the sandbox is suitable for your evaluation. See [Adversarial Models](https://inspect.aisi.org.uk/agent-bridge.html#adversarial-models) in the Inspect documentation for more on the sandbox bridge and related guidance.
