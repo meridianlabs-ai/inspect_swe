@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
 from typing import Any, Literal, NamedTuple, overload
+from unittest.mock import AsyncMock
 
 import pytest
 from inspect_ai.agent import Agent, AgentState
@@ -19,6 +20,7 @@ from inspect_ai.log._transcript import Transcript, init_transcript
 from inspect_ai.model import ChatMessageUser
 from inspect_ai.tool import MCPServerConfigHTTP
 from inspect_ai.util import ExecResult, SandboxEnvironment
+from inspect_ai.util._sandbox import identity as identity_module
 from inspect_ai.util._sandbox._framework_operation import (
     in_framework_sandbox_operation,
 )
@@ -45,6 +47,7 @@ from inspect_swe import (
 from inspect_swe._claude_code import claude_code as claude_code_module
 from inspect_swe._codex_cli import codex_cli as codex_cli_module
 from inspect_swe._util import agentbinary
+from inspect_swe._util.agentbinary import AgentBinaryDownload, AgentBinaryVersion
 from inspect_swe._util.mcp_ready import wait_for_mcp_endpoints
 from inspect_swe.acp import agent as acp_agent_module
 from inspect_swe.acp._agents.claude_code.claude_code import ClaudeCode
@@ -419,16 +422,27 @@ async def test_a_scope_on_another_sandbox_does_not_refuse() -> None:
 
 
 @pytest.mark.parametrize("make_agent", [claude_code, codex_cli])
-async def test_an_inspect_ai_bridge_without_the_peer_check_is_refused_in_a_scope(
+@pytest.mark.parametrize(
+    "module,marker",
+    [
+        # inspect_ai 0.3.289 has the scope but its bridge serves every user
+        (sandbox_bridge, "_PEER_USER_ENV"),
+        # up to 0.3.290 a member's setup commands run in the provider's
+        # default directory, which the member may not be able to enter
+        (identity_module, "SANDBOX_OPERATIONS_USE_SCOPE_CWD"),
+    ],
+)
+async def test_an_older_inspect_ai_is_refused_in_a_scope(
     bridge: list[dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
     make_agent: Any,
+    module: Any,
+    marker: str,
 ) -> None:
-    # inspect_ai 0.3.289 has the scope but its bridge serves every user
-    monkeypatch.delattr(sandbox_bridge, "_PEER_USER_ENV")
+    monkeypatch.delattr(module, marker)
     agent = make_agent(model="mockllm/model")
     with sample() as stub, sandbox_identity(MEMBER, cwd=MEMBER_HOME):
-        with pytest.raises(SandboxIdentityError, match="later than 0.3.289"):
+        with pytest.raises(SandboxIdentityError, match="later than 0.3.290"):
             await agent(_state())
     assert stub.execs == []
     assert bridge == []
@@ -437,3 +451,106 @@ async def test_an_inspect_ai_bridge_without_the_peer_check_is_refused_in_a_scope
     with sample():
         options = await _launch(agent)
     assert options.user is None
+
+
+class PrivateWorkdirSandbox(MemberSandbox):
+    """An image whose `WORKDIR` is `/root`, which only root can enter.
+
+    Like Docker, it runs a command with no `cwd` in that directory, and a
+    command run there as another user fails. It answers the platform probes.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(workdir="/root")
+        self.refused: list[Exec] = []
+
+    async def exec(
+        self,
+        cmd: list[str],
+        input: str | bytes | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        user: str | None = None,
+        timeout: int | None = None,
+        timeout_retry: bool = True,
+        concurrency: bool = True,
+    ) -> ExecResult[str]:
+        if user not in (None, "root") and (cwd or self.workdir) == self.workdir:
+            self.refused.append(
+                Exec(cmd, user, cwd, env, in_framework_sandbox_operation())
+            )
+            return ExecResult(False, 126, "", "chdir to cwd: permission denied")
+        script = cmd[-1]
+        answers = {"uname -s": "Linux", "uname -m": "aarch64"}
+        if script in answers or "musl" in script:
+            self.execs.append(
+                Exec(cmd, user, cwd, env, in_framework_sandbox_operation())
+            )
+            return ExecResult(True, 0, answers.get(script, "glibc") + "\n", "")
+        return await super().exec(
+            cmd, input, cwd, env, user, timeout, timeout_retry, concurrency
+        )
+
+
+@pytest.mark.parametrize(
+    "module,make_agent",
+    [(claude_code_module, claude_code), (codex_cli_module, codex_cli)],
+)
+async def test_setup_runs_in_the_scope_cwd_on_a_private_workdir(
+    bridge: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    module: Any,
+    make_agent: Any,
+) -> None:
+    # every setup command names no cwd and relies on inspect_ai running it
+    # in the scope's cwd. the real installer runs, through platform detection
+    # (the install itself has its own tests), and a bridged MCP server makes
+    # the agent probe it before launch
+    monkeypatch.setattr(
+        module,
+        "ensure_agent_binary_installed",
+        agentbinary.ensure_agent_binary_installed,
+    )
+    resolved = AgentBinaryVersion("9.9.9", "digest", "https://example.com/x", False)
+    monkeypatch.setattr(
+        agentbinary,
+        "download_agent_binary_async",
+        AsyncMock(return_value=AgentBinaryDownload(b"x", resolved, True, "digest")),
+    )
+    install = AsyncMock()
+    monkeypatch.setattr(agentbinary, "install_shared_artifact", install)
+
+    mcp = MCPServerConfigHTTP(
+        type="http", name="srv", url="http://localhost:3001/mcp/srv"
+    )
+
+    @asynccontextmanager
+    async def mcp_bridge(
+        state: AgentState, **kwargs: Any
+    ) -> AsyncIterator[SimpleNamespace]:
+        yield SimpleNamespace(
+            state=state,
+            port=kwargs["port"],
+            mcp_server_configs=[mcp],
+            bridged_tools={"srv": {"t": object()}},
+        )
+
+    monkeypatch.setattr(module, "sandbox_agent_bridge", mcp_bridge)
+
+    stub = PrivateWorkdirSandbox()
+    envs = sandbox_environments_context_var.set({"default": SampleSandbox(stub)})
+    default = sandbox_default_context_var.set("default")
+    try:
+        with sandbox_identity(MEMBER, cwd=MEMBER_HOME):
+            options = await _launch(make_agent(model="mockllm/model"))
+    finally:
+        sandbox_default_context_var.reset(default)
+        sandbox_environments_context_var.reset(envs)
+
+    assert stub.refused == []
+    assert (options.user, options.cwd) == (MEMBER, MEMBER_HOME)
+    install.assert_awaited_once()
+    commands = [e.cmd[-1] for e in stub.member_execs()]
+    assert "uname -s" in commands
+    assert any(e.cmd[0] == "curl" for e in stub.member_execs())
+    assert {e.user for e in stub.member_execs()} == {MEMBER}

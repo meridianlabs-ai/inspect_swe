@@ -11,6 +11,7 @@ from typing import NamedTuple
 from inspect_ai.agent._bridge.sandbox import bridge as sandbox_bridge
 from inspect_ai.util import SandboxEnvironment
 from inspect_ai.util import sandbox as sandbox_env
+from inspect_ai.util._sandbox import identity as sandbox_identity_module
 from inspect_ai.util._sandbox.identity import (
     SandboxIdentityError,
     sandbox_identity_active,
@@ -53,17 +54,17 @@ async def resolve_agent_identity(
 
     Raises:
         SandboxIdentityError: Inside a scope, if `user` is another user, or if
-            the installed inspect_ai's agent bridge does not serve only the
-            scope's user.
+            the installed inspect_ai is too old to run an agent there (see
+            `inspect_ai_supports_scoped_agents()`).
     """
     sbox = _scoped_sandbox(sandbox)
     if sbox is None:
         return AgentIdentity(user, cwd, None, False)
-    if not bridge_serves_only_scope_user():
+    if not inspect_ai_supports_scoped_agents():
         raise SandboxIdentityError(
             "Running an agent inside a sandbox identity scope needs an inspect_ai "
-            "release whose agent bridge serves only the scope's user (later than "
-            "0.3.289). Upgrade inspect_ai."
+            "release later than 0.3.290 (or main at commit a2e99b2a or later). "
+            "Upgrade inspect_ai."
         )
     return AgentIdentity(
         user=sandbox_identity_user(sbox, user, strict=True),
@@ -108,11 +109,19 @@ def _scoped_sandbox(sandbox: str | None) -> SandboxEnvironment | None:
     return sbox if sandbox_identity_active(sbox) else None
 
 
-def bridge_serves_only_scope_user() -> bool:
-    """Whether inspect_ai's agent bridge serves only the scope's user.
+def inspect_ai_supports_scoped_agents() -> bool:
+    """Whether the installed inspect_ai can run an agent inside a scope.
 
-    inspect_ai 0.3.289 has the sandbox identity scope but its bridge serves
-    any user in the sandbox; the peer check came later (the bridge passes the
-    scope's user to its proxy under this name).
+    inspect_ai 0.3.289 has the sandbox identity scope, but its agent bridge
+    serves any user in the sandbox; the peer check came later (the bridge
+    passes the scope's user to its proxy under `_PEER_USER_ENV`). Releases up
+    to 0.3.290 run a member's setup commands in the provider's default
+    directory, which the member may not be able to enter (an image `WORKDIR`
+    of `/root`); later ones default them to the scope's working directory and
+    say so with `SANDBOX_OPERATIONS_USE_SCOPE_CWD`.
     """
-    return hasattr(sandbox_bridge, "_PEER_USER_ENV")
+    return (
+        hasattr(sandbox_bridge, "_PEER_USER_ENV")
+        and getattr(sandbox_identity_module, "SANDBOX_OPERATIONS_USE_SCOPE_CWD", False)
+        is True
+    )
