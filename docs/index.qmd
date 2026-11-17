@@ -55,7 +55,7 @@ Then, try out one or more of the available agents:
 
 An adversarial model is one that may try to bypass controls, tamper with evidence, or manipulate the evaluation (for example, a model without safeguards in a cyber evaluation). Inspect SWE agents run inside the sandbox, so if you are evaluating one, keep the following in mind:
 
--   **Web search is on by default.** Most agents let the model use the provider's web search. It runs at the provider, so it works even when the sandbox has no network and is not reviewed by tool approval policies. Turn it off with `claude_code(disallowed_tools=["WebSearch"])`, `codex_cli(web_search="disabled")`, or `gemini_cli(web_search=False)`. `kimi_code()` and `opencode()` have no option to turn it off.
+-   **Web search is on by default.** Most agents let the model use the provider's web search. It runs at the provider, so it works even when the sandbox has no network and is not reviewed by tool approval policies. Turn it off with `claude_code(disallowed_tools=["WebSearch"])`, `codex_cli(web_search="disabled")`, or `gemini_cli(web_search=False)`. `kimi_code()`, `opencode()` and `antigravity()` have no option to turn it off.
 
 -   **By default, any process in the sandbox can call the model bridge.** Inspect can't tell the agent apart from other processes in the sandbox. A framework that runs each agent as its own sandbox user (such as [Inspect Swarm](https://github.com/meridianlabs-ai/inspect_swarm)) can limit the bridge to that user. The bridge still can't tell apart processes running as that user, and root can act as any user.
 
