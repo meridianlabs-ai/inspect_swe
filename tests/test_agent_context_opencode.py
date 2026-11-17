@@ -26,6 +26,7 @@ import importlib
 from typing import Any
 
 import pytest
+from inspect_ai import Task, eval
 from inspect_ai.agent import (
     AgentBridgeContext,
     AgentState,
@@ -33,15 +34,18 @@ from inspect_ai.agent import (
 )
 from inspect_ai.agent._bridge.context import bridged_request_scope
 from inspect_ai.agent._bridge.util import resolve_inspect_model
+from inspect_ai.dataset import Sample
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageUser,
     GenerateConfig,
     Model,
+    ModelOutput,
     get_model,
 )
 from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
+from inspect_swe import opencode
 from inspect_swe._opencode.opencode import (
     _SENTINEL_MODELS,
     OPENCODE_BUILTIN_SUBAGENTS,
@@ -53,11 +57,13 @@ from inspect_swe._opencode.opencode import (
 )
 from inspect_swe._util.agentcontext import ModelFilter
 
+from tests.conftest import skip_if_no_docker
+
 # the package re-exports the `opencode` agent *function* under the same name
 # as the module, so reach the module itself for monkeypatching/logger access
 opencode_module = importlib.import_module("inspect_swe._opencode.opencode")
 
-_ANTHROPIC_PRIMARY = "anthropic/claude-sonnet-4-5"
+_ANTHROPIC_PRIMARY = "anthropic/claude-sonnet-4-6"
 
 # ---------------------------------------------------------------------------
 # _bare_model_id
@@ -65,11 +71,11 @@ _ANTHROPIC_PRIMARY = "anthropic/claude-sonnet-4-5"
 
 
 def test_bare_model_id_strips_provider_prefix() -> None:
-    assert _bare_model_id("anthropic/claude-sonnet-4-5") == "claude-sonnet-4-5"
+    assert _bare_model_id("anthropic/claude-sonnet-4-6") == "claude-sonnet-4-6"
 
 
 def test_bare_model_id_passes_through_unprefixed() -> None:
-    assert _bare_model_id("claude-sonnet-4-5") == "claude-sonnet-4-5"
+    assert _bare_model_id("claude-sonnet-4-6") == "claude-sonnet-4-6"
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +402,7 @@ def _filter(
 
 async def test_opencode_filter_stamps_root_for_primary_slug() -> None:
     wrapped = _filter()
-    assert await _invoke(wrapped, "claude-sonnet-4-5") == AgentBridgeContext("root")
+    assert await _invoke(wrapped, "claude-sonnet-4-6") == AgentBridgeContext("root")
 
 
 async def test_opencode_filter_stamps_subagent_for_sentinel_slug() -> None:
@@ -430,7 +436,7 @@ async def test_opencode_filter_root_slug_matches_bare_id_not_provider_prefixed()
 ):
     """Root slug must be checked bare — OpenCode never sends the provider prefix."""
     wrapped = _filter()
-    assert await _invoke(wrapped, "anthropic/claude-sonnet-4-5") != AgentBridgeContext(
+    assert await _invoke(wrapped, "anthropic/claude-sonnet-4-6") != AgentBridgeContext(
         "root"
     )
 
@@ -504,9 +510,9 @@ async def test_opencode_filter_sentinel_colliding_with_root_classifies_root(
         r for r in caplog.records if r.name == _AGENTCONTEXT_LOGGER and r.levelno >= 30
     ]
     assert len(warnings) == 1
-    assert "claude-sonnet-4-5" in warnings[0].getMessage()
+    assert "claude-sonnet-4-6" in warnings[0].getMessage()
 
-    assert await _invoke(wrapped, "claude-sonnet-4-5") == AgentBridgeContext("root")
+    assert await _invoke(wrapped, "claude-sonnet-4-6") == AgentBridgeContext("root")
     # the small-model sentinel, uninvolved in the collision, still works
     assert await _invoke(wrapped, "claude-3-5-haiku-20241022") == AgentBridgeContext(
         "utility"
@@ -529,7 +535,7 @@ async def test_opencode_filter_small_model_sentinel_colliding_with_root_classifi
     ]
     assert len(warnings) == 1
 
-    assert await _invoke(wrapped, "claude-sonnet-4-5") == AgentBridgeContext("root")
+    assert await _invoke(wrapped, "claude-sonnet-4-6") == AgentBridgeContext("root")
     assert await _invoke(wrapped, "claude-haiku-4-5-20251001") == AgentBridgeContext(
         "subagent"
     )
@@ -568,7 +574,7 @@ async def test_subagent_sentinel_follows_caller_alias_on_primary(
     aliases = await _bridge_aliases(
         monkeypatch,
         model="mockllm/fallback",
-        model_aliases={"claude-sonnet-4-5": "mockllm/primary-override"},
+        model_aliases={"claude-sonnet-4-6": "mockllm/primary-override"},
     )
     assert aliases is not None
     _, subagent, small = build_opencode_config_overrides(
@@ -592,7 +598,7 @@ async def test_caller_alias_on_sentinel_wins(monkeypatch: Any) -> None:
     aliases = await _bridge_aliases(
         monkeypatch,
         model_aliases={
-            "claude-sonnet-4-5": "mockllm/primary-override",
+            "claude-sonnet-4-6": "mockllm/primary-override",
             "claude-haiku-4-5-20251001": "mockllm/sub-override",
         },
     )
@@ -606,3 +612,59 @@ async def test_no_caller_alias_on_primary_passes_aliases_through(
     other: dict[str, str | Model] = {"something-else": "mockllm/x"}
     assert await _bridge_aliases(monkeypatch, model_aliases=other) == other
     assert await _bridge_aliases(monkeypatch) is None
+
+
+class _DelegateOnce:
+    """Bridge filter that has the root agent delegate once to `general`.
+
+    Records the agent-context kind of every request so the test can confirm
+    both the primary and the subagent sentinel reached the bridge.
+    """
+
+    def __init__(self) -> None:
+        self.kinds: list[str] = []
+
+    async def __call__(
+        self,
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | None:
+        context = current_agent_bridge_context()
+        assert context is not None
+        kind = context.kind
+        self.kinds.append(kind)
+        if kind == "root" and self.kinds.count("root") == 1:
+            return ModelOutput.for_tool_call(
+                model=str(model),
+                tool_name="task",
+                tool_arguments={
+                    "description": "Say hello",
+                    "prompt": "Reply with the word hello.",
+                    "subagent_type": "general",
+                },
+            )
+        return ModelOutput.from_content(str(model), "hello")
+
+
+@skip_if_no_docker
+@pytest.mark.slow
+def test_default_models_are_accepted_by_current_opencode() -> None:
+    """Current OpenCode accepts the default `opencode_model` and sentinel.
+
+    OpenCode rejects model ids missing from (or deprecated in) its bundled
+    models.dev catalog before any request reaches the bridge, so this runs
+    the latest release end to end on a mock model.
+    """
+    capture = _DelegateOnce()
+    task = Task(
+        dataset=[Sample(input="Delegate a greeting to the general agent.")],
+        solver=opencode(filter=capture),
+        sandbox="docker",
+    )
+    log = eval(task, model="mockllm/model", limit=1, time_limit=300)[0]
+
+    assert log.status == "success", log.error
+    assert "subagent" in capture.kinds, capture.kinds
