@@ -9,6 +9,7 @@ it ran as.
 
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, NamedTuple, overload
 from unittest.mock import AsyncMock
@@ -19,6 +20,7 @@ from inspect_ai.agent._bridge.sandbox import bridge as sandbox_bridge
 from inspect_ai.log._transcript import Transcript, init_transcript
 from inspect_ai.model import ChatMessageUser
 from inspect_ai.tool import MCPServerConfigHTTP
+from inspect_ai.tool._tools._skill import install as skill_install
 from inspect_ai.util import ExecResult, SandboxEnvironment
 from inspect_ai.util._sandbox import identity as identity_module
 from inspect_ai.util._sandbox._framework_operation import (
@@ -58,6 +60,9 @@ MEMBER = "swarm-w-1"
 MEMBER_HOME = "/scratch/w-1"
 INHERITED_HOME = "/root"
 """The `HOME` the image sets, which a member must not use."""
+
+SCRIPTED_SKILL = Path(__file__).parents[1] / "examples" / "skills" / "welcome-banner"
+"""A skill with a script, which the member makes executable."""
 
 
 class Exec(NamedTuple):
@@ -99,6 +104,10 @@ class MemberSandbox(SandboxEnvironment):
             stdout = f"{cwd or self.workdir}\n"
         elif script.startswith("cd ~"):
             stdout = f"{(env or {}).get('HOME', INHERITED_HOME)}\n"
+        elif script.startswith("eval echo "):
+            value = script.removeprefix("eval echo ").strip('"')
+            home = (env or {}).get("HOME", INHERITED_HOME)
+            stdout = f"{home}{value[1:]}\n" if value.startswith("~") else f"{value}\n"
         elif script.endswith("--version"):
             stdout = "codex-cli 0.150.0\n"
         elif script.startswith("curl") or (cmd and cmd[0] == "curl"):
@@ -281,6 +290,25 @@ async def test_home_dir_expands_against_the_member_home(
     assert (expand.user, expand.env) == (MEMBER, {"HOME": MEMBER_HOME})
 
 
+async def test_a_relative_home_dir_is_refused_in_a_scope(
+    bridge: list[dict[str, Any]],
+) -> None:
+    # setup runs in the scope's cwd and the CLI in its own cwd, so a relative
+    # CODEX_HOME would name two directories
+    agent = codex_cli(model="mockllm/model", home_dir=".codex", cwd="/testbed")
+    with sample() as stub, sandbox_identity(MEMBER, cwd=MEMBER_HOME):
+        with pytest.raises(SandboxIdentityError, match="must be an absolute path"):
+            await agent(_state())
+
+    assert not any("mkdir" in e.cmd[-1] for e in stub.execs)
+    assert stub.writes == []
+
+    # outside a scope it is used as before
+    with sample():
+        options = await _launch(agent)
+    assert options.env["CODEX_HOME"] == ".codex"
+
+
 @pytest.mark.parametrize("make_agent", [claude_code, codex_cli])
 async def test_another_user_inside_a_scope_raises(
     bridge: list[dict[str, Any]], make_agent: Any
@@ -430,6 +458,8 @@ async def test_a_scope_on_another_sandbox_does_not_refuse() -> None:
         # up to 0.3.290 a member's setup commands run in the provider's
         # default directory, which the member may not be able to enter
         (identity_module, "SANDBOX_OPERATIONS_USE_SCOPE_CWD"),
+        # and the skill installer's member chmod in that directory too
+        (skill_install, "INSTALL_SKILLS_AS_MEMBER_RUNS_FROM_ROOT"),
     ],
 )
 async def test_an_older_inspect_ai_is_refused_in_a_scope(
@@ -504,8 +534,9 @@ async def test_setup_runs_in_the_scope_cwd_on_a_private_workdir(
 ) -> None:
     # every setup command names no cwd and relies on inspect_ai running it
     # in the scope's cwd. the real installer runs, through platform detection
-    # (the install itself has its own tests), and a bridged MCP server makes
-    # the agent probe it before launch
+    # (the install itself has its own tests), a bridged MCP server makes the
+    # agent probe it before launch, and a skill with a script is made
+    # executable by the member
     monkeypatch.setattr(
         module,
         "ensure_agent_binary_installed",
@@ -542,7 +573,9 @@ async def test_setup_runs_in_the_scope_cwd_on_a_private_workdir(
     default = sandbox_default_context_var.set("default")
     try:
         with sandbox_identity(MEMBER, cwd=MEMBER_HOME):
-            options = await _launch(make_agent(model="mockllm/model"))
+            options = await _launch(
+                make_agent(model="mockllm/model", skills=[SCRIPTED_SKILL])
+            )
     finally:
         sandbox_default_context_var.reset(default)
         sandbox_environments_context_var.reset(envs)
@@ -553,4 +586,8 @@ async def test_setup_runs_in_the_scope_cwd_on_a_private_workdir(
     commands = [e.cmd[-1] for e in stub.member_execs()]
     assert "uname -s" in commands
     assert any(e.cmd[0] == "curl" for e in stub.member_execs())
+    # the skill's script is made executable by the member (inspect_ai runs
+    # it as one of its own operations, through a pinned-PATH shell)
+    chmods = [e for e in stub.execs if "chmod" in e.cmd and "+x" in e.cmd]
+    assert chmods and {e.user for e in chmods} == {MEMBER}
     assert {e.user for e in stub.member_execs()} == {MEMBER}

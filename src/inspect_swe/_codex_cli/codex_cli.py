@@ -42,6 +42,7 @@ from inspect_ai.util import (
 )
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
+from inspect_ai.util._sandbox.identity import SandboxIdentityError
 from typing_extensions import Unpack
 
 from inspect_swe._util._async import is_callable_coroutine
@@ -209,6 +210,8 @@ def codex_cli(
         filter: Filter for intercepting bridged model requests.
         retry_refusals: Should refusals be retried? (pass number of times to retry)
         home_dir: Home directory to use for codex cli. If set, AGENTS.md, skills, and the MCP configuration will be written here.
+            Inside a sandbox identity scope it must expand to an absolute
+            path (such as `~/.codex`); a relative one raises an error.
         cwd: Working directory to run codex cli within.
         env: Environment variables to set for codex cli
         user: User to execute codex cli with. Inside a sandbox identity scope
@@ -557,6 +560,15 @@ def codex_cli(
                     cwd=agent_cwd,
                     env=identity.home_env,
                 )
+                # inside a scope, setup commands run in the scope's cwd while
+                # the CLI starts in agent_cwd, so a relative home would name
+                # two different directories
+                if identity.scoped and not codex_home.startswith("/"):
+                    raise SandboxIdentityError(
+                        f"codex_cli(home_dir={home_dir!r}) must be an absolute "
+                        "path (or start with ~) inside a sandbox identity scope; "
+                        f"it expands to {codex_home!r}."
+                    )
             await sandbox_exec(sbox, cmd=f"mkdir -p {codex_home}", user=identity.user)
 
             # location for agents_md
