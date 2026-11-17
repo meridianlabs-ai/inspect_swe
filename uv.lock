@@ -1536,9 +1536,9 @@ doc = [
 [package.metadata]
 requires-dist = [
     { name = "agent-client-protocol", specifier = ">=0.11.0" },
-    { name = "anthropic", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "anthropic", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "anyio" },
-    { name = "google-genai", marker = "extra == 'dev'", specifier = ">=3.0.0" },
+    { name = "google-genai", marker = "extra == 'dev'", specifier = ">=3.3.0" },
     { name = "griffe", marker = "extra == 'doc'", specifier = ">=2" },
     { name = "httpx" },
     { name = "inspect-ai", specifier = ">=0.3.289" },
@@ -1549,7 +1549,7 @@ requires-dist = [
     { name = "mini-swe-agent", marker = "extra == 'dev'" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "nest-asyncio" },
-    { name = "openai", marker = "extra == 'dev'", specifier = ">=3.1.0" },
+    { name = "openai", marker = "extra == 'dev'", specifier = ">=3.4.0" },
     { name = "panflute", marker = "extra == 'doc'" },
     { name = "platformdirs" },
     { name = "pydantic", specifier = ">=2.13.0" },
