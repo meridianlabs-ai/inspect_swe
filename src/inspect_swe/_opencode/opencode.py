@@ -394,7 +394,7 @@ def opencode(
     attempts: int | AgentAttempts = 1,
     model: str | None = None,
     model_aliases: dict[str, str | Model] | None = None,
-    opencode_model: str = "anthropic/claude-sonnet-4-5",
+    opencode_model: str = "anthropic/claude-sonnet-4-6",
     filter: GenerateFilter | None = None,
     retry_refusals: int | None = None,
     cwd: str | None = None,
@@ -431,7 +431,7 @@ def opencode(
             Allows using custom Model implementations (e.g., wrapped Agents) instead of standard models.
             When a model name in the mapping is referenced, the corresponding Model/string is used.
         opencode_model: OpenCode model identifier to pass to the CLI in the form
-            `provider/model` (default: `"anthropic/claude-sonnet-4-5"`). The actual model
+            `provider/model` (default: `"anthropic/claude-sonnet-4-6"`). The actual model
             calls still go through the Inspect bridge; this just selects which provider
             client OpenCode uses to format the request.
         filter: Filter for intercepting bridged model requests
