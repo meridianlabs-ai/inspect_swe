@@ -65,4 +65,4 @@ An adversarial model is one that may try to bypass controls, tamper with evidenc
 
 -   **Permission prompts are off.** Agents run unattended with their own permission prompts disabled by default (for example, Claude Code with `--dangerously-skip-permissions` and Codex CLI with `approval_policy="never"`).
 
-API keys stay on the host, and provider-side code execution and remote MCP servers are off by default. See [Adversarial Models](https://inspect.aisi.org.uk/agent-bridge.html#adversarial-models) in the Inspect documentation for more.
+The model API keys Inspect uses stay on the host. Credentials you pass to an agent yourself, through `env` or MCP server configuration, go into the sandbox. Provider-side code execution and remote MCP servers are off by default. See [Adversarial Models](https://inspect.aisi.org.uk/agent-bridge.html#adversarial-models) in the Inspect documentation for more.
