@@ -149,7 +149,7 @@ def test_gemini_cli_bridged_tools() -> None:
     ),
     strict=True,
     reason="Kimi Code 2.6 registers MCP tools but leaves them out of the model's "
-    "tool list: https://github.com/MoonshotAI/kimi-code/issues/TODO",
+    "tool list: https://github.com/MoonshotAI/kimi-code/issues/4904",
 )
 @skip_if_no_anthropic
 @skip_if_no_docker
