@@ -60,7 +60,7 @@ jobs:
           persist-credentials: false
       # Ruff only reads the source, so the project itself does not install.
       - if: needs.changes.outputs.build == 'true'
-        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
+        uses: meridianlabs-ai/actions/install-python-dependencies@57adfb7a3247f06e4f1c033f461a54e0d83d04f5 # main
         with:
           versions: locked
           python-version: ${{ matrix.python-version }}
@@ -88,7 +88,7 @@ jobs:
         with:
           persist-credentials: false
       - if: needs.changes.outputs.build == 'true'
-        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
+        uses: meridianlabs-ai/actions/install-python-dependencies@57adfb7a3247f06e4f1c033f461a54e0d83d04f5 # main
         with:
           versions: locked
           python-version: ${{ matrix.python-version }}
@@ -112,7 +112,7 @@ jobs:
         with:
           persist-credentials: false
       - if: needs.changes.outputs.build == 'true'
-        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
+        uses: meridianlabs-ai/actions/install-python-dependencies@57adfb7a3247f06e4f1c033f461a54e0d83d04f5 # main
         with:
           versions: locked
           python-version: ${{ matrix.python-version }}
@@ -138,7 +138,7 @@ jobs:
       # The project's locked dependencies, not the project itself: the step
       # after the build installs the wheel.
       - if: needs.changes.outputs.build == 'true'
-        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
+        uses: meridianlabs-ai/actions/install-python-dependencies@57adfb7a3247f06e4f1c033f461a54e0d83d04f5 # main
         with:
           versions: locked
           python-version: ${{ matrix.python-version }}
@@ -149,7 +149,7 @@ jobs:
       # still pin every file.
       - name: Install build toolchain
         if: needs.changes.outputs.build == 'true'
-        uses: meridianlabs-ai/actions/install-python-dependencies@6fe6acfaeb946d22dd4fb673c744a3591eab0d91 # main
+        uses: meridianlabs-ai/actions/install-python-dependencies@57adfb7a3247f06e4f1c033f461a54e0d83d04f5 # main
         with:
           versions: hashed-requirements
           python-version: ${{ matrix.python-version }}
