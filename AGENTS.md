@@ -17,7 +17,7 @@ This file provides guidance to AI coding agents working in this repository.
 ## Dependencies
 
 - After changing dependencies in `pyproject.toml`, run `uv lock` and commit `uv.lock`; CI fails on a stale lock. Don't override the 7-day `exclude-newer` cooldown.
-- Every other dependency rule and procedure (the lock file, the cooldown, inspect_ai tracked from `main`, the build toolchain) is in [DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions. Read it before you change dependencies, `[tool.uv]` or `.github/dependabot.yml`.
+- Every other dependency rule and procedure (the lock file, the cooldown, the build toolchain) is in [DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions. Read it before you change dependencies, `[tool.uv]` or `.github/dependabot.yml`.
 
 ## Test Suite Topology
 
@@ -39,6 +39,7 @@ This file provides guidance to AI coding agents working in this repository.
 ## Agent Guardrails
 
 - **Credential boundary**: treat the evaluated sandbox as untrusted. By default, bridge-owned model-provider credentials never enter it—only the dummy key used to authenticate with the in-sandbox model bridge reaches inference. A `claude_code(env=...)` caller can explicitly override its environment, including `ANTHROPIC_AUTH_TOKEN`, so caller-provided credentials must be treated as sandbox-exposed. Other real credentials (e.g. MCP auth headers) may enter the sandbox for transport, but must stay outside every model- and tool-readable path.
+- **New agents**: a PR that adds a coding agent must satisfy the checklist in [contributing/agents.md](contributing/agents.md), including sub-agent/utility classification, transcript spans, and the `docs/sub-agent-context.qmd` row. Reviewers apply the same checklist.
 - **Public API evolution**: add new parameters at the end of the signature, using `Literal` types with runtime validation for constrained options. Renaming or removing a released parameter needs a `**deprecated_args: Unpack[...]` shim; new public surface needs a concrete use case first.
 
 ## Agent Review Disclosure

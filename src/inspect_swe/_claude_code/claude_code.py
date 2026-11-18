@@ -13,7 +13,13 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, StopReason
+from inspect_ai.model import (
+    ChatMessage,
+    ChatMessageSystem,
+    GenerateFilter,
+    Model,
+    StopReason,
+)
 from inspect_ai.scorer import score
 from inspect_ai.tool import (
     MCPServerConfig,
@@ -153,6 +159,8 @@ def claude_code(
     replace_system_prompt: str | None = None,
     allowlist_mcp_tools: bool = True,
     allowlist_bridged_tools: bool = True,
+    tools: list[str] | None = None,
+    strict_mcp_config: bool = False,
     **deprecated_args: Unpack[ClaudeCodeDeprecatedArgs],
 ) -> Agent:
     """Claude Code agent.
@@ -161,7 +169,7 @@ def claude_code(
 
     The agent can either use a version of Claude Code installed in the sandbox, or can download a version and install it in the sandbox (see docs on `version` option below for details).
 
-    Use `disallowed_tools` to control access to tools. See [Tools available to Claude](https://code.claude.com/docs/en/tools-reference) for the list of built-in tools which can be disallowed.
+    Use `tools` to restrict Claude Code to a fixed set of built-in tools, and `disallowed_tools` to deny individual tools. See [Tools available to Claude](https://code.claude.com/docs/en/tools-reference) for the list of built-in tools.
 
     Use the `attempts` option to enable additional submissions if the initial
     submission(s) are incorrect (by default, no additional attempts are permitted).
@@ -273,6 +281,14 @@ def claude_code(
             bridged call is never reviewed. Left `True` under `"auto"`, a run
             whose entire tool surface is bridged produces ZERO adjudications and
             looks clean while being wholly unreviewed.
+        tools: Built-in tools to make available (Claude Code `--tools`).
+            `None` keeps Claude Code's default tool set, a list restricts the
+            session to those tools, and `[]` removes every built-in tool so
+            that only MCP tools (e.g. `bridged_tools`) remain. Leaving
+            `"WebSearch"` out of the list also disables web search.
+        strict_mcp_config: Only use the MCP servers passed via `mcp_servers`
+            and `bridged_tools` (Claude Code `--strict-mcp-config`), ignoring
+            any other MCP configuration present in the sandbox.
         **deprecated_args: Supports the deprecated `auto_mode` argument. Set
             `auto_mode=True` maps to `permission_mode="auto"`.
     """
@@ -378,9 +394,7 @@ def claude_code(
                 retry_refusals=retry_refusals,
                 port=port,
                 bridged_tools=bridged_tools_specs,
-                web_search=not web_search_tool_disallowed(
-                    disallowed_tools, "WebSearch"
-                ),
+                web_search=resolve_web_search_enabled(disallowed_tools, tools),
                 model_event_sink=consumer,
                 checkpointer=cp,
             ) as bridge,
@@ -408,7 +422,15 @@ def claude_code(
                 if effective_permission_mode is not None
                 else ["--dangerously-skip-permissions"]
             )
-            cmd = [*permission_flag, "--model", models.presented]
+            # --tools is variadic, so it goes before --model rather than at the
+            # end of cmd: in centaur mode cmd becomes a shell alias and a
+            # trailing --tools would swallow the prompt the user types after it.
+            cmd = [
+                *permission_flag,
+                *resolve_tool_set_args(tools, strict_mcp_config),
+                "--model",
+                models.presented,
+            ]
 
             # add interactive options if not running as centaur
             if centaur is False:
@@ -506,7 +528,12 @@ def claude_code(
             if centaur:
                 await run_claude_code_centaur(
                     options=centaur,
-                    claude_cmd=[claude_binary] + cmd,
+                    claude_cmd=_centaur_claude_cmd(
+                        claude_binary,
+                        cmd,
+                        _system_texts(state.messages, system_prompt),
+                        replace_system_prompt,
+                    ),
                     agent_env=agent_env,
                     state=state,
                 )
@@ -531,15 +558,8 @@ def claude_code(
                         # resume. Appended messages are not re-sent because the bridge
                         # round-trips them into state.messages and appending them again
                         # would duplicate the effective prompt.
-                        system_texts = [
-                            m.text
-                            for m in state.messages
-                            if isinstance(m, ChatMessageSystem)
-                        ]
-                        if system_prompt is not None:
-                            system_texts.append(system_prompt)
                         system_args = _system_prompt_args(
-                            system_texts,
+                            _system_texts(state.messages, system_prompt),
                             replace_system_prompt,
                             is_resume=is_resume,
                         )
@@ -702,6 +722,45 @@ def claude_code(
     return agent_with(execute, name=name, description=description)
 
 
+def _system_texts(
+    messages: Sequence[ChatMessage], system_prompt: str | None
+) -> list[str]:
+    """System texts to append: the task's own, then the caller's.
+
+    Shared by the centaur and unattended launches so the operator's `claude`
+    alias and the unattended agent cannot disagree about the effective prompt.
+    """
+    texts = [m.text for m in messages if isinstance(m, ChatMessageSystem)]
+    if system_prompt is not None:
+        texts.append(system_prompt)
+    return texts
+
+
+def _centaur_claude_cmd(
+    claude_binary: str,
+    cmd: Sequence[str],
+    system_texts: Sequence[str],
+    replace_system_prompt: str | None,
+) -> list[str]:
+    """Build the `claude` invocation aliased into the operator's Centaur shell.
+
+    The operator's `claude --resume` runs through the same alias, so the prompt
+    arguments are sent again on resume. Claude Code releases differ on whether
+    a resumed session keeps `--append-system-prompt` text that is not passed
+    again (2.1.258 drops it, 2.1.285 keeps it), and neither duplicates it when
+    it is passed again, so sending it on every invocation is correct for both.
+    """
+    return (
+        [claude_binary]
+        + list(cmd)
+        + _system_prompt_args(
+            system_texts,
+            replace_system_prompt,
+            is_resume=False,
+        )
+    )
+
+
 def _system_prompt_args(
     system_texts: Sequence[str],
     replace_system_prompt: str | None,
@@ -766,6 +825,35 @@ def resolve_mcp_servers(
         )
 
     return mcp_config_cmds, resolve_mcp_server_allowed_tools(mcp_servers)
+
+
+def resolve_tool_set_args(
+    tools: Sequence[str] | None, strict_mcp_config: bool
+) -> list[str]:
+    args: list[str] = []
+    if tools is not None:
+        # Claude Code disables every built-in tool with `--tools ""`; the
+        # zero-argument form is not accepted, so always pass a value.
+        args.extend(["--tools", ",".join(tools)])
+    if strict_mcp_config:
+        args.append("--strict-mcp-config")
+    return args
+
+
+def resolve_web_search_enabled(
+    disallowed_tools: Sequence[str] | None, tools: Sequence[str] | None
+) -> bool:
+    """Whether the bridge should grant web search to the model.
+
+    Web search is withheld when `WebSearch` is disallowed, or when `tools`
+    restricts the built-in set and leaves `WebSearch` out (`"default"` keeps
+    Claude Code's default set, which includes it).
+    """
+    if web_search_tool_disallowed(disallowed_tools, "WebSearch"):
+        return False
+    if tools is None:
+        return True
+    return any(tool in ("WebSearch", "default") for tool in tools)
 
 
 def resolve_allowed_mcp_tools(

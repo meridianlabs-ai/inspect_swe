@@ -22,6 +22,8 @@ The following options are supported for customizing the behavior of the agent:
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
 | `mcp_ready_timeout` | Seconds to wait for bridged MCP endpoints to serve tools before the agent launch errors. |
 | `disallowed_tools` | Optionally disallow tools (e.g. `"{{< meta agent_disallowed_tool >}}"`) |
+| `tools` | Restrict the agent to a fixed set of built-in tools (pass `[]` to remove every built-in tool so that only MCP tools remain). |
+| `strict_mcp_config` | Only use the MCP servers passed via `mcp_servers` and `bridged_tools`, ignoring other MCP configuration in the sandbox. |
 | `centaur` | Run in [Centaur Mode](#centaur-mode), which makes Claude Code available to an Inspect `human_cli()` agent rather than running it unattended. | 
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |

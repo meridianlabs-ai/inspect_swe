@@ -153,7 +153,8 @@ def gemini_cli(
         version: Version of gemini cli to use. One of:
             - "auto": Use any available version in sandbox, otherwise download latest
             - "sandbox": Use sandbox version (raises RuntimeError if not available)
-            - "stable"/"latest": Download and use the latest version
+            - "stable"/"latest": Download and use the newest release that is
+              at least 7 days old
             - "x.x.x": Download and use a specific version
         debug: Trace all debug output.
     """
@@ -406,9 +407,16 @@ def build_gemini_settings(mcp_servers: Sequence[MCPServerConfig]) -> str:
             config = server.model_dump(
                 exclude={"name", "tools", "type"}, exclude_none=True
             )
-            # For HTTP transport, Gemini CLI uses 'httpUrl' field
-            if isinstance(server, MCPServerConfigHTTP) and "url" in config:
-                config["httpUrl"] = config.pop("url")
+            # For HTTP transport, Gemini CLI uses 'httpUrl' field. SSE servers
+            # keep 'url' and need an explicit type, since Gemini CLI treats a
+            # bare 'url' as streamable HTTP.
+            if isinstance(server, MCPServerConfigHTTP):
+                if server.type == "sse":
+                    config["type"] = "sse"
+                else:
+                    config["httpUrl"] = config.pop("url")
+            if server.tools != "all":
+                config["includeTools"] = list(server.tools)
             if "cwd" in config and not isinstance(config["cwd"], str):
                 config["cwd"] = str(config["cwd"])
             mcp_servers_config[server.name] = config
