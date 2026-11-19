@@ -1,3 +1,4 @@
+import tomllib
 from typing import Any
 
 import pytest
@@ -85,8 +86,7 @@ def test_to_toml_escapes_remaining_control_characters() -> None:
     value = "esc \x1b bell \x07 del \x7f"
     toml = to_toml({"policy": value})
     assert toml == 'policy = "esc \\u001B bell \\u0007 del \\u007F"'
-    # round-trip via the stdlib parser (tomllib requires Python >= 3.11)
-    tomllib = pytest.importorskip("tomllib")
+    # round-trip via the stdlib parser
     assert tomllib.loads(toml) == {"policy": value}
 
 
@@ -165,8 +165,7 @@ def test_auto_review_model_aliases_none_passthrough() -> None:
 
 
 def test_auto_review_model_aliases_default_binds_guardian() -> None:
-    # bridges without a fallback model (e.g. ACP) pass a default so the
-    # guardian slug always resolves
+    # a default binds the guardian slug when auto_review names no model
     aliases = resolve_codex_auto_review_model_aliases(
         CodexAutoReview(), {"alias": "x"}, default="openai/gpt-4o"
     )

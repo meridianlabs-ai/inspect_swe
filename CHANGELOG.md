@@ -1,5 +1,64 @@
 # Changelog
 
+## [0.3.2](https://github.com/meridianlabs-ai/inspect_swe/compare/0.3.1...0.3.2) (2026-11-19)
+
+
+### Features
+
+* claude_code() and codex_cli() run as the member inside a sandbox identity scope ([#241](https://github.com/meridianlabs-ai/inspect_swe/issues/241)) ([3111670](https://github.com/meridianlabs-ai/inspect_swe/commit/3111670d474d49a5b168d488b1bc1e33db0243b8))
+
+## [0.3.1](https://github.com/meridianlabs-ai/inspect_swe/compare/0.3.0...0.3.1) (2026-11-18)
+
+
+### Features
+
+* add tools and strict_mcp_config options to claude_code() ([#224](https://github.com/meridianlabs-ai/inspect_swe/issues/224)) ([60b7d0d](https://github.com/meridianlabs-ai/inspect_swe/commit/60b7d0dbf1c96cc31216b97f57f928c541288983))
+
+
+### Bug Fixes
+
+* agent CLIs installed from npm wait 7 days for new releases and skip install scripts ([#234](https://github.com/meridianlabs-ai/inspect_swe/issues/234)) ([6cdf0b0](https://github.com/meridianlabs-ai/inspect_swe/commit/6cdf0b0125e1643efca7794a25a3caafc04348a9))
+* Claude ACP agent fails in Linux sandboxes when run from a macOS host ([#235](https://github.com/meridianlabs-ai/inspect_swe/issues/235)) ([5e105e6](https://github.com/meridianlabs-ai/inspect_swe/commit/5e105e69bdf44161cf0105cb8cad4235543458a9))
+* Claude Code subagent model calls recorded under the wrong agent span ([#244](https://github.com/meridianlabs-ai/inspect_swe/issues/244)) ([38e0198](https://github.com/meridianlabs-ai/inspect_swe/commit/38e01985c725956d9c12a7d81d5ad18dff8d6267))
+* claude_code() scores a killed Claude Code process as a clean exit ([#257](https://github.com/meridianlabs-ai/inspect_swe/issues/257)) ([3a68525](https://github.com/meridianlabs-ai/inspect_swe/commit/3a68525d805ee0b5c4538f1351a95a58973e6ab3))
+* **claude_code:** carry the caller's system prompt into centaur sessions ([#132](https://github.com/meridianlabs-ai/inspect_swe/issues/132)) ([4874393](https://github.com/meridianlabs-ai/inspect_swe/commit/48743930d400dcdf9c5e3510dfe90d9c965f5a8d))
+* gemini_cli ignores the tools allowlist of MCP servers and connects to SSE servers over streamable HTTP ([#240](https://github.com/meridianlabs-ai/inspect_swe/issues/240)) ([6558a8d](https://github.com/meridianlabs-ai/inspect_swe/commit/6558a8d93b185bf4813a6c1588e5e61df545834d))
+* opencode agent fails on every sample with OpenCode 1.19.6 ([#259](https://github.com/meridianlabs-ai/inspect_swe/issues/259)) ([34a0185](https://github.com/meridianlabs-ai/inspect_swe/commit/34a0185df2448af56af4625fecd74a6683aed303))
+
+## [0.3.0](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.72...0.3.0) (2026-11-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* require Python 3.11 and test on Python 3.14 ([#194](https://github.com/meridianlabs-ai/inspect_swe/issues/194))
+
+### Features
+
+* a live sentinel follows Claude Code and Codex sub-agents into their own conversations ([#206](https://github.com/meridianlabs-ai/inspect_swe/issues/206)) ([661d6bf](https://github.com/meridianlabs-ai/inspect_swe/commit/661d6bf47e5a2892a652f7f00dc11a943fce8387))
+* filter-time sub-agent attribution across all agents (agent bridge context) ([b69a5f9](https://github.com/meridianlabs-ai/inspect_swe/commit/b69a5f984759bb4a95abf37e1fa03151d97a20b3))
+* record the agent binary each sample ran in the eval log ([#183](https://github.com/meridianlabs-ai/inspect_swe/issues/183)) ([192654a](https://github.com/meridianlabs-ai/inspect_swe/commit/192654a7e081b34ee3a518fdcc364ee114ce2db9))
+* require Python 3.11 and test on Python 3.14 ([#194](https://github.com/meridianlabs-ai/inspect_swe/issues/194)) ([86cd990](https://github.com/meridianlabs-ai/inspect_swe/commit/86cd990387d93052ed1c14762056e85dee703321))
+
+
+### Bug Fixes
+
+* codex_cli picks its Codex model slug from a custom model_catalog_json ([#185](https://github.com/meridianlabs-ai/inspect_swe/issues/185)) ([7453133](https://github.com/meridianlabs-ai/inspect_swe/commit/7453133a381e1519ddd1e393569c59f1b67ef7b1))
+* interactive Claude Code, Codex and Gemini CLI agents serve every model call with their own model ([#182](https://github.com/meridianlabs-ai/inspect_swe/issues/182)) ([862bc85](https://github.com/meridianlabs-ai/inspect_swe/commit/862bc8522fb5b75bd1b48154e68e87b4b44ff4b5))
+* **mini_swe_agent:** agent fails to install on Alpine (musl) sandboxes ([#195](https://github.com/meridianlabs-ai/inspect_swe/issues/195)) ([7804cf7](https://github.com/meridianlabs-ai/inspect_swe/commit/7804cf7417999fcb743c48722e679ed3b5fe4d8d))
+* send GITHUB_TOKEN on GitHub API requests to avoid rate limits ([#199](https://github.com/meridianlabs-ai/inspect_swe/issues/199)) ([714c1c1](https://github.com/meridianlabs-ai/inspect_swe/commit/714c1c15ea43cb70b060d46ab51ac242e2ab31d0))
+
+## [0.2.72](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.71...0.2.72) (2026-10-20)
+
+
+### Features
+
+* pass plain Tools to bridged_tools without wrapping them in a BridgedToolsSpec ([ca3834f](https://github.com/meridianlabs-ai/inspect_swe/commit/ca3834fc22ed4f60daeee34e3f286683cad88e94))
+
+
+### Bug Fixes
+
+* codex_cli fails before launch when Codex code mode would deny every bridged tool call ([#184](https://github.com/meridianlabs-ai/inspect_swe/issues/184)) ([6bd7452](https://github.com/meridianlabs-ai/inspect_swe/commit/6bd7452602a8adc8ce224a422d1e075ce6ffad9f))
+
 ## [0.2.71](https://github.com/meridianlabs-ai/inspect_swe/compare/0.2.70...0.2.71) (2026-09-17)
 
 

@@ -4,27 +4,32 @@ Thanks for your interest in contributing to Inspect SWE, a suite of software eng
 
 ## Development setup
 
-Inspect SWE requires Python 3.10 or later. Clone the repository and install it in
-editable mode with the `[dev]` optional dependencies:
+Inspect SWE requires Python 3.11 or later and [uv](https://docs.astral.sh/uv/)
+0.13.4 or later. Clone the repository and install it in editable mode with the
+`[dev]` optional dependencies:
 
 ```bash
 git clone https://github.com/meridianlabs-ai/inspect_swe
 cd inspect_swe
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 ```
 
-If you use [uv](https://docs.astral.sh/uv/), you can instead sync all groups and
-extras with:
-
-```bash
-make sync
-```
+`uv sync --locked` creates `.venv` with the exact versions in `uv.lock`, the `[dev]` extra included, and installs Inspect SWE editable. It fails if `uv.lock` is out of date with `pyproject.toml`. Run Python commands from the environment: `uv run <command>`, `.venv/bin/<command>`, or `source .venv/bin/activate`. `uv sync --locked` without `--extra dev` removes the dev tools again.
 
 To enable the pre-commit hooks:
 
 ```bash
 make hooks
 ```
+
+### Dependencies
+
+[DEPENDENCIES.md](https://github.com/meridianlabs-ai/actions/blob/main/DEPENDENCIES.md) in meridianlabs-ai/actions tells how the Inspect repositories install and change dependencies. It covers the lock file, the cooldown, the canaries, the release build tools, and the procedures to add or update a dependency. Follow it. It is the same for every Inspect repository, so this file does not repeat it.
+
+For this repository:
+
+- inspect-ai comes from PyPI, like every other dependency. To develop against an unreleased inspect_ai, install a local checkout over the locked one with `uv pip install --no-deps -e ../inspect_ai` (a later `uv sync` or `uv run` without `--no-sync` puts the locked one back). That is for local development only: a PR that needs the unreleased inspect_ai can't merge until that inspect_ai is published on PyPI and the `inspect-ai` floor in `pyproject.toml` and `uv.lock` are updated here.
+- The cooldown exceptions are in `[tool.uv.exclude-newer-package]` in `pyproject.toml`: in-house packages have none (`false`), and model provider SDKs have 6 hours.
 
 ## Checks and tests
 
@@ -48,6 +53,30 @@ collected via:
 
 ```bash
 pytest --co
+```
+
+## Adding a coding agent
+
+Read [contributing/agents.md](contributing/agents.md) before you start a new
+agent. It is the checklist reviewers use for agent PRs. It covers binary
+acquisition, model routing, sub-agent and utility classification, transcript
+spans and viewer rendering, feature parity, docs, and tests. Most of the work
+is in the trajectory sections, and PRs most often fall short there.
+
+## Documentation
+
+The docs packages (including Quarto) are in the `[doc]` extra, which `[dev]` does
+not include. Install it alongside `[dev]`:
+
+```bash
+uv sync --locked --extra dev --extra doc
+```
+
+Then preview the docs:
+
+```bash
+cd docs
+quarto preview
 ```
 
 ## Commit messages and releases

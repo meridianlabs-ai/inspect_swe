@@ -51,3 +51,19 @@ Then, try out one or more of the available agents:
 
 
 : {tbl-colwidths=\[30,70\]}
+
+## Adversarial Models {#adversarial-models}
+
+An adversarial model is one that may try to bypass controls, tamper with evidence, or manipulate the evaluation (for example, a model without safeguards in a cyber evaluation). Inspect SWE agents run inside the sandbox, so if you are evaluating one, keep the following in mind:
+
+-   **Web search is on by default.** Most agents let the model use the provider's web search. It runs at the provider, so it works even when the sandbox has no network and is not reviewed by tool approval policies. Turn it off with `claude_code(disallowed_tools=["WebSearch"])`, `codex_cli(web_search="disabled")`, or `gemini_cli(web_search=False)`. `kimi_code()` and `opencode()` have no option to turn it off. `antigravity()` has no option either, but it only offers the model its MCP tools, so the model can't use web search.
+
+-   **By default, any process in the sandbox can call the model bridge.** Inspect can't tell the agent apart from other processes in the sandbox. A framework that runs each agent as its own sandbox user (such as [Inspect Swarm](https://github.com/meridianlabs-ai/inspect_swarm)) can limit the bridge to that user. The bridge still can't tell apart processes running as that user, and root can act as any user.
+
+-   **The transcript is the agent's own account of its tool use.** Inspect records model calls, and runs and records any `bridged_tools` you provide. It doesn't run or check the tools the agent runs inside the sandbox. The message history and tool results in each request come from the agent, which can misreport them. If you need a reliable record of tool calls, use a native agent such as [`react()`](https://inspect.aisi.org.uk/react-agent.html).
+
+-   **Don't count on a non-root `user`.** A capable model may get root in its container. Root can interfere with the bridge inside the sandbox, including the responses the agent receives.
+
+-   **Permission prompts are off.** Agents run unattended with their own permission prompts disabled by default (for example, Claude Code with `--dangerously-skip-permissions` and Codex CLI with `approval_policy="never"`).
+
+The model API keys Inspect uses stay on the host. Credentials you pass to an agent yourself, through `env` or MCP server configuration, go into the sandbox. Provider-side code execution and remote MCP servers are off by default. See [Adversarial Models](https://inspect.aisi.org.uk/agent-bridge.html#adversarial-models) in the Inspect documentation for more.

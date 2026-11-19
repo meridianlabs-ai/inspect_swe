@@ -23,7 +23,7 @@ The following options are supported for customizing the behavior of the agent:
 | `centaur` | Run in [Centaur Mode](#centaur-mode), which makes OpenCode available to an Inspect `human_cli()` agent rather than running it unattended. |
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
-| `opencode_model` | OpenCode model identifier (`provider/model`) passed to the CLI. Default: `"anthropic/claude-sonnet-4-5"`. The actual model calls still go through the Inspect bridge; this just selects which provider client OpenCode uses to format the request. |
+| `opencode_model` | OpenCode model identifier (`provider/model`) passed to the CLI. Default: `"anthropic/claude-sonnet-4-6"`. The actual model calls still go through the Inspect bridge; this just selects which provider client OpenCode uses to format the request. |
 | `filter` | Filter for intercepting bridged model requests. |
 | `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
 | `cwd` | Working directory for {{< meta agent_name >}} session. |
@@ -63,6 +63,8 @@ The task prompt is delivered to `opencode run` on stdin, which requires {{< meta
 :::
 
 {{< include _snippets/agent_installation.md >}}
+
+{{< include _snippets/agent_binary_provenance.md >}}
 
 {{< include _snippets/agent_centaur.md >}}
 

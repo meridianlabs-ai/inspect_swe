@@ -29,6 +29,7 @@ import anyio
 from inspect_ai.agent import SandboxAgentBridge
 from inspect_ai.tool import MCPServerConfigHTTP
 from inspect_ai.util import SandboxEnvironment
+from inspect_ai.util._sandbox.identity import sandbox_identity_user
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,10 @@ async def wait_for_mcp_endpoints(
     else:
         sbox = sandbox_env(sandbox)
 
+    # Inside a sandbox identity scope the bridge serves only the scope's
+    # user, so the probe connects as that user. Outside one, None as before.
+    probe_user = sandbox_identity_user(sbox, None, strict=False)
+
     # Skip bridged servers configured with no tools: the bridge registry is
     # the source of truth for what tools/list should return, and a zero-tool
     # bridge is a valid configuration. Probing one forever would fail the
@@ -248,6 +253,7 @@ async def wait_for_mcp_endpoints(
                         url,
                     ],
                     input=request,
+                    user=probe_user,
                     # Bound sbox.exec itself with the exact remaining budget so
                     # a hung sandbox transport cannot outlive the deadline. +1
                     # gives curl's own --max-time room to fire first and report.

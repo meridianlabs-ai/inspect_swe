@@ -13,12 +13,19 @@ from inspect_ai.agent import (
     agent_with,
     sandbox_agent_bridge,
 )
-from inspect_ai.model import ChatMessageSystem, GenerateFilter, Model, StopReason
+from inspect_ai.model import (
+    ChatMessage,
+    ChatMessageSystem,
+    GenerateFilter,
+    Model,
+    StopReason,
+)
 from inspect_ai.scorer import score
 from inspect_ai.tool import (
     MCPServerConfig,
     MCPServerConfigHTTP,
     Skill,
+    Tool,
     install_skills,
     read_skills,
 )
@@ -44,6 +51,7 @@ from inspect_swe._claude_code._events.stream import (
     StderrEvent,
     claude_code_event_stream,
 )
+from inspect_swe._util.bridged_tools import resolve_bridged_tools
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
@@ -54,6 +62,8 @@ from inspect_swe._util.websearch import web_search_tool_disallowed
 
 from .._util._async import is_callable_coroutine
 from .._util.agentbinary import ensure_agent_binary_installed
+from .._util.agentcontext import classify_filter
+from .._util.identity import refuse_centaur_in_scope, resolve_agent_identity
 from .._util.messages import build_user_prompt
 from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
@@ -122,7 +132,7 @@ def claude_code(
     system_prompt: str | None = None,
     skills: Sequence[str | Path | Skill] | None = None,
     mcp_servers: Sequence[MCPServerConfig] | None = None,
-    bridged_tools: Sequence[BridgedToolsSpec] | None = None,
+    bridged_tools: Sequence[Tool | BridgedToolsSpec] | None = None,
     mcp_ready_timeout: float = DEFAULT_MCP_READY_TIMEOUT,
     disallowed_tools: list[str] | None = None,
     centaur: bool | CentaurOptions = False,
@@ -149,6 +159,8 @@ def claude_code(
     replace_system_prompt: str | None = None,
     allowlist_mcp_tools: bool = True,
     allowlist_bridged_tools: bool = True,
+    tools: list[str] | None = None,
+    strict_mcp_config: bool = False,
     **deprecated_args: Unpack[ClaudeCodeDeprecatedArgs],
 ) -> Agent:
     """Claude Code agent.
@@ -157,7 +169,7 @@ def claude_code(
 
     The agent can either use a version of Claude Code installed in the sandbox, or can download a version and install it in the sandbox (see docs on `version` option below for details).
 
-    Use `disallowed_tools` to control access to tools. See [Tools available to Claude](https://docs.anthropic.com/en/docs/claude-code/settings#tools-available-to-claude) for the list of built-in tools which can be disallowed.
+    Use `tools` to restrict Claude Code to a fixed set of built-in tools, and `disallowed_tools` to deny individual tools. See [Tools available to Claude](https://code.claude.com/docs/en/tools-reference) for the list of built-in tools.
 
     Use the `attempts` option to enable additional submissions if the initial
     submission(s) are incorrect (by default, no additional attempts are permitted).
@@ -173,7 +185,8 @@ def claude_code(
         mcp_servers: MCP servers to make available to the agent.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server that makes the specified
-            tools available to the agent running in the sandbox.
+            tools available to the agent running in the sandbox. Plain Tools
+            are grouped into one MCP server named `tools`.
         mcp_ready_timeout: Seconds to wait for bridged MCP endpoints to serve
             tools before the agent launch errors.
         disallowed_tools: List of tool names to disallow entirely (disallowing
@@ -231,7 +244,10 @@ def claude_code(
             they override the sandbox defaults inspect_swe sets (see
             `_claude_code/env.py`); e.g. `CLAUDE_CODE_DISABLE_AUTO_MEMORY="0"`
             re-enables auto-memory.
-        user: User to execute claude code with.
+        user: User to execute claude code with. Inside a sandbox identity scope
+            (such as inspect_swarm's users isolation), claude code runs as the scope's
+            user, in the scope's working directory unless `cwd` is set, and
+            `centaur` mode raises an error.
         sandbox: Optional sandbox environment name.
         version: Version of claude code to use. One of:
             - "auto": Use any available version of claude code in the sandbox, otherwise download the current stable version.
@@ -239,6 +255,9 @@ def claude_code(
             - "stable": Download and use the current stable version of claude code.
             - "latest": Download and use the very latest version of claude code.
             - "x.x.x": Download and use a specific version of claude code.
+            Inside a sandbox identity scope, "auto" downloads a verified copy
+            rather than using one found in the sandbox, and "sandbox" raises an
+            error.
         debug: Add `--debug` cli flag and trace all debug output.
         allowlist_mcp_tools: Whether to add static caller-provided MCP tools to
             `--allowed-tools` (default `True`). It matters in every permission
@@ -262,6 +281,14 @@ def claude_code(
             bridged call is never reviewed. Left `True` under `"auto"`, a run
             whose entire tool surface is bridged produces ZERO adjudications and
             looks clean while being wholly unreviewed.
+        tools: Built-in tools to make available (Claude Code `--tools`).
+            `None` keeps Claude Code's default tool set, a list restricts the
+            session to those tools, and `[]` removes every built-in tool so
+            that only MCP tools (e.g. `bridged_tools`) remain. Leaving
+            `"WebSearch"` out of the list also disables web search.
+        strict_mcp_config: Only use the MCP servers passed via `mcp_servers`
+            and `bridged_tools` (Claude Code `--strict-mcp-config`), ignoring
+            any other MCP configuration present in the sandbox.
         **deprecated_args: Supports the deprecated `auto_mode` argument. Set
             `auto_mode=True` maps to `permission_mode="auto"`.
     """
@@ -307,25 +334,26 @@ def claude_code(
     # reads the session_id cell that execute() rebinds on checkpoint restore.
     pinned_filter = pin_system_prompt_filter(lambda: session_id, filter)
 
+    # resolve plain Tools into specs once, so bad input fails at construction
+    bridged_tools_specs = resolve_bridged_tools(bridged_tools)
+
     async def execute(state: AgentState) -> AgentState:
+        # inside a sandbox identity scope, run as the scope's user, in its
+        # working directory and with its home, resolved before any setup
+        if centaur is not False:
+            refuse_centaur_in_scope("claude_code", sandbox)
+        identity = await resolve_agent_identity(sandbox, user, cwd)
+
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "claude_code_model_port"
         port = store().get(MODEL_PORT, 3000) + 1
         store().set(MODEL_PORT, port)
 
-        # Real-time consumer of Claude Code JSONL output. Doubles as the
-        # bridge's ModelEventSink — the bridge hands us every ModelEvent
-        # instead of emitting it to the transcript, and we attribute each
-        # to the correct agent span using parent_tool_use_id from the JSONL
-        # stream. The outer span (used for main-agent attribution and
-        # sub-agent span parenting) is resolved at emission time so it
-        # tracks the rotating checkpoint span. See live_consumer.py for
-        # full mechanism.
-        consumer = LiveConsumer()
-
         # Resolve the (cosmetic) model identities Claude Code presents to itself
         # and the bridge aliases that route them to the real served model. The
         # per-role env vars below carry the opus/sonnet/haiku/subagent names.
+        # Resolved before LiveConsumer so the consumer can classify bridged
+        # requests by their requested slug (see classify() below).
         models = resolve_claude_code_models(
             model,
             model_config,
@@ -337,6 +365,18 @@ def claude_code(
             model_aliases=model_aliases,
         )
 
+        # Real-time consumer of Claude Code JSONL output. Doubles as the
+        # bridge's ModelEventSink — the bridge hands us every ModelEvent
+        # instead of emitting it to the transcript, and we attribute each
+        # to the correct agent span using parent_tool_use_id from the JSONL
+        # stream. The outer span (used for main-agent attribution and
+        # sub-agent span parenting) is resolved at emission time so it
+        # tracks the rotating checkpoint span. See live_consumer.py for
+        # full mechanism. It also classifies bridged requests into an
+        # AgentBridgeContext (root/subagent/utility/unknown) for the bridge
+        # filter, below.
+        consumer = LiveConsumer(models)
+
         async with (
             checkpointer() as cp,
             sandbox_agent_bridge(
@@ -344,14 +384,17 @@ def claude_code(
                 model=models.bridge_model,
                 model_aliases=models.aliases,
                 forward_generation_config=transparent_proxy,
-                filter=pinned_filter,
+                filter=classify_filter(
+                    pinned_filter,
+                    consumer.classify,
+                    consumer.on_filter_output,
+                    consumer,
+                ),
                 sandbox=sandbox,
                 retry_refusals=retry_refusals,
                 port=port,
-                bridged_tools=bridged_tools,
-                web_search=not web_search_tool_disallowed(
-                    disallowed_tools, "WebSearch"
-                ),
+                bridged_tools=bridged_tools_specs,
+                web_search=resolve_web_search_enabled(disallowed_tools, tools),
                 model_event_sink=consumer,
                 checkpointer=cp,
             ) as bridge,
@@ -368,7 +411,10 @@ def claude_code(
 
             # ensure claude is installed and get binary location
             claude_binary = await ensure_agent_binary_installed(
-                claude_code_binary_source(), version, user, sandbox_env(sandbox)
+                claude_code_binary_source(),
+                version,
+                identity.user,
+                sandbox_env(sandbox),
             )
 
             permission_flag = (
@@ -376,7 +422,15 @@ def claude_code(
                 if effective_permission_mode is not None
                 else ["--dangerously-skip-permissions"]
             )
-            cmd = [*permission_flag, "--model", models.presented]
+            # --tools is variadic, so it goes before --model rather than at the
+            # end of cmd: in centaur mode cmd becomes a shell alias and a
+            # trailing --tools would swallow the prompt the user types after it.
+            cmd = [
+                *permission_flag,
+                *resolve_tool_set_args(tools, strict_mcp_config),
+                "--model",
+                models.presented,
+            ]
 
             # add interactive options if not running as centaur
             if centaur is False:
@@ -424,17 +478,27 @@ def claude_code(
             sbox = sandbox_env(sandbox)
 
             # resolve working directory (home dir if sandbox default is '/')
-            agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
+            agent_cwd = await resolve_agent_cwd(
+                sbox, identity.user, identity.cwd, identity.home_env
+            )
 
-            # install skills
+            # install skills (inside a scope, an omitted user installs them
+            # as the scope's user)
             if resolved_skills is not None:
                 skills_dir = join_path(agent_cwd, ".claude/skills")
-                await install_skills(resolved_skills, sbox, user, skills_dir)
+                await install_skills(
+                    resolved_skills,
+                    sbox,
+                    None if identity.scoped else identity.user,
+                    skills_dir,
+                )
 
             # define agent env
             agent_env = claude_code_agent_env(
                 bridge_port=bridge.port, models=models, env=env
             )
+            if identity.home_env is not None:
+                agent_env = identity.home_env | agent_env
 
             # Claude Code 2.1.37 reports "has Authorization header: false"
             # despite ANTHROPIC_AUTH_TOKEN being set in the environment,
@@ -442,7 +506,9 @@ def claude_code(
             # output).  Providing an apiKeyHelper in settings.json
             # supplies a key through a path that does work.
             api_key = agent_env.get("ANTHROPIC_AUTH_TOKEN", "dummy-key-for-bridge")
-            await _seed_claude_config(sbox, api_key, user, agent_cwd)
+            await _seed_claude_config(
+                sbox, api_key, identity.user, agent_cwd, identity.home_env
+            )
 
             # Pre-launch MCP readiness gate. Both centaur (interactive) and
             # non-centaur retry-loop launches read the MCP config at startup,
@@ -462,7 +528,12 @@ def claude_code(
             if centaur:
                 await run_claude_code_centaur(
                     options=centaur,
-                    claude_cmd=[claude_binary] + cmd,
+                    claude_cmd=_centaur_claude_cmd(
+                        claude_binary,
+                        cmd,
+                        _system_texts(state.messages, system_prompt),
+                        replace_system_prompt,
+                    ),
                     agent_env=agent_env,
                     state=state,
                 )
@@ -487,15 +558,8 @@ def claude_code(
                         # resume. Appended messages are not re-sent because the bridge
                         # round-trips them into state.messages and appending them again
                         # would duplicate the effective prompt.
-                        system_texts = [
-                            m.text
-                            for m in state.messages
-                            if isinstance(m, ChatMessageSystem)
-                        ]
-                        if system_prompt is not None:
-                            system_texts.append(system_prompt)
                         system_args = _system_prompt_args(
-                            system_texts,
+                            _system_texts(state.messages, system_prompt),
                             replace_system_prompt,
                             is_resume=is_resume,
                         )
@@ -550,7 +614,7 @@ def claude_code(
                             options=ExecRemoteStreamingOptions(
                                 cwd=agent_cwd,
                                 env=agent_env,
-                                user=user,
+                                user=identity.user,
                                 concurrency=False,
                             ),
                             stream=True,
@@ -658,6 +722,45 @@ def claude_code(
     return agent_with(execute, name=name, description=description)
 
 
+def _system_texts(
+    messages: Sequence[ChatMessage], system_prompt: str | None
+) -> list[str]:
+    """System texts to append: the task's own, then the caller's.
+
+    Shared by the centaur and unattended launches so the operator's `claude`
+    alias and the unattended agent cannot disagree about the effective prompt.
+    """
+    texts = [m.text for m in messages if isinstance(m, ChatMessageSystem)]
+    if system_prompt is not None:
+        texts.append(system_prompt)
+    return texts
+
+
+def _centaur_claude_cmd(
+    claude_binary: str,
+    cmd: Sequence[str],
+    system_texts: Sequence[str],
+    replace_system_prompt: str | None,
+) -> list[str]:
+    """Build the `claude` invocation aliased into the operator's Centaur shell.
+
+    The operator's `claude --resume` runs through the same alias, so the prompt
+    arguments are sent again on resume. Claude Code releases differ on whether
+    a resumed session keeps `--append-system-prompt` text that is not passed
+    again (2.1.258 drops it, 2.1.285 keeps it), and neither duplicates it when
+    it is passed again, so sending it on every invocation is correct for both.
+    """
+    return (
+        [claude_binary]
+        + list(cmd)
+        + _system_prompt_args(
+            system_texts,
+            replace_system_prompt,
+            is_resume=False,
+        )
+    )
+
+
 def _system_prompt_args(
     system_texts: Sequence[str],
     replace_system_prompt: str | None,
@@ -678,12 +781,15 @@ async def _seed_claude_config(
     api_key: str,
     user: str | None,
     cwd: str,
+    home_env: dict[str, str] | None = None,
 ) -> None:
     """Write ~/.claude/settings.json with an apiKeyHelper.
 
     Claude Code 2.1.37 does not use ANTHROPIC_AUTH_TOKEN from the
     environment for API requests.  Providing an apiKeyHelper in
     settings.json supplies the key through a path it does use.
+
+    `home_env` sets the `HOME` the file is written under.
     """
     await sbox.exec(
         cmd=[
@@ -696,6 +802,7 @@ async def _seed_claude_config(
         ],
         user=user,
         cwd=cwd,
+        env=home_env,
     )
 
 
@@ -718,6 +825,35 @@ def resolve_mcp_servers(
         )
 
     return mcp_config_cmds, resolve_mcp_server_allowed_tools(mcp_servers)
+
+
+def resolve_tool_set_args(
+    tools: Sequence[str] | None, strict_mcp_config: bool
+) -> list[str]:
+    args: list[str] = []
+    if tools is not None:
+        # Claude Code disables every built-in tool with `--tools ""`; the
+        # zero-argument form is not accepted, so always pass a value.
+        args.extend(["--tools", ",".join(tools)])
+    if strict_mcp_config:
+        args.append("--strict-mcp-config")
+    return args
+
+
+def resolve_web_search_enabled(
+    disallowed_tools: Sequence[str] | None, tools: Sequence[str] | None
+) -> bool:
+    """Whether the bridge should grant web search to the model.
+
+    Web search is withheld when `WebSearch` is disallowed, or when `tools`
+    restricts the built-in set and leaves `WebSearch` out (`"default"` keeps
+    Claude Code's default set, which includes it).
+    """
+    if web_search_tool_disallowed(disallowed_tools, "WebSearch"):
+        return False
+    if tools is None:
+        return True
+    return any(tool in ("WebSearch", "default") for tool in tools)
 
 
 def resolve_allowed_mcp_tools(

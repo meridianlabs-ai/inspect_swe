@@ -25,8 +25,10 @@ from inspect_ai.util import store
 from inspect_ai.util._sandbox import ExecRemoteAwaitableOptions
 
 from .._util._async import is_callable_coroutine
+from .._util.agentcontext import ModelFilter, classify_filter, static_root_classifier
 from .._util.agentwheel import AgentWheelSource, ensure_agent_wheel_installed
 from .._util.centaur import CentaurOptions, run_centaur
+from .._util.identity import refuse_sandbox_identity
 from .._util.messages import build_user_prompt
 from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
@@ -44,6 +46,11 @@ MINI_SWE_AGENT_SOURCE = AgentWheelSource(
     binary="mini",  # CLI entrypoint
     default_version="2.2.3",
 )
+
+
+def build_mini_swe_filter(filter: GenerateFilter | None) -> ModelFilter:
+    """mini-swe-agent bridge filter: static root agent context."""
+    return classify_filter(filter, static_root_classifier)
 
 
 @agent
@@ -122,6 +129,8 @@ def mini_swe_agent(
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
     async def execute(state: AgentState) -> AgentState:
+        refuse_sandbox_identity("mini_swe_agent()", sandbox)
+
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "mini_swe_agent_model_port"
         port = store().get(MODEL_PORT, 4000) + 1
@@ -135,7 +144,7 @@ def mini_swe_agent(
             state,
             model=inspect_model,
             model_aliases=inspect_aliases | (model_aliases or {}),
-            filter=filter,
+            filter=build_mini_swe_filter(filter),
             sandbox=sandbox,
             retry_refusals=retry_refusals,
             compaction=compaction,
