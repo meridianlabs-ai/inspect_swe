@@ -4,6 +4,7 @@ from typing import Literal, NamedTuple, get_args
 
 from .._claude_code.agentbinary import claude_code_binary_source
 from .._codex_cli.agentbinary import codex_cli_binary_source
+from .._deepseek_harness.agentbinary import deepseek_harness_binary_source
 from .._kimi_code.agentbinary import kimi_code_binary_source
 from .._opencode.agentbinary import opencode_binary_source
 from .._util._async import run_coroutine
@@ -18,7 +19,9 @@ from .._util.sandbox import SandboxPlatform
 class AgentBinary(NamedTuple):
     """Agent binary."""
 
-    agent: Literal["claude_code", "codex_cli", "kimi_code", "opencode"]
+    agent: Literal[
+        "claude_code", "codex_cli", "deepseek_harness", "kimi_code", "opencode"
+    ]
     """Agent type."""
 
     version: str
@@ -54,7 +57,9 @@ class AgentBinaries(list[AgentBinary]):
 
 
 def download_agent_binary(
-    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
+    binary: Literal[
+        "claude_code", "codex_cli", "deepseek_harness", "kimi_code", "opencode"
+    ],
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform,
 ) -> None:
@@ -75,7 +80,10 @@ def download_agent_binary(
 
 
 def cached_agent_binaries(
-    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"] | None = None,
+    binary: Literal[
+        "claude_code", "codex_cli", "deepseek_harness", "kimi_code", "opencode"
+    ]
+    | None = None,
     quiet: bool = False,
 ) -> AgentBinaries:
     """List the agent binaries which have been cached on this system.
@@ -92,6 +100,7 @@ def cached_agent_binaries(
         return AgentBinaries(
             cached_agent_binaries("claude_code")
             + cached_agent_binaries("codex_cli")
+            + cached_agent_binaries("deepseek_harness")
             + cached_agent_binaries("kimi_code")
             + cached_agent_binaries("opencode")
         )
@@ -102,12 +111,14 @@ def cached_agent_binaries(
     def parse_name(name: str) -> tuple[str, str, int, int, int]:
         # artifact names are either "<agent>-<version>-<platform>" (single
         # binary) or "<agent>-package-<version>-<platform>.tar.gz" (package);
-        # the agent prefix may itself be hyphenated ("kimi-code")
-        match = re.match(r"([a-z_-]+?)-(\d+)\.(\d+)\.(\d+)", name)
+        # the agent prefix may itself be hyphenated ("kimi-code"), and PyPI
+        # versions may carry a pre-release suffix ("0.2.1rc2")
+        match = re.match(r"([a-z_-]+?)-(\d+)\.(\d+)\.(\d+)([a-z][a-z0-9.]*)?", name)
         if match:
             return (
                 match.group(1),  # agent type
-                f"{match.group(2)}.{match.group(3)}.{match.group(4)}",  # version string
+                f"{match.group(2)}.{match.group(3)}.{match.group(4)}"
+                f"{match.group(5) or ''}",  # version string
                 int(match.group(2)),  # major
                 int(match.group(3)),  # minor
                 int(match.group(4)),  # patch
@@ -115,33 +126,34 @@ def cached_agent_binaries(
         return ("", "", 0, 0, 0)
 
     # Sort by type ascending, then version descending
-    result = []
+    result: list[tuple[AgentBinary, tuple[int, int, int]]] = []
     for path in binaries:
         _, version, major, minor, patch = parse_name(path.name)
         if version:
             result.append(
-                AgentBinary(
-                    agent=binary,
-                    version=version,
-                    path=path,
+                (
+                    AgentBinary(
+                        agent=binary,
+                        version=version,
+                        path=path,
+                    ),
+                    (major, minor, patch),
                 )
             )
 
     return AgentBinaries(
-        sorted(
+        b
+        for b, _ in sorted(
             result,
-            key=lambda x: (
-                x.agent,
-                -int(x.version.split(".")[0]),
-                -int(x.version.split(".")[1]),
-                -int(x.version.split(".")[2]),
-            ),
+            key=lambda x: (x[0].agent, -x[1][0], -x[1][1], -x[1][2]),
         )
     )
 
 
 def resolve_agent_version(
-    agent: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
+    agent: Literal[
+        "claude_code", "codex_cli", "deepseek_harness", "kimi_code", "opencode"
+    ],
     version: Literal["stable", "latest"] | str,
     platform: SandboxPlatform = "linux-x64",
 ) -> str:
@@ -171,13 +183,17 @@ def resolve_agent_version(
 
 
 def _agent_binary_source(
-    binary: Literal["claude_code", "codex_cli", "kimi_code", "opencode"],
+    binary: Literal[
+        "claude_code", "codex_cli", "deepseek_harness", "kimi_code", "opencode"
+    ],
 ) -> AgentBinarySource:
     match binary:
         case "claude_code":
             return claude_code_binary_source()
         case "codex_cli":
             return codex_cli_binary_source()
+        case "deepseek_harness":
+            return deepseek_harness_binary_source()
         case "kimi_code":
             return kimi_code_binary_source()
         case "opencode":
@@ -185,5 +201,6 @@ def _agent_binary_source(
         case _:
             raise ValueError(
                 f"Unsupported agent binary type: {binary} "
-                "(expected one of claude_code, codex_cli, kimi_code, opencode)"
+                "(expected one of claude_code, codex_cli, deepseek_harness, kimi_code, "
+                "opencode)"
             )

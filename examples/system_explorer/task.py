@@ -7,6 +7,7 @@ from inspect_ai.util import SandboxEnvironmentType
 from inspect_swe import (
     claude_code,
     codex_cli,
+    deepseek_harness,
     gemini_cli,
     kimi_code,
     mini_swe_agent,
@@ -19,6 +20,7 @@ def system_explorer(
     agent: Literal[
         "claude_code",
         "codex_cli",
+        "deepseek_harness",
         "gemini_cli",
         "kimi_code",
         "mini_swe_agent",
@@ -31,6 +33,8 @@ def system_explorer(
             solver = claude_code()
         case "codex_cli":
             solver = codex_cli()
+        case "deepseek_harness":
+            solver = deepseek_harness()
         case "gemini_cli":
             solver = gemini_cli()
         case "kimi_code":

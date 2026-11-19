@@ -201,6 +201,7 @@ def run_example(
     agent: Literal[
         "claude_code",
         "codex_cli",
+        "deepseek_harness",
         "gemini_cli",
         "kimi_code",
         "mini_swe_agent",

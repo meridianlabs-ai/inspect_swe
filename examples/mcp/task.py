@@ -4,13 +4,13 @@ from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 from inspect_ai.tool import MCPServerConfigStdio
 from inspect_ai.util import SandboxEnvironmentType
-from inspect_swe import claude_code, codex_cli, gemini_cli, opencode
+from inspect_swe import claude_code, codex_cli, deepseek_harness, gemini_cli, opencode
 
 
 @task
 def mcp_memory(
     agent: Literal[
-        "claude_code", "codex_cli", "gemini_cli", "opencode"
+        "claude_code", "codex_cli", "deepseek_harness", "gemini_cli", "opencode"
     ] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:
@@ -31,6 +31,10 @@ def mcp_memory(
             solver = claude_code(system_prompt=system_prompt, mcp_servers=mcp_servers)
         case "codex_cli":
             solver = codex_cli(system_prompt=system_prompt, mcp_servers=mcp_servers)
+        case "deepseek_harness":
+            solver = deepseek_harness(
+                system_prompt=system_prompt, mcp_servers=mcp_servers
+            )
         case "gemini_cli":
             solver = gemini_cli(system_prompt=system_prompt, mcp_servers=mcp_servers)
         case "opencode":
