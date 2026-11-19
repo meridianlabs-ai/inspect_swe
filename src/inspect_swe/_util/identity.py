@@ -8,11 +8,8 @@ scope; every other agent refuses to run inside one.
 
 from typing import NamedTuple
 
-from inspect_ai.agent._bridge.sandbox import bridge as sandbox_bridge
-from inspect_ai.tool._tools._skill import install as skill_install
 from inspect_ai.util import SandboxEnvironment
 from inspect_ai.util import sandbox as sandbox_env
-from inspect_ai.util._sandbox import identity as sandbox_identity_module
 from inspect_ai.util._sandbox.identity import (
     SandboxIdentityError,
     sandbox_identity_active,
@@ -54,19 +51,11 @@ async def resolve_agent_identity(
     database rather than inherited from the image.
 
     Raises:
-        SandboxIdentityError: Inside a scope, if `user` is another user, or if
-            the installed inspect_ai is too old to run an agent there (see
-            `inspect_ai_supports_scoped_agents()`).
+        SandboxIdentityError: Inside a scope, if `user` is another user.
     """
     sbox = _scoped_sandbox(sandbox)
     if sbox is None:
         return AgentIdentity(user, cwd, None, False)
-    if not inspect_ai_supports_scoped_agents():
-        raise SandboxIdentityError(
-            "Running an agent inside a sandbox identity scope needs an inspect_ai "
-            "release later than 0.3.290 (or main at commit ce19dd38 or later). "
-            "Upgrade inspect_ai."
-        )
     return AgentIdentity(
         user=sandbox_identity_user(sbox, user, strict=True),
         cwd=sandbox_identity_cwd(sbox, cwd),
@@ -108,25 +97,3 @@ def _scoped_sandbox(sandbox: str | None) -> SandboxEnvironment | None:
         return None
     sbox = sandbox_env(sandbox)
     return sbox if sandbox_identity_active(sbox) else None
-
-
-def inspect_ai_supports_scoped_agents() -> bool:
-    """Whether the installed inspect_ai can run an agent inside a scope.
-
-    inspect_ai 0.3.289 has the sandbox identity scope, but its agent bridge
-    serves any user in the sandbox; the peer check came later (the bridge
-    passes the scope's user to its proxy under `_PEER_USER_ENV`). Releases up
-    to 0.3.290 run a member's setup commands, and the skill installer's
-    `chmod +x` for scripts, in the provider's default directory, which the
-    member may not be able to enter (an image `WORKDIR` of `/root`). Later
-    ones run them in the scope's working directory and from `/`, and say so
-    with `SANDBOX_OPERATIONS_USE_SCOPE_CWD` and
-    `INSTALL_SKILLS_AS_MEMBER_RUNS_FROM_ROOT`.
-    """
-    return (
-        hasattr(sandbox_bridge, "_PEER_USER_ENV")
-        and getattr(sandbox_identity_module, "SANDBOX_OPERATIONS_USE_SCOPE_CWD", False)
-        is True
-        and getattr(skill_install, "INSTALL_SKILLS_AS_MEMBER_RUNS_FROM_ROOT", False)
-        is True
-    )

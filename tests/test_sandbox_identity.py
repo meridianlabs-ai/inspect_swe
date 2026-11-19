@@ -16,13 +16,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 from inspect_ai.agent import Agent, AgentState
-from inspect_ai.agent._bridge.sandbox import bridge as sandbox_bridge
 from inspect_ai.log._transcript import Transcript, init_transcript
 from inspect_ai.model import ChatMessageUser
 from inspect_ai.tool import MCPServerConfigHTTP
-from inspect_ai.tool._tools._skill import install as skill_install
 from inspect_ai.util import ExecResult, SandboxEnvironment
-from inspect_ai.util._sandbox import identity as identity_module
 from inspect_ai.util._sandbox._framework_operation import (
     in_framework_sandbox_operation,
 )
@@ -447,40 +444,6 @@ async def test_a_scope_on_another_sandbox_does_not_refuse() -> None:
     finally:
         sandbox_default_context_var.reset(default)
         sandbox_environments_context_var.reset(envs)
-
-
-@pytest.mark.parametrize("make_agent", [claude_code, codex_cli])
-@pytest.mark.parametrize(
-    "module,marker",
-    [
-        # inspect_ai 0.3.289 has the scope but its bridge serves every user
-        (sandbox_bridge, "_PEER_USER_ENV"),
-        # up to 0.3.290 a member's setup commands run in the provider's
-        # default directory, which the member may not be able to enter
-        (identity_module, "SANDBOX_OPERATIONS_USE_SCOPE_CWD"),
-        # and the skill installer's member chmod in that directory too
-        (skill_install, "INSTALL_SKILLS_AS_MEMBER_RUNS_FROM_ROOT"),
-    ],
-)
-async def test_an_older_inspect_ai_is_refused_in_a_scope(
-    bridge: list[dict[str, Any]],
-    monkeypatch: pytest.MonkeyPatch,
-    make_agent: Any,
-    module: Any,
-    marker: str,
-) -> None:
-    monkeypatch.delattr(module, marker)
-    agent = make_agent(model="mockllm/model")
-    with sample() as stub, sandbox_identity(MEMBER, cwd=MEMBER_HOME):
-        with pytest.raises(SandboxIdentityError, match="later than 0.3.290"):
-            await agent(_state())
-    assert stub.execs == []
-    assert bridge == []
-
-    # outside a scope such a release runs as before
-    with sample():
-        options = await _launch(agent)
-    assert options.user is None
 
 
 class PrivateWorkdirSandbox(MemberSandbox):
