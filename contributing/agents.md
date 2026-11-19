@@ -434,6 +434,7 @@ error and say so in the docs and the PR.
 | D8 `centaur` | SHOULD. `CentaurOptions` and `run_centaur`; the sink still runs, and spans are closed afterwards (C3; the reference centaur path doesn't call `reset()` yet). | `run_claude_code_centaur` |
 | D9 `cwd`, `env`, `user`, `sandbox`, `model_aliases`, `debug`, `retry_refusals` | MUST. Same names and meanings as the other agents. | all agents |
 | D10 interactive (ACP) variant | IF the CLI speaks ACP. Use `model_resolver` (#182) and a slug-only classifier, and add a docs table row. | `acp/_agents/*` |
+| D11 sandbox identity scope | MUST. Either call `refuse_sandbox_identity` before any setup, or install through the shared installer (`install_shared_artifact`) and run as the member (`resolve_agent_identity`). | `gemini_cli`; `claude_code`, `codex_cli` |
 
 ## E. Public API and docs
 
