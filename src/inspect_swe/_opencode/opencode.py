@@ -30,6 +30,7 @@ from inspect_swe._util.agentcontext import (
 )
 from inspect_swe._util.bridged_tools import resolve_bridged_tools
 from inspect_swe._util.centaur import CentaurOptions, run_centaur
+from inspect_swe._util.identity import refuse_sandbox_identity
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -491,6 +492,8 @@ def opencode(
     bridged_tools_specs = resolve_bridged_tools(bridged_tools)
 
     async def execute(state: AgentState) -> AgentState:
+        refuse_sandbox_identity("opencode()", sandbox)
+
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "opencode_model_port"
         port = store().get(MODEL_PORT, 3000) + 1

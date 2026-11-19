@@ -22,6 +22,7 @@ from inspect_ai.util import ExecRemoteProcess
 from typing_extensions import TypedDict, Unpack
 
 from inspect_swe._util.bridged_tools import resolve_bridged_tools
+from inspect_swe._util.identity import refuse_sandbox_identity
 from inspect_swe._util.mcp_ready import (
     DEFAULT_MCP_READY_TIMEOUT,
     wait_for_mcp_endpoints,
@@ -199,6 +200,7 @@ class ACPAgent(Agent):
     async def __call__(
         self, state: AgentState, *args: Any, **kwargs: Any
     ) -> AgentState:
+        refuse_sandbox_identity(f"ACP agent {type(self).__name__}", self.sandbox)
         self.ready = anyio.Event()
         try:
             async with self._start_agent(state) as (proc, bridge):

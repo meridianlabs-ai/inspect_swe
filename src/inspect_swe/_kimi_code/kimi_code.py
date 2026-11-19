@@ -58,6 +58,7 @@ from inspect_swe._util.messages import build_user_prompt
 from inspect_swe._util.trace import trace
 
 from .._util.agentbinary import ensure_agent_binary_installed
+from .._util.identity import refuse_sandbox_identity
 from .._util.sandbox import resolve_agent_cwd
 from .._util.toml import _format_value
 from .agentbinary import kimi_code_binary_source
@@ -259,6 +260,8 @@ def kimi_code(
     bridged_tools_specs = resolve_bridged_tools(bridged_tools)
 
     async def execute(state: AgentState) -> AgentState:
+        refuse_sandbox_identity("kimi_code()", sandbox)
+
         resolved_model = _resolve_model(model=model, model_aliases=model_aliases)
         resolved_max_context_size = _resolve_max_context_size(
             model=resolved_model, max_context_size=max_context_size

@@ -28,6 +28,7 @@ from .._util._async import is_callable_coroutine
 from .._util.agentcontext import ModelFilter, classify_filter, static_root_classifier
 from .._util.agentwheel import AgentWheelSource, ensure_agent_wheel_installed
 from .._util.centaur import CentaurOptions, run_centaur
+from .._util.identity import refuse_sandbox_identity
 from .._util.messages import build_user_prompt
 from .._util.sandbox import resolve_agent_cwd
 from .._util.trace import trace
@@ -128,6 +129,8 @@ def mini_swe_agent(
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
     async def execute(state: AgentState) -> AgentState:
+        refuse_sandbox_identity("mini_swe_agent()", sandbox)
+
         # determine port (use new port for each execution of agent on sample)
         MODEL_PORT = "mini_swe_agent_model_port"
         port = store().get(MODEL_PORT, 4000) + 1
