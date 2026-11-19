@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from inspect_ai.agent._bridge.util import resolve_inspect_model
 from inspect_ai.model import Model, get_model
-from inspect_ai.tool._mcp._config import MCPServerConfigHTTP
+from inspect_ai.tool._mcp._config import MCPServerConfigHTTP, MCPServerConfigStdio
 from inspect_swe import codex_cli, interactive_codex_cli
 from inspect_swe._codex_cli.config import (
     GUARDIAN_MODEL_SLUG,
@@ -88,6 +88,11 @@ def test_to_toml_escapes_remaining_control_characters() -> None:
     assert toml == 'policy = "esc \\u001B bell \\u0007 del \\u007F"'
     # round-trip via the stdlib parser
     assert tomllib.loads(toml) == {"policy": value}
+
+
+def test_to_toml_writes_nested_dicts_as_inline_tables() -> None:
+    data = {"t": {"a": 1, "env": {"API_KEY": "v", "needs quoting": 'say "hi"'}}}
+    assert tomllib.loads(to_toml(data)) == data
 
 
 def test_resolve_codex_auto_review_false_is_none() -> None:
@@ -472,6 +477,27 @@ def test_static_mcp_server_toml_opt_in_path() -> None:
         "approve"
     )
     assert codex_mcp_server_toml(dump, "on-request") == dump
+
+
+def test_static_mcp_servers_toml_keeps_env_and_tools() -> None:
+    servers = [
+        MCPServerConfigStdio(
+            name="docs", command="docs-mcp", args=["--stdio"], env={"DOCS_KEY": "k"}
+        ),
+        MCPServerConfigHTTP(
+            name="search",
+            type="http",
+            url="https://mcp.example.com/mcp",
+            headers={"Authorization": "Bearer t"},
+            tools=["search"],
+        ),
+    ]
+    toml = to_toml(codex_mcp_servers_toml(servers, set(), "never", False, None))
+    parsed = tomllib.loads(toml)["mcp_servers"]
+    assert parsed["docs"]["env"] == {"DOCS_KEY": "k"}
+    assert "Bearer t" not in toml  # auth headers stay out of config.toml
+    assert parsed["search"]["enabled_tools"] == ["search"]
+    assert "enabled_tools" not in parsed["docs"]  # tools="all": no allowlist
 
 
 @pytest.mark.parametrize(
