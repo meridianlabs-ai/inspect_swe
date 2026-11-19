@@ -1,0 +1,76 @@
+---
+title: Pi
+agent: pi
+agent_provider: "Earendil's"
+agent_name: Pi
+agent_url: "https://github.com/earendil-works/pi"
+---
+
+{{< include _snippets/agent_intro.md >}}
+
+## Options
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `system_prompt` | Instructions to append to the default system prompt. |
+| `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
+| `agents_md` | Contents of a global `AGENTS.md` for Pi. Pi also loads `AGENTS.md` and `CLAUDE.md` files from its working directory and the directories above it. |
+| `centaur` | Run in [centaur mode](#centaur-mode). |
+| `attempts` | Allow multiple scored attempts at solving the task. |
+| `model` | Model to use, defaulting to the task's main model. |
+| `thinking` | Pi thinking level. The default, `"off"`, leaves Inspect and provider reasoning defaults in effect. Other levels require reasoning support. |
+| `max_context_size` | Context window for Pi. Defaults to Inspect model metadata; required when that metadata is unavailable. |
+| `filter` | Filter for intercepting bridged model requests. |
+| `retry_refusals` | Number of times to retry refusals. |
+| `cwd` | Working directory for the Pi session. |
+| `env` | Sandbox environment variables, visible to the agent. Pi's config directory and offline settings cannot be overridden. |
+| `version` | Pi version to use. See [Installation](#installation). |
+
+: {tbl-colwidths=\[25,75\]}
+
+For example, specify a custom system prompt:
+
+```python
+{{< meta agent >}}(
+    system_prompt="Run the relevant tests after changing code."
+)
+```
+
+Pi uses its built-in tools without approval prompts, including in centaur mode. Built-in tool calls may appear as raw JSON in the viewer. Extensions, MCP servers, bridged tools, native web search, and user image input are not supported by this integration. Only supplied skills are loaded. There is no ACP variant or Inspect checkpoint support. Starting a new Pi instance with an existing assistant conversation raises an error rather than silently discarding that history. See the [API reference](reference/index.qmd#pi) for all options.
+
+## How Pi runs
+
+Pi sends OpenAI Chat Completions requests to the local Inspect bridge. The integration supplies the resolved model name to Pi and routes requests through the selected Inspect model and aliases. By default, only the bridge's dummy provider key is placed in the sandbox; caller-supplied `env` values are sandbox-exposed and can be read by Pi's tools.
+
+In headless mode Pi emits JSON events. The integration checks the exit status and final assistant event for errors or an incomplete turn. A refusal already recorded by the bridge remains scoreable, even when Pi reports a terminal error. Pi's built-in tools do not delegate to sub-agents; extensions are disabled. Pi's compaction and branch summary calls use the selected model and are classified as utility calls using their request shape. The integration does not emit a separate compaction event. See [Sub-Agent Context](sub-agent-context.qmd) for the limits of this classification.
+
+Multi-turn calls and scored attempts use a session file. Pi 1.5.2 requires a precreated v3 session header; `--session` resumes the existing path. Pi can regenerate environment-dependent parts of its system prompt on launch. With unchanged project context, Pi 1.5.2 produces byte-identical system prompts across calls. The integration appends only the original instructions on subsequent launches, without repeating `AGENTS.md` contents. Changes to project instruction files remain visible; if they change the system prompt, Inspect's viewer may show a later text-only root turn as utility. `system_prompt` appends instructions; replacing Pi's default prompt is not exposed by this API.
+
+The integration isolates Pi's configuration, disables telemetry, uses offline mode to avoid update checks, and disables extensions, automatic skill discovery, prompt templates, and themes. Supplied skills are installed in the isolated Pi directory. Different Pi agent instances have separate sessions, but Pi also reads project instruction files as described by `agents_md` above. Login is not needed for the bridge.
+
+For long model calls, the bridge returns a complete response rather than streaming it. The integration sets Pi's `httpIdleTimeoutMs` to `0` and Bun's `BUN_CONFIG_HTTP_IDLE_TIMEOUT` to `86400` seconds to avoid idle timeouts; Inspect still controls model call timeouts.
+
+The MCP, bridged tools, and web search examples are omitted for Pi because those features are unsupported. The ACP and delegation-specific checklist items do not apply to this integration.
+
+## Installation
+
+Pi runs from a standalone release archive. Sandboxes need Linux x64 or arm64 with glibc and Bash, such as Debian or Ubuntu. Alpine is not supported. Node.js and npm are not required.
+
+Use `version` to control installation:
+
+| Option | Description |
+|------------------------------------|------------------------------------|
+| `"auto"` | Use Pi from the sandbox if installed, otherwise download the latest release. This is the default. |
+| `"sandbox"` | Require Pi to be installed in the sandbox. |
+| `"stable"`, `"latest"` | Download and use the latest release. |
+| `"x.x.x"` | Download and use a specific version. |
+
+: {tbl-colwidths=\[25,75\]}
+
+For offline evaluations, pre-install Pi and use `version="sandbox"`, or cache a specific release with [`download_agent_binary()`](reference/index.qmd#download_agent_binary) and use that version. Release archives are downloaded and checksum-verified on the host, then copied into the sandbox; installation does not require sandbox network access.
+
+{{< include _snippets/agent_binary_provenance.md >}}
+
+{{< include _snippets/agent_centaur.md >}}
+
+{{< include _snippets/agent_troubleshooting.md >}}
