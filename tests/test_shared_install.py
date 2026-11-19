@@ -463,6 +463,7 @@ def test_check_refuses_a_writable_entry_anywhere_in_a_package(
     # refused whether or not the package was marked complete
     assert _check(install_dir, ".", "./bin/codex", MARKER).returncode == 3
     (install_dir / MARKER).write_bytes(b"")
+    (install_dir / MARKER).chmod(0o644)
     assert _check(install_dir, ".", "./bin/codex", MARKER).returncode == 3
     (install_dir / "lib").chmod(0o755)
     assert _check(install_dir, ".", "./bin/codex", MARKER).stdout == "ok\n"
@@ -475,6 +476,7 @@ def test_check_reports_an_unmarked_package_as_missing(install_dir: Path) -> None
     (install_dir / "bin" / "codex").chmod(0o755)
     assert _check(install_dir, ".", "./bin/codex", MARKER).stdout == "missing\n"
     (install_dir / MARKER).write_bytes(b"")
+    (install_dir / MARKER).chmod(0o644)
     assert _check(install_dir, ".", "./bin/codex", MARKER).stdout == "ok\n"
 
 
