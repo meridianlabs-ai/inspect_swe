@@ -4,6 +4,7 @@ import pytest
 from inspect_ai import Task, eval
 from inspect_ai.agent import BridgedToolsSpec
 from inspect_ai.dataset import Sample
+from inspect_ai.event import ToolEvent
 from inspect_ai.log import EvalLog
 from inspect_ai.model import (
     ChatMessage,
@@ -141,6 +142,15 @@ def test_gemini_cli_bridged_tools() -> None:
     )
 
 
+@pytest.mark.xfail(
+    raises=pytest.RaisesExc(
+        AssertionError,
+        match=r"^(Expected \S+ tool call|secret_lookup did not return the secret)",
+    ),
+    strict=True,
+    reason="Kimi Code 2.6 registers MCP tools but leaves them out of the model's "
+    "tool list: https://github.com/MoonshotAI/kimi-code/issues/4904",
+)
 @skip_if_no_anthropic
 @skip_if_no_docker
 def test_kimi_code_bridged_tools() -> None:
@@ -179,4 +189,18 @@ def check_bridged_tools(
     assert secret_lookup_call is not None, (
         f"Expected {expected_tool_name} tool call, "
         f"found: {[tc.function for tc in tool_calls]}"
+    )
+
+    # A model can guess the call name from the prompt even when the agent never
+    # offered the tool, so also check the host tool ran and returned the secret.
+    tool_events = [
+        e
+        for e in log.samples[0].events
+        if isinstance(e, ToolEvent) and e.function == "secret_lookup"
+    ]
+    assert any(
+        e.error is None and e.result == "ALPHA-SECRET-12345" for e in tool_events
+    ), (
+        "secret_lookup did not return the secret: "
+        f"{[(e.result, e.error) for e in tool_events]}"
     )
