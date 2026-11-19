@@ -18,16 +18,16 @@ The following options are supported for customizing the behavior of the agent:
 |------------------------------------|------------------------------------|
 | `system_prompt` | Additional system prompt (prepended to the task, as `dsh` headless has no separate system-prompt option). |
 | `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
-| `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details). |
+| `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details, including which servers are accepted). |
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
 | `mcp_ready_timeout` | Seconds to wait for bridged MCP endpoints to serve tools before the agent launch errors. |
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
 | `model` | Model name to use for agent (defaults to main model for task). |
-| `context_window` | Context window to configure for `dsh` (drives its automatic compaction). Defaults to the bridged model's context length from Inspect model metadata, falling back to `dsh`'s own default (1,000,000 tokens) when that metadata is unavailable. |
+| `context_window` | Context window to configure for `dsh` (drives its automatic compaction, see [Compaction](#compaction)). Defaults to the bridged model's context length from Inspect model metadata, falling back to `dsh`'s own default (1,000,000 tokens) when that metadata is unavailable. |
 | `filter` | Filter for intercepting bridged model requests. |
 | `retry_refusals` | Should refusals be retried? (pass number of times to retry) |
 | `cwd` | Working directory for {{< meta agent_name >}} session. |
-| `env` | Environment variables to set for {{< meta agent_name >}}. |
+| `env` | Environment variables to set for {{< meta agent_name >}}. These are visible to the model (its shell tool can print them). |
 | `version` | Version of {{< meta agent_name >}} to use (see [Installation](#installation) below for details) |
 
 : {tbl-colwidths=\[25,75\]}
@@ -44,7 +44,33 @@ For example, here we specify a custom system prompt:
 
 {{< meta agent_name >}} supports stdio and Streamable HTTP MCP servers. Per-server tool filtering (`tools=[...]`) and legacy SSE servers are not supported and raise an error.
 
+### Credentials
+
+`dsh`'s own tools (its shell tool in particular) run as the same user as `dsh`, so the model can read anything `dsh` can: its configuration files, its environment, and the files and descriptors it has open (through `/proc`). Nothing handed to `dsh` inside the sandbox can be kept from the model, so:
+
+-   An HTTP MCP server with `headers` (e.g. an `Authorization` token), or with a user or password in its URL, is rejected with an error. To give the agent tools that need a credential, connect to the server on the host and pass the tools with `bridged_tools`: they are served to `dsh` by the model bridge, and the credential never enters the sandbox.
+
+-   Everything else in an MCP server's configuration is written to `dsh`'s profile in the sandbox, so treat it as visible to the model, like `env`: an HTTP server's URL (query string included), and a stdio server's command, arguments and `env`. A stdio server also runs inside the sandbox.
+
+The only key `dsh` is given for inference is a dummy one for the model bridge.
+
 {{< include _snippets/agent_bridged_tools.md >}}
+
+## Sub-Agents
+
+`dsh` can delegate: its `subagent` tool starts a fresh child agent, `subagent_fork` one that inherits the conversation so far, and `send_message` gives a child that has finished more work. Every child runs in the background. The call returns as soon as the child has started, and its answer reaches the parent later as a notice.
+
+Each child's model calls are recorded in a transcript span of its own, so the viewer shows the root agent's conversation and each child's as separate lanes. A child's span opens when the parent's call is made and closes when the parent receives the child's finishing notice, not when the call returns. A child resumed with `send_message` continues in a new span with the same name.
+
+The sample's messages and output are the root agent's conversation and its last answer, whichever agent made the last model call. (If a request's sender can't be told after the root's last answer, which classification reports as `"unknown"`, the conversation the model bridge tracked is used instead.)
+
+Bridged requests are classified so that a `filter` can tell them apart (`is_root_agent()`, `current_agent_bridge_context()`): see [Sub-Agent Context](sub-agent-context.qmd) for what is detected and its limits.
+
+## Compaction
+
+`dsh` condenses the conversation itself when it nears the context window, with a separate model call. That call is classified `"utility"` and marked in the transcript by a `CompactionEvent` (source `deepseek_harness`).
+
+`dsh` starts compacting at 80% of `context_window`, or earlier if the window minus the model's output limit minus a 65,536-token reserve is smaller. The agent passes the output limit from Inspect's model metadata; for a model without one `dsh` assumes 256,000 tokens. When the window cannot fit the output limit plus the reserve, `dsh` does not compact ahead of time and only reacts to a context-overflow error from the model.
 
 ## Model Bridging
 
@@ -58,7 +84,9 @@ For example, here we specify a custom system prompt:
 
 -   **Upstream reporting is disabled.** Telemetry export, the session-log and plugin-inventory fields that `dsh` attaches to requests for DeepSeek's official API, and the auxiliary model call that titles the session are turned off.
 
--   **Web search.** `dsh`'s `web_search` tool issues an Anthropic `web_search` server-tool request, which is sent to the bridge. It returns results when the served model's provider supports Inspect's internal web search (OpenAI, Anthropic, Gemini, Grok, Perplexity); otherwise (e.g. DeepSeek models) the tool reports an error to the model. `web_fetch` runs from inside the sandbox and is subject to its network policy.
+-   **Web search.** `dsh`'s `web_search` tool is pointed at its Messages-based search provider, which makes a model request of its own carrying Anthropic's `web_search` server tool. That request goes to the bridge and is served by the agent's model: it returns results when the model's provider supports Inspect's internal web search (OpenAI, Anthropic, Gemini, Grok, Perplexity); otherwise (e.g. DeepSeek models) the tool reports an error to the model. The request is classified `"utility"`. `web_fetch` runs from inside the sandbox and is subject to its network policy.
+
+-   **Goals are switched off.** `dsh`'s goal tools (`create_goal`, `get_goal`, `update_goal`) keep a session working across automatic continuation rounds. Its one-shot headless mode doesn't wait for those rounds: with a goal active it exits with an error as the next round starts, after a turn that completed. The tools are therefore not offered to the model.
 
 -   **Permissions.** `dsh` runs in `danger-full-access` mode (no approval prompts) since the sandbox is the isolation boundary.
 
@@ -80,5 +108,17 @@ By default, the agent will download the current latest version of {{< meta agent
 {{< meta agent_name >}} is in developer preview and documents that it will make compatibility-breaking changes, so pinning a specific version is recommended for reproducible evaluations.
 
 {{< include _snippets/agent_installation.md >}}
+
+{{< include _snippets/agent_binary_provenance.md >}}
+
+The checksum recorded for {{< meta agent_name >}} is that of the downloaded wheel, as published on PyPI.
+
+## Not Supported
+
+-   **Centaur mode.** The agent runs `dsh`'s one-shot headless profile only.
+-   **Interactive (ACP) variant.** `dsh` has an ACP profile, but there is no `interactive_deepseek_harness()`.
+-   **Checkpointing.** A sample is not resumable from an Inspect checkpoint.
+-   **Sandbox identity scopes** (such as `inspect_swarm`'s users isolation). The agent raises `SandboxIdentityError` inside one.
+-   **MCP servers with headers, per-server tool filters, or SSE transport** (see [MCP Servers](#mcp-servers)).
 
 {{< include _snippets/agent_troubleshooting.md >}}

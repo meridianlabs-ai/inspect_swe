@@ -27,6 +27,7 @@ from inspect_swe._deepseek_harness.deepseek_harness import (
     _profile_patch,
     _reasoning_unset,
     _resolve_context_window,
+    _resolve_max_tokens,
     _session_id,
     _turn_end_reason,
     _validate_mcp_server,
@@ -217,10 +218,7 @@ def test_profile_patch_inserts_mcp_servers() -> None:
                     cwd="/work",
                 ),
                 MCPServerConfigHTTP(
-                    name="secrets",
-                    type="http",
-                    url="http://localhost:9/mcp",
-                    headers={"Authorization": "Bearer x"},
+                    name="docs", type="http", url="http://localhost:9/mcp"
                 ),
             ],
         )
@@ -241,13 +239,12 @@ def test_profile_patch_inserts_mcp_servers() -> None:
             },
         },
         {
-            "id": "mcp-secrets",
+            "id": "mcp-docs",
             "name": "@deepseek-ai/dsh-mcp-client",
             "config": {
-                "serverName": "secrets",
+                "serverName": "docs",
                 "transport": "streamable-http",
                 "url": "http://localhost:9/mcp",
-                "headers": {"Authorization": "Bearer x"},
                 "failOnStartupError": True,
             },
         },
@@ -267,6 +264,16 @@ def test_validate_mcp_server_rejects_tool_filter_and_sse() -> None:
     with pytest.raises(ValueError, match="not SSE"):
         _validate_mcp_server(
             MCPServerConfigHTTP(name="legacy", type="sse", url="http://x/sse")
+        )
+    _validate_mcp_server(MCPServerConfigHTTP(name="open", type="http", url="http://x"))
+    with pytest.raises(ValueError, match="with headers"):
+        _validate_mcp_server(
+            MCPServerConfigHTTP(
+                name="private",
+                type="http",
+                url="http://x",
+                headers={"Authorization": "Bearer x"},
+            )
         )
 
 
@@ -289,6 +296,56 @@ def test_resolve_context_window_uses_metadata_or_dsh_default() -> None:
         assert _resolve_context_window(model=model, context_window=None) == 200_000
     with patch.object(_DSH_MODULE, "get_model_info", return_value=None):
         assert _resolve_context_window(model=model, context_window=None) is None
+
+
+def test_profile_patch_pins_the_search_provider_the_bridge_serves() -> None:
+    """Dsh 0.2.2 made DeepSeek's Search API the default: a path the bridge lacks."""
+    rows = json.loads(
+        _profile_patch(model="inspect", context_window=None, mcp_servers=[])
+    )
+    by_id = {row["id"]: row for row in rows if "id" in row}
+    assert by_id["web"]["config"] == {
+        "searchProvider": "deepseek-official",
+        "fetchProvider": "http",
+    }
+
+
+def test_profile_patch_switches_goals_off() -> None:
+    """A goal left active makes `dsh --profile headless` exit 1 after a finished turn.
+
+    Seen live (dsh 0.2.2rc2): the model called `create_goal`, answered, and
+    dsh started the goal's next round as the runner was exiting, so the run
+    ended with `final.reason: null` and exit code 1.
+    """
+    rows = json.loads(
+        _profile_patch(model="inspect", context_window=None, mcp_servers=[])
+    )
+    by_id = {row["id"]: row for row in rows if "id" in row}
+    assert by_id["tool-goal"] == {"id": "tool-goal", "disabled": True}
+    assert by_id["goal-round-driver"] == {"id": "goal-round-driver", "disabled": True}
+
+
+def test_output_limit_is_passed_so_dsh_can_budget_compaction() -> None:
+    """Dsh assumes a 256,000-token output cap, which no 200k window can fit."""
+    model = Mock()
+    model.name = "m"
+    info = ModelInfo(context_length=200_000, output_tokens=64_000)
+    with patch.object(_DSH_MODULE, "get_model_info", return_value=info):
+        assert _resolve_max_tokens(model=model, context_window=200_000) == 64_000
+        # an output limit that leaves no window is not one dsh can use
+        assert _resolve_max_tokens(model=model, context_window=32_000) is None
+    with patch.object(_DSH_MODULE, "get_model_info", return_value=None):
+        assert _resolve_max_tokens(model=model, context_window=200_000) is None
+
+    rows = json.loads(
+        _profile_patch(
+            model="m", context_window=200_000, max_tokens=64_000, mcp_servers=[]
+        )
+    )
+    by_id = {row["id"]: row for row in rows if "id" in row}
+    assert by_id["llm-deepseek"]["config"] == {
+        "models": [{"id": "m", "contextWindow": 200_000, "maxTokens": 64_000}]
+    }
 
 
 def test_event_stream_parsing() -> None:
@@ -464,3 +521,27 @@ def test_reasoning_default_applies_only_when_unset() -> None:
         return_value=GenerateConfig(reasoning_effort="medium"),
     ):
         assert not _reasoning_unset(model, GenerateConfig())
+
+
+def test_restore_reasoning_drops_a_childs_reasoning_from_its_notice() -> None:
+    """Dsh quotes a child's flattened reasoning to its parent as closing text."""
+    original = ContentReasoning(reasoning="report and stop", signature="sig")
+    header = ContentText(text="Background subagent alpha finished and will do ...")
+    closing = ContentText(text="Its closing message:")
+    answer = ContentText(text="uid is 0")
+    messages: list[ChatMessage] = [
+        ChatMessageUser(
+            content=[
+                header,
+                closing,
+                ContentText(text="<think>report and stop</think>"),
+                answer,
+            ]
+        ),
+        # not a known reasoning: someone's actual text
+        ChatMessageUser(content=[ContentText(text="<think>what is this tag?</think>")]),
+    ]
+    restored, changed = _restore(messages, [_model_event([original])])
+    assert changed
+    assert restored[0].content == [header, closing, answer]
+    assert restored[1].content == [ContentText(text="<think>what is this tag?</think>")]

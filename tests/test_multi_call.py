@@ -1,8 +1,9 @@
 from typing import Any, Literal
 
 import pytest
+from inspect_ai.event import ModelEvent
 from inspect_ai.log import EvalSample, resolve_sample_attachments
-from inspect_ai.model import ChatMessageAssistant, ChatMessageUser
+from inspect_ai.model import ChatMessageAssistant, ChatMessageSystem, ChatMessageUser
 
 from tests.conftest import (
     get_available_sandboxes,
@@ -117,9 +118,62 @@ def test_opencode_multi_call(sandbox: str) -> None:
     check_multi_call("opencode", "anthropic/claude-sonnet-4-5", sandbox)
 
 
+@skip_if_no_anthropic
+@skip_if_no_docker
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_deepseek_harness_multi_call(sandbox: str) -> None:
+    check_multi_call("deepseek_harness", "anthropic/claude-sonnet-4-5", sandbox)
+
+
+@skip_if_no_anthropic
+@skip_if_no_docker
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_deepseek_harness_resumed_turns_are_consistent(sandbox: str) -> None:
+    check_deepseek_harness_resumed_turns("anthropic/claude-sonnet-4-5", sandbox)
+
+
+def check_deepseek_harness_resumed_turns(model: str, sandbox: str) -> None:
+    """Each later turn resumes dsh's session (`--session-id`) in a new process.
+
+    The model must see one growing conversation: the same system prompt on
+    every call (dsh rebuilds it per process), and the caller's system prompt,
+    which is sent as part of the first turn's task, exactly once.
+    """
+    log = run_example("multi_call", "deepseek_harness", model, sandbox=sandbox)[0]
+    assert log.samples
+    sample = resolve_sample_attachments(log.samples[0], "full")
+    calls = [event for event in sample.events if isinstance(event, ModelEvent)]
+    assert len(calls) >= 4
+
+    system_prompts = {
+        message.text
+        for call in calls
+        for message in call.input
+        if isinstance(message, ChatMessageSystem)
+    }
+    assert len(system_prompts) == 1, "dsh's system prompt changed between calls"
+
+    appended = "Answer simple questions concisely"
+    for call in calls:
+        text = "\n".join(
+            message.text
+            for message in call.input
+            if isinstance(message, ChatMessageUser)
+        )
+        assert text.count(appended) == 1, "caller's system prompt sent again on resume"
+    # one conversation: every call's input extends the one before
+    sizes = [len(call.input) for call in calls]
+    assert sizes == sorted(set(sizes)), f"history was not continued: {sizes}"
+
+
 def check_multi_call(
     agent: Literal[
-        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent", "opencode"
+        "claude_code",
+        "codex_cli",
+        "deepseek_harness",
+        "gemini_cli",
+        "mini_swe_agent",
+        "opencode",
     ],
     model: str,
     sandbox: str,
@@ -145,6 +199,10 @@ def check_multi_call(
             # lower-bound the user messages
             assert len(user_messages) >= 4
             assert len(assistant_messages) == 4
+        case "deepseek_harness":
+            # one user turn per question; dsh adds none of its own
+            assert len(user_messages) == 4
+            assert len(assistant_messages) >= 4
         case "gemini_cli":
             assert len(user_messages) >= 4
             assert len(assistant_messages) >= 4

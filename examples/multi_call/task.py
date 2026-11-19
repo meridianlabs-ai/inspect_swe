@@ -70,7 +70,12 @@ def multi_call_solver(
 @task
 def multi_call(
     agent: Literal[
-        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent", "opencode"
+        "claude_code",
+        "codex_cli",
+        "deepseek_harness",
+        "gemini_cli",
+        "mini_swe_agent",
+        "opencode",
     ] = "claude_code",
     sandbox: SandboxEnvironmentType | None = "docker",
 ) -> Task:

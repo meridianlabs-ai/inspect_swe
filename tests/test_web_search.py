@@ -45,6 +45,22 @@ def test_codex_cli_web_search(sandbox: str) -> None:
     )
 
 
+@skip_if_no_docker
+@skip_if_no_anthropic
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_deepseek_harness_web_search(sandbox: str) -> None:
+    log = run_example(
+        "web_search", "deepseek_harness", "anthropic/claude-sonnet-4-5", sandbox=sandbox
+    )[0]
+    assert log.samples
+    assistant_messages = [
+        m for m in log.samples[0].messages if isinstance(m, ChatMessageAssistant)
+    ]
+    # dsh's own web_search tool, which asks the bridge for the search
+    tool_calls = [tc for m in assistant_messages for tc in (m.tool_calls or [])]
+    assert next((tc for tc in tool_calls if tc.function == "web_search"), None)
+
+
 @skip_if_no_google
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())

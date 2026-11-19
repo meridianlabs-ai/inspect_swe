@@ -4,6 +4,7 @@ from inspect_ai.log import transcript
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageAssistant,
+    ChatMessageUser,
     Content,
     ContentReasoning,
     ContentText,
@@ -11,14 +12,18 @@ from inspect_ai.model import (
 
 # The bridge's Anthropic API returns non-Anthropic reasoning to the client as
 # a `<think>...</think>` text block (signature dropped). dsh sends it back as
-# plain assistant text, so the model would see old reasoning as output.
+# plain assistant text, so the model would see old reasoning as output. dsh
+# also takes it for part of a sub-agent's answer and quotes it to the parent
+# in the settlement notice, where native dsh leaves reasoning out.
 
 
 class ReasoningRestorer:
     """Restore reasoning that the bridge flattened into assistant text.
 
     Originals are found in the transcript's model events by their exact
-    flattened text. Text matching none, or more than one, is left as is.
+    flattened text. Text matching none, or more than one, is left as is. A
+    user-message block that is exactly a known flattened reasoning (a
+    sub-agent's, quoted in its settlement notice) is dropped.
     """
 
     def __init__(self) -> None:
@@ -35,8 +40,21 @@ class ReasoningRestorer:
         for index, message in enumerate(messages):
             if not _has_candidate_content(message):
                 continue
-            assert isinstance(message, ChatMessageAssistant)
             assert isinstance(message.content, list)
+            if isinstance(message, ChatMessageUser):
+                kept = [
+                    item
+                    for item in message.content
+                    if not (
+                        isinstance(item, ContentText) and item.text in self._originals
+                    )
+                ]
+                # never leave a message empty
+                if kept and len(kept) != len(message.content):
+                    messages[index] = message.model_copy(update={"content": kept})
+                    changed = True
+                continue
+            assert isinstance(message, ChatMessageAssistant)
             content: list[Content] = []
             restored_any = False
             for item in message.content:
@@ -89,7 +107,7 @@ class ReasoningRestorer:
 
 def _has_candidate_content(message: ChatMessage) -> bool:
     return (
-        isinstance(message, ChatMessageAssistant)
+        isinstance(message, (ChatMessageAssistant, ChatMessageUser))
         and isinstance(message.content, list)
         and any(
             isinstance(item, ContentText) and item.text.startswith("<think")
