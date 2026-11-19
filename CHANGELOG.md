@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/meridianlabs-ai/inspect_swe/compare/0.3.1...0.3.2) (2026-11-19)
+
+
+### Features
+
+* claude_code() and codex_cli() run as the member inside a sandbox identity scope ([#241](https://github.com/meridianlabs-ai/inspect_swe/issues/241)) ([3111670](https://github.com/meridianlabs-ai/inspect_swe/commit/3111670d474d49a5b168d488b1bc1e33db0243b8))
+
 ## [0.3.1](https://github.com/meridianlabs-ai/inspect_swe/compare/0.3.0...0.3.1) (2026-11-18)
 
 
