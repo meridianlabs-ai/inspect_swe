@@ -30,7 +30,10 @@ from inspect_swe._deepseek_harness.deepseek_harness import (
     _resolve_max_tokens,
     _session_id,
     _turn_end_reason,
-    _validate_mcp_server,
+)
+from inspect_swe._deepseek_harness.mcp import (
+    is_host_side,
+    validate_sandbox_mcp_server,
 )
 from inspect_swe._deepseek_harness.reasoning import ReasoningRestorer
 
@@ -252,29 +255,25 @@ def test_profile_patch_inserts_mcp_servers() -> None:
 
 
 def test_validate_mcp_server_rejects_tool_filter_and_sse() -> None:
-    _validate_mcp_server(MCPServerConfigStdio(name="ok", command="srv"))
+    """What dsh's own MCP client can't do, for a server wired into the sandbox."""
+    validate_sandbox_mcp_server(MCPServerConfigStdio(name="ok", command="srv"))
     with pytest.raises(ValueError, match="server names"):
-        _validate_mcp_server(MCPServerConfigStdio(name="my.tools", command="srv"))
+        validate_sandbox_mcp_server(
+            MCPServerConfigStdio(name="my.tools", command="srv")
+        )
     with pytest.raises(ValueError, match="server names"):
-        _validate_mcp_server(MCPServerConfigStdio(name="x" * 33, command="srv"))
+        validate_sandbox_mcp_server(MCPServerConfigStdio(name="x" * 33, command="srv"))
     with pytest.raises(ValueError, match="tool filtering"):
-        _validate_mcp_server(
+        validate_sandbox_mcp_server(
             MCPServerConfigStdio(name="filtered", command="srv", tools=["a"])
         )
     with pytest.raises(ValueError, match="not SSE"):
-        _validate_mcp_server(
+        validate_sandbox_mcp_server(
             MCPServerConfigHTTP(name="legacy", type="sse", url="http://x/sse")
         )
-    _validate_mcp_server(MCPServerConfigHTTP(name="open", type="http", url="http://x"))
-    with pytest.raises(ValueError, match="with headers"):
-        _validate_mcp_server(
-            MCPServerConfigHTTP(
-                name="private",
-                type="http",
-                url="http://x",
-                headers={"Authorization": "Bearer x"},
-            )
-        )
+    open_server = MCPServerConfigHTTP(name="open", type="http", url="http://x/mcp")
+    validate_sandbox_mcp_server(open_server)
+    assert not is_host_side(open_server)
 
 
 def test_resolve_context_window_prefers_explicit_value() -> None:

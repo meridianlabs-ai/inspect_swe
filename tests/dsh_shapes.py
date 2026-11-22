@@ -185,6 +185,21 @@ def notice(name: str, *closing: str) -> ChatMessageUser:
     )
 
 
+def unfinished_notice(name: str, ending: str, *rest: str) -> ChatMessageUser:
+    """The notice for a run that did not complete (stopped, failed, declined...)."""
+    return ChatMessageUser(
+        content=blocks(f"Background subagent {name} {ending}", *rest)
+    )
+
+
+def send_message_call(call_id: str, agent: str, message: str) -> ToolCall:
+    return ToolCall(
+        id=call_id,
+        function="send_message",
+        arguments={"agent": agent, "message": message},
+    )
+
+
 def agent_message(sender: str, text: str) -> ChatMessageUser:
     """A `send_message` from another agent, as its recipient receives it."""
     return ChatMessageUser(content=blocks(f"Agent {sender} sent a message: ", text))

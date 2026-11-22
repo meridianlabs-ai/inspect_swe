@@ -23,8 +23,26 @@ stdout is not used) we rebuild the agent-span tree:
      history carries a new settlement notice for the child. `reset()` closes
      what is left between attempts and at the end.
 
-  4. **Resume** — a settled child that makes requests again (the parent sent
-     it more with `send_message`) continues in a new span with the same name.
+  4. **Result** — the notice carries the child's closing message. It is
+     recorded as a `ToolEvent` beside the span, naming it (`agent_span_id`):
+     the call that started the run, answered with what the run produced.
+     That is where the timeline takes an agent span's result from; without
+     it the viewer would show the launch acknowledgement. A run with no
+     notice by `reset()` is answered with its own final answer, or as still
+     running.
+
+  5. **Resume** — a settled child that makes requests again (the parent sent
+     it more with `send_message`) continues in a new span with the same name,
+     which gets its own result when that run settles. A child can be
+     restarted before its parent has seen the notice for the run that ended
+     (the parent sent the message while that run was finishing): its own
+     request shows the restart, so the run's span closes then and takes the
+     next notice for the child, and the new run gets the one after.
+
+Notices are matched to the ones already taken from the same parent's history
+in order, not counted, so compaction cutting old notices from the history (or
+a compaction request carrying only part of it) neither hides a new notice nor
+repeats an old one.
 
 Parallel children are told apart by name on every request, so interleaving
 doesn't matter. A child we never saw start (a `workflow` script's children, a
@@ -46,11 +64,16 @@ compactions name nobody and are recorded in the root's span.
 
 from dataclasses import dataclass, field
 from logging import getLogger
-from typing import NamedTuple
+from typing import Any, NamedTuple
 from uuid import uuid4
 
 from inspect_ai.agent import AgentBridgeContext
-from inspect_ai.event import CompactionEvent, SpanBeginEvent, SpanEndEvent
+from inspect_ai.event import (
+    CompactionEvent,
+    SpanBeginEvent,
+    SpanEndEvent,
+    ToolEvent,
+)
 from inspect_ai.event._model import ModelEvent
 from inspect_ai.log import transcript
 from inspect_ai.model import (
@@ -62,7 +85,7 @@ from inspect_ai.model import (
     StopReason,
 )
 from inspect_ai.model._model import ModelEventSink
-from inspect_ai.tool import ToolInfo
+from inspect_ai.tool import ToolCall, ToolInfo
 from inspect_ai.util._span import current_span_id
 
 from ..._util.model_event_sink import (
@@ -75,14 +98,17 @@ from ..._util.model_event_sink import (
 )
 from .detection import (
     ROOT_AGENT_NAME,
+    SEND_MESSAGE_TOOL,
     Delegation,
     Identity,
     find_delegations,
+    find_messages,
     initial_prompt,
     is_compaction_request,
     is_web_search_request,
     requester_identity,
-    settled_children,
+    restarted,
+    settlements,
     started_name,
 )
 from .toolview import tool_view
@@ -112,6 +138,29 @@ class RootGeneration(NamedTuple):
 
 
 @dataclass
+class _Run:
+    """The tool call a child's current run answers."""
+
+    call_id: str
+    function: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class _Ended:
+    """A run whose span closed before its settlement notice was seen."""
+
+    run: _Run
+    span_id: str
+    span_parent_id: str | None
+    closing: str
+    """The child's own final answer, recorded if no notice comes."""
+
+
+NO_RESULT = "No result: the sub-agent was still running when dsh exited."
+
+
+@dataclass
 class _Child:
     """A sub-agent and the span its requests currently go to."""
 
@@ -130,6 +179,18 @@ class _Child:
     """Its name in dsh's subagent tree, once known."""
     is_open: bool = True
     resumes: int = 0
+    run: _Run | None = None
+    """What started the run its open span holds."""
+    span_parent_id: str | None = None
+    """The span its open span sits in."""
+    final: str | None = None
+    """The open run's latest output, when it called no tools (its answer so far)."""
+    answered_alone: bool = False
+    """That output came with no children of its own running, so it ended the run."""
+    ended: list[_Ended] = field(default_factory=list)
+    """Runs closed by a restart, oldest first, still owed their notice."""
+    restart_key: tuple[int, str] | None = None
+    """Where its latest run began (`detection.Restart.key`)."""
     metadata: dict[str, str] = field(default_factory=dict)
 
 
@@ -146,9 +207,13 @@ class DshConsumer(ModelEventSink):
         # innermost first)
         self._open: list[_Child] = []
 
-        # (parent name, child name) → settlement notices for the child in the
-        # parent's history when it last made a request
-        self._notices: dict[tuple[str, str], int] = {}
+        # (parent name, child name) → the results of every settlement notice
+        # taken from the parent's history so far, in order
+        self._notices: dict[tuple[str, str], list[str]] = {}
+
+        # recipient name → the latest `send_message` call to it that hasn't
+        # been tied to a run yet (the one a settled child resumes on)
+        self._sent: dict[str, ToolCall] = {}
 
         # ModelEvents we've _event()'d, so on_complete knows to _event_updated
         self._emitted_events: set[int] = set()
@@ -195,13 +260,35 @@ class DshConsumer(ModelEventSink):
         later: its event is updated, but what it would start or answer is
         ignored (`_epoch`), so it opens no span in the next attempt or after
         the last one.
+
+        A run still open is answered with its final answer if its last output
+        was one (it finished, but dsh exited before telling its parent), else
+        as still running; a run closed by a restart, whose notice never came,
+        with the answer it ended with.
         """
+        for child in self._children.values():
+            for ended in child.ended:
+                self._record(
+                    ended.run,
+                    ended.span_id,
+                    ended.span_parent_id,
+                    ended.closing or NO_RESULT,
+                )
+            child.ended.clear()
         for child in reversed(self._open):
+            if child.run is not None:
+                self._record(
+                    child.run,
+                    child.span_id,
+                    child.span_parent_id,
+                    child.final or NO_RESULT,
+                )
             transcript()._event(SpanEndEvent(id=child.span_id))
         self._open.clear()
         self._by_call.clear()
         self._children.clear()
         self._notices.clear()
+        self._sent.clear()
         self._root = None
         self._epoch += 1
 
@@ -334,14 +421,13 @@ class DshConsumer(ModelEventSink):
                 messages=messages,
             )
 
-        # a compaction request holds only the span being condensed: an older
-        # part of its agent's history, which says nothing new about children
-        # (it has fewer notices than the history it came from) and may open
-        # with a reminder that isn't the agent's latest. It is placed, never
-        # used to open, close or resume a span.
+        # a compaction request holds only the span being condensed, which may
+        # open with a reminder that isn't the agent's latest. It is placed,
+        # never used to open or resume a span; a notice in it that is news
+        # (it may never reach a later request) still settles its run.
         compaction = is_compaction_request(messages)
         identity = requester_identity(messages)
-        self._sync(messages, identity, notices=not compaction)
+        self._sync(messages, identity)
 
         child: _Child | None = None
         if identity is None:
@@ -396,21 +482,24 @@ class DshConsumer(ModelEventSink):
             self._root = RootGeneration(list(conversation), output)
         elif decision.kind == "unknown":
             self._root = None
+        elif decision.kind == "subagent" and decision.requester_path is not None:
+            child = self._children.get(decision.requester_path)
+            if (
+                child is not None
+                and child.is_open
+                and child.span_id == decision.span_id
+            ):
+                answer = not output.message.tool_calls
+                child.final = output.message.text if answer else None
+                # waiting on children of its own, an answer doesn't end its run
+                child.answered_alone = answer and not self._has_running_children(child)
 
-    def _sync(
-        self,
-        messages: list[ChatMessage],
-        identity: Identity | None,
-        *,
-        notices: bool = True,
-    ) -> None:
-        """Bind names from delegation results, then close settled children.
+    def _sync(self, messages: list[ChatMessage], identity: Identity | None) -> None:
+        """Bind names from delegation results, then settle children's runs.
 
         Idempotent: results and notices stay in the requester's history, so a
-        failed start is dropped once and a notice closes a span only when the
-        history carries more of them than at the requester's last request.
-        `notices=False` leaves the notice counts alone, for a request that
-        holds only part of its agent's history.
+        failed start is dropped once and each notice answers one run, the
+        first time it is seen.
         """
         for message in messages:
             if not isinstance(message, ChatMessageTool) or message.tool_call_id is None:
@@ -428,23 +517,23 @@ class DshConsumer(ModelEventSink):
                     del self._children[child.name]
                 self._close(child)
 
-        if identity is None or not notices:
+        if identity is None:
             return
-        settled = settled_children(messages)
-        for key in self._notices:
-            # notices the requester's history no longer has (compaction)
-            if key[0] == identity.name:
-                settled.setdefault(key[1], 0)
-        for name, count in settled.items():
+        visible: dict[str, list[str]] = {}
+        for settlement in settlements(messages):
+            visible.setdefault(settlement.name, []).append(settlement.result)
+        for name, results in visible.items():
             child = self._children.get(name)
             # a notice goes to the child's direct parent; a forked sibling
             # inherits it with the parent's history and proves nothing new
             if child is not None and child.parent not in (None, identity.name):
                 continue
-            key = (identity.name, name)
-            if count > self._notices.get(key, 0) and child is not None:
-                self._close(child)
-            self._notices[key] = count
+            seen = self._notices.setdefault((identity.name, name), [])
+            news = _new_notices(seen, results)
+            seen.extend(news)
+            if child is not None:
+                for result in news:
+                    self._answer(child, result)
 
     def _bind(self, child: _Child, name: str) -> None:
         """Tie a started child to its name, unless the name is another's."""
@@ -459,11 +548,33 @@ class DshConsumer(ModelEventSink):
             child = self._unnamed_start(identity, messages)
             if child is not None:
                 self._bind(child, identity.name)
+        restart = restarted(messages, identity.parent)
         if child is None or child.name != identity.name:
             child = self._open_unseen(identity)
         elif not child.is_open:
             self._resume(child)
+        elif (
+            restart is not None
+            and restart.key != child.restart_key
+            and child.answered_alone
+        ):
+            # it was sent more after a run whose notice its parent hasn't
+            # seen yet: that run is over, and this is the next
+            self._end_run(child, restart.closing)
+            self._resume(child)
+        if restart is not None:
+            child.restart_key = restart.key
         return child
+
+    def _has_running_children(self, child: _Child) -> bool:
+        """Whether a child has children of its own whose span is open.
+
+        Waiting on them, it can write an answer without tool calls that
+        doesn't end its run.
+        """
+        return child.name is not None and any(
+            other.parent == child.name for other in self._open
+        )
 
     def _unnamed_start(
         self, identity: Identity, messages: list[ChatMessage]
@@ -511,6 +622,9 @@ class DshConsumer(ModelEventSink):
             name=identity.name,
         )
         self._children[identity.name] = child
+        # a child that already exists is making requests because it was sent
+        # a message (nothing else restarts one)
+        child.run = self._resumed_run(child)
         self._begin(child, parent_span_id, dict(child.metadata))
         return child
 
@@ -525,6 +639,7 @@ class DshConsumer(ModelEventSink):
         """
         child.resumes += 1
         child.span_id = f"{child.base_span_id}-resumed-{child.resumes}"
+        child.run = self._resumed_run(child)
         open_spans = {open_child.span_id for open_child in self._open}
         parent_span_id = (
             child.parent_span_id
@@ -535,10 +650,82 @@ class DshConsumer(ModelEventSink):
             child, parent_span_id, {**child.metadata, "continues": child.base_span_id}
         )
 
+    def _resumed_run(self, child: _Child) -> _Run:
+        """The `send_message` call a child's new run answers.
+
+        The call itself when we saw it; otherwise (it was sent by a dsh
+        process that is gone, or by an agent whose output a filter replaced)
+        one made up from the span's id, so the run can still carry a result.
+        """
+        sent = self._sent.pop(child.name, None) if child.name is not None else None
+        if sent is not None:
+            return _Run(sent.id, SEND_MESSAGE_TOOL, dict(sent.arguments or {}))
+        return _Run(
+            child.span_id.removeprefix("agent-"),
+            SEND_MESSAGE_TOOL,
+            {"agent": child.name} if child.name is not None else {},
+        )
+
+    def _answer(self, child: _Child, result: str) -> None:
+        """Give a new settlement notice to the oldest run of a child still owed one."""
+        if child.ended:
+            ended = child.ended.pop(0)
+            self._record(ended.run, ended.span_id, ended.span_parent_id, result)
+        else:
+            self._settle(child, result)
+
+    def _settle(self, child: _Child, result: str) -> None:
+        """Record what a finished run produced against its span, then close it."""
+        if not child.is_open:
+            return
+        if child.name is not None:
+            # a message sent to it while it ran was part of that run
+            self._sent.pop(child.name, None)
+        if child.run is not None:
+            self._record(child.run, child.span_id, child.span_parent_id, result)
+        self._close(child)
+
+    def _end_run(self, child: _Child, closing: str) -> None:
+        """Close the span of a run that ended unseen; the next notice answers it."""
+        if child.run is not None:
+            child.ended.append(
+                _Ended(child.run, child.span_id, child.span_parent_id, closing)
+            )
+        self._close(child)
+
+    def _record(
+        self, run: _Run, span_id: str, span_parent_id: str | None, result: str
+    ) -> None:
+        """Record a run's call, answered with what the run produced.
+
+        The timeline takes an agent span's result from a tool event beside the
+        span that names it (`agent_span_id`), and only failing that, for a
+        span named `agent-<call id>`, from that call's tool message, which
+        for dsh is the launch acknowledgement (and nothing at all for a
+        resumed run's span).
+        """
+        transcript()._event(
+            ToolEvent(
+                id=run.call_id,
+                function=run.function,
+                arguments=run.arguments,
+                view=tool_view(run.function, run.arguments),
+                result=result,
+                agent_span_id=span_id,
+                span_id=span_parent_id,
+                # not a call Inspect ran: dsh ran the child, and this is
+                # its answer as dsh reported it to the parent
+                metadata={"source": "deepseek_harness", "from": "settlement notice"},
+            )
+        )
+
     def _begin(
         self, child: _Child, parent_span_id: str | None, metadata: dict[str, str]
     ) -> None:
         child.is_open = True
+        child.final = None
+        child.answered_alone = False
+        child.span_parent_id = parent_span_id
         self._open.append(child)
         transcript()._event(
             SpanBeginEvent(
@@ -566,8 +753,12 @@ class DshConsumer(ModelEventSink):
         """Open a span for each delegation call in an agent's output.
 
         Runs synchronously before the response reaches dsh, so the span is
-        open before the child's first request arrives.
+        open before the child's first request arrives. `send_message` calls
+        are noted for the run they may start (`_resumed_run`).
         """
+        for sent in find_messages(message.tool_calls):
+            self._sent[str((sent.arguments or {})["agent"])] = sent
+
         for delegation in find_delegations(message.tool_calls):
             if delegation.call_id in self._by_call:
                 continue  # idempotent (defensive against retries)
@@ -582,6 +773,7 @@ class DshConsumer(ModelEventSink):
                 tool=delegation.tool,
                 prompt=delegation.prompt,
                 metadata=_metadata(delegation),
+                run=_Run(delegation.call_id, delegation.tool, delegation.arguments),
             )
             self._by_call[delegation.call_id] = child
             # a name some child already holds is one dsh will reject: such a
@@ -589,6 +781,27 @@ class DshConsumer(ModelEventSink):
             if delegation.name is not None:
                 self._bind(child, _full_name(parent, delegation.name))
             self._begin(child, parent_span_id, dict(child.metadata))
+
+
+def _new_notices(seen: list[str], visible: list[str]) -> list[str]:
+    """The notices in a request that weren't taken before, in order.
+
+    `seen` is every notice taken from one parent's history for one child;
+    `visible` is those the latest request carries. That history only grows at
+    the end, but compaction cuts it from the front, and a compaction request
+    holds a stretch from its middle: what lies within what was seen is old,
+    and past the longest overlap with its end is new. Notices are compared by
+    their text, so a run that closes with exactly the text of one just cut
+    away by compaction goes unseen.
+    """
+    width = len(visible)
+    for start in range(len(seen) - width + 1):
+        if seen[start : start + width] == visible:
+            return []
+    for overlap in range(min(len(seen), width), 0, -1):
+        if seen[-overlap:] == visible[:overlap]:
+            return visible[overlap:]
+    return visible
 
 
 def _full_name(parent: str | None, name: str) -> str:

@@ -18,7 +18,7 @@ The following options are supported for customizing the behavior of the agent:
 |------------------------------------|------------------------------------|
 | `system_prompt` | Additional system prompt (prepended to the task, as `dsh` headless has no separate system-prompt option). |
 | `skills` | Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent. |
-| `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details, including which servers are accepted). |
+| `mcp_servers` | MCP servers (see [MCP Servers](#mcp-servers) below for details, including where each server is connected from). |
 | `bridged_tools` | Host-side Inspect tools to expose via MCP (see [Bridged Tools](#bridged-tools) below for details). |
 | `mcp_ready_timeout` | Seconds to wait for bridged MCP endpoints to serve tools before the agent launch errors. |
 | `attempts` | Allow the agent to have multiple scored attempts at solving the task. |
@@ -42,17 +42,21 @@ For example, here we specify a custom system prompt:
 
 {{< include _snippets/agent_mcp_servers.md >}}
 
-{{< meta agent_name >}} supports stdio and Streamable HTTP MCP servers. Per-server tool filtering (`tools=[...]`) and legacy SSE servers are not supported and raise an error.
-
 ### Credentials
 
-`dsh`'s own tools (its shell tool in particular) run as the same user as `dsh`, so the model can read anything `dsh` can: its configuration files, its environment, and the files and descriptors it has open (through `/proc`). Nothing handed to `dsh` inside the sandbox can be kept from the model, so:
+`dsh`'s own tools (its shell tool in particular) run as the same user as `dsh`, so the model can read anything `dsh` can: its configuration files, its environment, the files and descriptors it has open (through `/proc`), and the command line and environment of the processes it starts. Nothing handed to `dsh` inside the sandbox can be kept from the model, so no credential for an MCP server is placed there:
 
--   An HTTP MCP server with `headers` (e.g. an `Authorization` token), or with a user or password in its URL, is rejected with an error. To give the agent tools that need a credential, connect to the server on the host and pass the tools with `bridged_tools`: they are served to `dsh` by the model bridge, and the credential never enters the sandbox.
+-   **An HTTP server that carries a credential is connected from the host.** That is a server with `headers`, or with a user, password or query string in its URL. Inspect connects to it from the host process and serves its tools to `dsh` through the model bridge, under the same server and tool names. Nothing of the server's configuration enters the sandbox. Such a server has to be reachable from the host rather than from the sandbox, and needs the `mcp` package installed on the host. Its `tools` allowlist and SSE transport are honoured. Any query string counts, since a token can hide under any parameter name: a server only the sandbox can reach needs a URL without one.
 
--   Everything else in an MCP server's configuration is written to `dsh`'s profile in the sandbox, so treat it as visible to the model, like `env`: an HTTP server's URL (query string included), and a stdio server's command, arguments and `env`. A stdio server also runs inside the sandbox.
+-   **A stdio server with a credential is rejected.** A stdio server runs inside the sandbox, with its environment and command line there too, so there is nowhere to hide a credential for it. A server whose `env` or `args` look like they carry one raises an error: a name such as `GITHUB_TOKEN`, `PGPASSWORD`, `--api-key` or `client_secret` (also inside an argument, as in `--env=GITHUB_TOKEN=...`), or a value shaped like a key, an `Authorization` header, a URL with a password or a URL whose query names a credential (`?api_key=...`). The error names the setting, never its value. To give the agent tools that need a credential, serve them from the host with `bridged_tools`.
+
+-   **Everything else is visible to the model.** The configuration of a server wired into the sandbox is written to `dsh`'s profile there: an HTTP server's URL, and a stdio server's command, arguments and `env`. The stdio check is a screen by name and shape, not a guarantee, so keep secrets out of those fields.
 
 The only key `dsh` is given for inference is a dummy one for the model bridge.
+
+### Servers Wired Into the Sandbox
+
+`dsh` connects to the remaining servers itself, from inside the sandbox: stdio servers, and Streamable HTTP servers without credentials. For these, per-server tool filtering (`tools=[...]`) and legacy SSE are not supported and raise an error.
 
 {{< include _snippets/agent_bridged_tools.md >}}
 
@@ -61,6 +65,8 @@ The only key `dsh` is given for inference is a dummy one for the model bridge.
 `dsh` can delegate: its `subagent` tool starts a fresh child agent, `subagent_fork` one that inherits the conversation so far, and `send_message` gives a child that has finished more work. Every child runs in the background. The call returns as soon as the child has started, and its answer reaches the parent later as a notice.
 
 Each child's model calls are recorded in a transcript span of its own, so the viewer shows the root agent's conversation and each child's as separate lanes. A child's span opens when the parent's call is made and closes when the parent receives the child's finishing notice, not when the call returns. A child resumed with `send_message` continues in a new span with the same name.
+
+A lane's result is the child's closing message for that run, as `dsh` reported it to the parent (or how the run ended, if it didn't complete). It is recorded as a tool event next to the span: the `subagent`, `subagent_fork` or `send_message` call that started the run, answered with the result. A run whose notice never reached its parent before `dsh` exited gets the child's own final answer, or says it was still running.
 
 The sample's messages and output are the root agent's conversation and its last answer, whichever agent made the last model call. (If a request's sender can't be told after the root's last answer, which classification reports as `"unknown"`, the conversation the model bridge tracked is used instead.)
 
@@ -119,6 +125,6 @@ The checksum recorded for {{< meta agent_name >}} is that of the downloaded whee
 -   **Interactive (ACP) variant.** `dsh` has an ACP profile, but there is no `interactive_deepseek_harness()`.
 -   **Checkpointing.** A sample is not resumable from an Inspect checkpoint.
 -   **Sandbox identity scopes** (such as `inspect_swarm`'s users isolation). The agent raises `SandboxIdentityError` inside one.
--   **MCP servers with headers, per-server tool filters, or SSE transport** (see [MCP Servers](#mcp-servers)).
+-   **stdio MCP servers with credentials**, and per-server tool filters or SSE transport for servers wired into the sandbox (see [MCP Servers](#mcp-servers)).
 
 {{< include _snippets/agent_troubleshooting.md >}}

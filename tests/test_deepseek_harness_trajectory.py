@@ -413,6 +413,48 @@ async def test_timeline_shows_the_final_answer_as_a_main_thread_turn() -> None:
 
 
 @pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_each_child_lane_shows_what_that_run_answered() -> None:
+    """A lane's result is the child's closing message, not `started subagent ...`.
+
+    dsh answers a delegation call at once with a launch acknowledgement and
+    delivers the child's answer later, in a notice. The expected results
+    here are the children's own final replies in the recording, one per run:
+    alpha has two, the second after `send_message`.
+    """
+    requests = _recording()
+    replay = await _replay(requests, _task())
+
+    # a child's reply with no tool calls ends a run
+    final_reply: dict[str, list[str]] = {}
+    for request in requests:
+        if request.agent != "lead" and not request.output.message.tool_calls:
+            final_reply.setdefault(request.agent, []).append(
+                request.output.completion.strip()
+            )
+    assert {name: len(runs) for name, runs in final_reply.items()} == {
+        "alpha": 2,
+        "beta": 1,
+        "agent-1": 1,
+        "gamma": 1,
+    }
+
+    children = [
+        item
+        for item in _main_agent(replay.events).content
+        if isinstance(item, TimelineSpan)
+    ]
+    results = [(child.name, (child.agent_result or "").strip()) for child in children]
+    assert results == [
+        ("alpha", final_reply["alpha"][0]),
+        ("beta", final_reply["beta"][0]),
+        ("run whoami", final_reply["agent-1"][0]),
+        ("alpha", final_reply["alpha"][1]),
+        ("gamma", final_reply["gamma"][0]),
+    ]
+    assert not any("started subagent" in result for _, result in results)
+
+
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
 async def test_short_root_answer_after_a_long_child_run() -> None:
     """The case the bridge's own thread tracking gets wrong.
 

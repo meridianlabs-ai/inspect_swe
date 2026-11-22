@@ -17,7 +17,7 @@ import pytest
 from inspect_ai.agent import AgentBridgeContext, AgentState
 from inspect_ai.agent._bridge.types import AgentBridge
 from inspect_ai.agent._bridge.util import bridge_generate
-from inspect_ai.event import CompactionEvent, SpanBeginEvent, SpanEndEvent
+from inspect_ai.event import CompactionEvent, SpanBeginEvent, SpanEndEvent, ToolEvent
 from inspect_ai.event._model import ModelEvent
 from inspect_ai.log._transcript import Transcript, init_transcript, transcript
 from inspect_ai.model import (
@@ -41,6 +41,7 @@ from inspect_swe._deepseek_harness._events.detection import (
     is_compaction_request,
     requester_identity,
     settled_children,
+    settlements,
     started_name,
 )
 from inspect_swe._deepseek_harness._events.toolview import tool_view
@@ -61,9 +62,11 @@ from tests.dsh_shapes import (
     notice,
     root_reminder,
     root_task,
+    send_message_call,
     start_rejected,
     started,
     tool_result,
+    unfinished_notice,
 )
 
 TASK = "Check the three services and summarize what is broken."
@@ -90,6 +93,9 @@ class _TranscriptStub:
 
     def span_ends(self) -> list[SpanEndEvent]:
         return [e for e in self.events if isinstance(e, SpanEndEvent)]
+
+    def results(self) -> list[ToolEvent]:
+        return [e for e in self.events if isinstance(e, ToolEvent)]
 
     def open_spans(self) -> list[str]:
         ended = {e.id for e in self.span_ends()}
@@ -246,6 +252,77 @@ def test_settlement_text_inside_another_block_is_not_a_notice() -> None:
         notice("beta", f"alpha's notice read: {line}"),
     )
     assert settled_children(request) == {"beta": 1}
+
+
+def test_settlement_carries_the_childs_closing_message() -> None:
+    request = conversation(
+        root_task(TASK),
+        assistant("waiting"),
+        notice("alpha", "Linux box 7.2", "It is an x86_64 machine."),
+    )
+    [settlement] = settlements(request)
+    assert (settlement.name, settlement.result) == (
+        "alpha",
+        "Linux box 7.2\n\nIt is an x86_64 machine.",
+    )
+
+
+def test_settlements_merged_into_one_user_turn_keep_their_own_text() -> None:
+    """Dsh merges adjacent user-role messages: notices, messages, reminders."""
+    merged = ChatMessageUser(
+        content=[
+            *notice("alpha", "Linux").content,
+            *agent_message("beta", "half way there").content,
+            *notice("beta").content,
+            *notice("gamma", "2026").content,
+            *blocks(root_reminder(replaces=True)),
+        ]
+    )
+    found = settlements(conversation(root_task(TASK), assistant("waiting"), merged))
+    assert [(s.name, s.result) for s in found] == [
+        ("alpha", "Linux"),
+        ("beta", "It left no closing message."),
+        ("gamma", "2026"),
+    ]
+
+
+def test_settlement_without_a_closing_message_uses_the_childs_last_message() -> None:
+    """A child whose last act was a message to its parent: dsh omits the closing text."""
+    omitted = (
+        "It sent you a message just before finishing, so its closing message "
+        "is omitted."
+    )
+    request = conversation(
+        root_task(TASK),
+        assistant("waiting"),
+        agent_message("alpha", "The kernel is 7.2."),
+        ChatMessageUser(
+            content=blocks(
+                "Background subagent alpha finished and will do no further "
+                "work unless you send it more.",
+                omitted,
+            )
+        ),
+    )
+    assert [s.result for s in settlements(request)] == ["The kernel is 7.2."]
+    # no such message in the history (compacted away): the notice's own words
+    assert [s.result for s in settlements([request[0], request[-1]])] == [omitted]
+
+
+def test_settlement_of_an_unfinished_run_says_how_it_ended() -> None:
+    request = conversation(
+        root_task(TASK),
+        assistant("waiting"),
+        unfinished_notice("alpha", "failed before it finished.", "TRANSPORT: reset"),
+        unfinished_notice("beta", "declined the task."),
+    )
+    assert [(s.name, s.result) for s in settlements(request)] == [
+        (
+            "alpha",
+            "Background subagent alpha failed before it finished.\n\nTRANSPORT: reset",
+        ),
+        ("beta", "Background subagent beta declined the task."),
+    ]
 
 
 def test_compaction_request_is_only_the_last_block() -> None:
@@ -491,6 +568,264 @@ def test_message_to_a_running_child_stays_in_its_span(monkeypatch: Any) -> None:
     ]
     assert _generate(consumer, child)[1].span_id == "agent-c1"
     assert len(stub.span_begins()) == 1
+
+
+# ---------------------------------------------------------------------------
+# 4b. each run's answer is recorded against its span
+# ---------------------------------------------------------------------------
+
+
+def test_each_run_gets_its_closing_message_as_its_result(monkeypatch: Any) -> None:
+    """The launch result is an acknowledgement; the answer comes with the notice.
+
+    It is recorded as the run's call (a tool event beside the span, naming it),
+    which is where the timeline takes an agent span's result from.
+    """
+    consumer, stub = _consumer(monkeypatch)
+    root, reply = _root_starts(consumer, delegation_call("c1", ALPHA, "alpha"))
+    child = conversation(child_task(ALPHA, "alpha"))
+    _generate(consumer, child, assistant("Linux"))
+    # nothing to record while the child runs, or from its launch result
+    _generate(consumer, [*root, reply, started("c1", "alpha")], assistant("Waiting."))
+    assert stub.results() == []
+
+    root = [
+        *root,
+        reply,
+        started("c1", "alpha"),
+        assistant("Waiting."),
+        notice("alpha", "Linux"),
+    ]
+    send = assistant("", [send_message_call("m1", "alpha", "Also run `id -u`.")])
+    _generate(consumer, root, send)
+    [first] = stub.results()
+    assert (first.id, first.function, first.result) == ("c1", "subagent", "Linux")
+    assert first.arguments["prompt"] == ALPHA
+    assert (first.agent_span_id, first.span_id) == ("agent-c1", None)
+    assert first.pending is None
+    # recorded before the span closes, and once: the notice stays in history
+    assert stub.events.index(first) < stub.events.index(stub.span_ends()[0])
+
+    # the resumed run answers the send_message call
+    _generate(
+        consumer,
+        [*child, assistant("Linux"), agent_message("lead", "Also run `id -u`.")],
+        assistant("0"),
+    )
+    root = [*root, send, tool_result("m1", "message delivered to agent alpha")]
+    _generate(consumer, root, assistant("Waiting again."))
+    assert len(stub.results()) == 1
+
+    _generate(
+        consumer,
+        [*root, assistant("Waiting again."), notice("alpha", "uid is 0")],
+        assistant("All done."),
+    )
+    [_, second] = stub.results()
+    assert (second.id, second.function, second.result) == (
+        "m1",
+        "send_message",
+        "uid is 0",
+    )
+    assert second.arguments == {"agent": "alpha", "message": "Also run `id -u`."}
+    assert second.agent_span_id == "agent-c1-resumed-1"
+
+
+def test_result_sits_beside_a_nested_childs_span(monkeypatch: Any) -> None:
+    """A child's child: the result goes in the span the nested span sits in."""
+    consumer, stub = _consumer(monkeypatch)
+    _root_starts(consumer, delegation_call("c1", ALPHA, "alpha"))
+    alpha = conversation(child_task(ALPHA, "alpha"))
+    start = assistant("", [delegation_call("c2", "sub", "checker")])
+    _generate(consumer, alpha, start)
+    _generate(consumer, conversation(child_task("sub", "alpha/checker", "alpha")))
+    _generate(
+        consumer,
+        [*alpha, start, started("c2", "alpha/checker"), notice("alpha/checker", "ok")],
+    )
+    [result] = stub.results()
+    assert (result.agent_span_id, result.span_id) == ("agent-c2", "agent-c1")
+    assert result.result == "ok"
+    assert stub.open_spans() == ["agent-c1"]
+
+
+def test_resumed_run_without_a_seen_message_still_gets_a_result(
+    monkeypatch: Any,
+) -> None:
+    """A child a later dsh process resumes: its start and the message are history."""
+    consumer, stub = _consumer(monkeypatch)
+    child = conversation(
+        child_task(ALPHA, "alpha"),
+        assistant("Linux"),
+        agent_message("lead", "Also run `id -u`."),
+    )
+    _, event = _generate(consumer, child, assistant("0"))
+    _generate(
+        consumer,
+        conversation(root_task(TASK), assistant("w"), notice("alpha", "uid is 0")),
+    )
+    [result] = stub.results()
+    assert result.agent_span_id == event.span_id
+    assert (result.function, result.arguments) == ("send_message", {"agent": "alpha"})
+    assert result.result == "uid is 0"
+
+
+def test_run_still_going_at_reset_says_so(monkeypatch: Any) -> None:
+    """Not the launch acknowledgement the timeline would otherwise show."""
+    consumer, stub = _consumer(monkeypatch)
+    _root_starts(consumer, delegation_call("c1", ALPHA, "alpha"))
+    _generate(
+        consumer,
+        conversation(child_task(ALPHA, "alpha")),
+        assistant("", [bash_call("b1", "uname -a")]),
+    )
+    consumer.reset()
+    assert stub.open_spans() == []
+    [result] = stub.results()
+    assert (result.id, result.agent_span_id) == ("c1", "agent-c1")
+    assert result.result == consumer_module.NO_RESULT
+
+
+def test_run_that_finished_unannounced_at_reset_gets_its_answer(
+    monkeypatch: Any,
+) -> None:
+    """The child answered, but dsh exited before the parent heard of it."""
+    consumer, stub = _consumer(monkeypatch)
+    _root_starts(consumer, delegation_call("c1", ALPHA, "alpha"))
+    _generate(consumer, conversation(child_task(ALPHA, "alpha")), assistant("Linux"))
+    consumer.reset()
+    [result] = stub.results()
+    assert (result.id, result.result) == ("c1", "Linux")
+
+
+def test_child_restarted_before_its_parent_saw_the_notice(monkeypatch: Any) -> None:
+    """The parent messages a child that has just finished, unaware of it.
+
+    dsh restarts the child, so the child's own next request shows a new run
+    before the parent's history shows the first one ended. The first run's
+    span closes then, and each notice answers its own run, in order.
+    """
+    consumer, stub = _consumer(monkeypatch)
+    root, reply = _root_starts(consumer, delegation_call("c1", ALPHA, "alpha"))
+    child = conversation(child_task(ALPHA, "alpha"))
+    _generate(consumer, child, assistant("Linux"))  # run 1 ends
+    root = [*root, reply, started("c1", "alpha")]
+    send = assistant(
+        "", [send_message_call("m1", "alpha", "id -u?"), bash_call("b1", "make")]
+    )
+    _generate(consumer, root, send)  # no notice in the parent's history yet
+
+    restart = [*child, assistant("Linux"), agent_message("lead", "id -u?")]
+    _, event = _generate(consumer, restart, assistant("", [bash_call("b2", "id -u")]))
+    assert event.span_id == "agent-c1-resumed-1"
+    assert stub.open_spans() == ["agent-c1-resumed-1"]
+    # the same request again (a retry) is no new restart
+    assert _generate(consumer, restart)[1].span_id == "agent-c1-resumed-1"
+    assert stub.results() == []
+
+    root = [
+        *root,
+        send,
+        tool_result("m1", "message delivered to agent alpha", "send_message"),
+        tool_result("b1", "ok"),
+        notice("alpha", "Linux"),
+    ]
+    _generate(consumer, root, assistant("w"))
+    [first] = stub.results()
+    assert (first.id, first.result, first.agent_span_id) == ("c1", "Linux", "agent-c1")
+    assert stub.open_spans() == ["agent-c1-resumed-1"]
+
+    _generate(consumer, [*root, assistant("w"), notice("alpha", "uid 0")])
+    [_, second] = stub.results()
+    assert (second.id, second.function, second.result, second.agent_span_id) == (
+        "m1",
+        "send_message",
+        "uid 0",
+        "agent-c1-resumed-1",
+    )
+    assert stub.open_spans() == []
+
+
+def test_two_notices_for_one_child_in_one_request(monkeypatch: Any) -> None:
+    """Both runs end while the parent is busy: each notice goes to its own run."""
+    consumer, stub = _consumer(monkeypatch)
+    root, reply = _root_starts(consumer, delegation_call("c1", ALPHA, "alpha"))
+    child = conversation(child_task(ALPHA, "alpha"))
+    _generate(consumer, child, assistant("Linux"))
+    root = [*root, reply, started("c1", "alpha")]
+    send = assistant(
+        "", [send_message_call("m1", "alpha", "id -u?"), bash_call("b1", "sleep 60")]
+    )
+    _generate(consumer, root, send)
+    _generate(
+        consumer,
+        [*child, assistant("Linux"), agent_message("lead", "id -u?")],
+        assistant("uid 0"),
+    )
+    _generate(
+        consumer,
+        [
+            *root,
+            send,
+            tool_result("m1", "message delivered to agent alpha", "send_message"),
+            tool_result("b1", ""),
+            notice("alpha", "Linux"),
+            notice("alpha", "uid 0"),
+        ],
+    )
+    assert [(r.id, r.result, r.agent_span_id) for r in stub.results()] == [
+        ("c1", "Linux", "agent-c1"),
+        ("m1", "uid 0", "agent-c1-resumed-1"),
+    ]
+    assert stub.open_spans() == []
+
+
+def test_message_from_its_own_child_is_no_restart(monkeypatch: Any) -> None:
+    """An agent waiting on a child of its own may answer without tool calls."""
+    consumer, stub = _consumer(monkeypatch)
+    _root_starts(consumer, delegation_call("c1", ALPHA, "alpha"))
+    alpha = conversation(child_task(ALPHA, "alpha"))
+    start = assistant("", [delegation_call("c2", "sub", "checker")])
+    _generate(consumer, alpha, start)
+    alpha = [*alpha, start, started("c2", "alpha/checker")]
+    _generate(consumer, alpha, assistant("Waiting."))
+    alpha = [*alpha, assistant("Waiting.")]
+    for sender in ("alpha/checker", "lead"):
+        request = [*alpha, agent_message(sender, "progress")]
+        assert _generate(consumer, request)[1].span_id == "agent-c1"
+    assert stub.results() == []
+    assert sorted(stub.open_spans()) == ["agent-c1", "agent-c2"]
+
+
+def test_waiting_answer_then_its_childs_notice_and_a_message(
+    monkeypatch: Any,
+) -> None:
+    """Its child's notice and its parent's message reach a waiting agent together.
+
+    The notice closes the child's span before the request is placed, so
+    whether the agent was waiting is decided when it wrote the answer.
+    """
+    consumer, stub = _consumer(monkeypatch)
+    _root_starts(consumer, delegation_call("c1", ALPHA, "alpha"))
+    alpha = conversation(child_task(ALPHA, "alpha"))
+    start = assistant("", [delegation_call("c2", "sub", "checker")])
+    _generate(consumer, alpha, start)
+    alpha = [*alpha, start, started("c2", "alpha/checker")]
+    _generate(consumer, alpha, assistant("Waiting for checker."))
+    _generate(consumer, conversation(child_task("sub", "alpha/checker", "alpha")))
+    request = [
+        *alpha,
+        assistant("Waiting for checker."),
+        ChatMessageUser(
+            content=[
+                *notice("alpha/checker", "ok").content,
+                *agent_message("lead", "also check disk").content,
+            ]
+        ),
+    ]
+    assert _generate(consumer, request)[1].span_id == "agent-c1"
+    assert [(r.id, r.result) for r in stub.results()] == [("c2", "ok")]
+    assert stub.open_spans() == ["agent-c1"]
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +1103,80 @@ def test_compacted_history_keeps_closed_children_closed(monkeypatch: Any) -> Non
     assert stub.open_spans() == ["agent-c1-resumed-1"]
     _generate(consumer, [*compacted, assistant("ok"), notice("alpha", "0")])
     assert stub.open_spans() == []
+
+
+def _alpha_resumed_after_one_run(
+    consumer: DshConsumer,
+) -> list[ChatMessage]:
+    """The state after alpha's first run settled ("Linux") and it was resumed."""
+    root, reply = _root_starts(consumer, delegation_call("c1", ALPHA, "alpha"))
+    child = conversation(child_task(ALPHA, "alpha"))
+    _generate(consumer, child, assistant("Linux"))
+    root = [
+        *root,
+        reply,
+        started("c1", "alpha"),
+        assistant("w"),
+        notice("alpha", "Linux"),
+    ]
+    send = assistant("", [send_message_call("m1", "alpha", "id -u?")])
+    _generate(consumer, root, send)
+    _generate(
+        consumer,
+        [*child, assistant("Linux"), agent_message("lead", "id -u?")],
+        assistant("", [bash_call("b1", "id -u")]),
+    )
+    return [*root, send, tool_result("m1", "delivered", "send_message")]
+
+
+def test_compaction_keeping_only_the_new_notice(monkeypatch: Any) -> None:
+    """The old notice is condensed away and the new one kept: as many as before."""
+    consumer, stub = _consumer(monkeypatch)
+    _alpha_resumed_after_one_run(consumer)
+    assert stub.open_spans() == ["agent-c1-resumed-1"]
+
+    compacted = conversation(
+        checkpoint("## Current Work\n- alpha reported Linux; asked for id -u"),
+        assistant("waiting"),
+        notice("alpha", "uid 0"),
+        ChatMessageUser(content=blocks(root_reminder(replaces=True))),
+    )
+    _generate(consumer, compacted, assistant("done"))
+    assert [(r.id, r.result) for r in stub.results()] == [
+        ("c1", "Linux"),
+        ("m1", "uid 0"),
+    ]
+    assert stub.open_spans() == []
+
+
+def test_notice_seen_only_in_a_compaction_request(monkeypatch: Any) -> None:
+    """The condensed span holds the only copy of a new notice."""
+    consumer, stub = _consumer(monkeypatch)
+    root = _alpha_resumed_after_one_run(consumer)
+    _generate(
+        consumer,
+        [
+            *root,
+            assistant("w"),
+            notice("alpha", "uid 0"),
+            ChatMessageUser(content=COMPACTION_INSTRUCTION),
+        ],
+        assistant("## Current Work"),
+    )
+    assert [(r.id, r.result) for r in stub.results()] == [
+        ("c1", "Linux"),
+        ("m1", "uid 0"),
+    ]
+    assert stub.open_spans() == []
+    # the history after it, without either notice, changes nothing
+    _generate(
+        consumer,
+        conversation(
+            checkpoint("## Current Work\n- alpha said uid 0"),
+            ChatMessageUser(content=blocks(root_reminder(replaces=True))),
+        ),
+    )
+    assert len(stub.results()) == 2
 
 
 # ---------------------------------------------------------------------------

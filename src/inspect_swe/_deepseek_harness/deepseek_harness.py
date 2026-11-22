@@ -1,11 +1,9 @@
 import json
-import re
 import shlex
 from logging import getLogger
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Literal, Sequence
-from urllib.parse import urlsplit
 
 from inspect_ai.agent import (
     Agent,
@@ -59,6 +57,13 @@ from .._util.identity import refuse_sandbox_identity
 from .._util.sandbox import resolve_agent_cwd
 from ._events.consumer import DshConsumer
 from .agentbinary import deepseek_harness_binary_source
+from .mcp import (
+    host_mcp_server,
+    host_mcp_tools,
+    is_host_side,
+    validate_mcp_server_name,
+    validate_sandbox_mcp_server,
+)
 from .reasoning import ReasoningRestorer
 
 # one task per run, same prompt and tools as dsh's other surfaces
@@ -76,9 +81,6 @@ DSH_SEARCH_MODEL = "deepseek-v4-flash"
 DSH_DEFAULT_CONTEXT_WINDOW = 1_000_000
 
 logger = getLogger(__name__)
-
-# server names dsh's mcp-client accepts
-_MCP_SERVER_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 
 
 @agent
@@ -125,12 +127,14 @@ def deepseek_harness(
         description: Agent description
         system_prompt: Additional system prompt to append
         skills: Additional [skills](https://inspect.aisi.org.uk/tools-standard.html#sec-skill) to make available to the agent.
-        mcp_servers: MCP servers to make available to the agent. They run in,
-            or are reached from, the sandbox, where dsh's own tools can read
-            anything dsh can, so everything in a server's configuration is
-            sandbox-exposed (its URL, command, arguments and `env`). An HTTP
-            server with `headers`, or with a user or password in its URL, is
-            rejected: use `bridged_tools` for a server that needs credentials.
+        mcp_servers: MCP servers to make available to the agent. dsh's own
+            tools can read anything dsh can, so no credential is placed in
+            the sandbox: an HTTP server with `headers`, or with a user,
+            password or query string in its URL, is connected from the
+            Inspect host and its tools are served through the model bridge;
+            a stdio server whose `env` or `args` look like they carry a
+            credential is rejected. Everything else in the configuration of a
+            server wired into the sandbox is visible to the model.
         bridged_tools: Host-side Inspect tools to expose to the agent via MCP.
             Each BridgedToolsSpec creates an MCP server; plain Tools are
             grouped into one MCP server named `tools`.
@@ -170,13 +174,26 @@ def deepseek_harness(
     resolved_skills = read_skills(skills) if skills is not None else None
     attempts = AgentAttempts(attempts) if isinstance(attempts, int) else attempts
 
-    for server in mcp_servers or []:
-        _validate_mcp_server(server)
+    # a server that carries a credential is connected from the host; the
+    # others are wired into the sandbox, where the model can read everything
+    # about them (see mcp.py)
+    sandbox_mcp_servers = [s for s in mcp_servers or [] if not is_host_side(s)]
+    for server in sandbox_mcp_servers:
+        validate_sandbox_mcp_server(server)
+    host_mcp_servers = [
+        host_mcp_server(s)
+        for s in mcp_servers or []
+        if isinstance(s, MCPServerConfigHTTP) and is_host_side(s)
+    ]
 
     # resolve plain Tools into specs once, so bad input fails at construction
-    bridged_tools_specs = resolve_bridged_tools(bridged_tools)
-    for spec in bridged_tools_specs or []:
-        _validate_mcp_server_name(spec.name)
+    bridged_tools_specs = resolve_bridged_tools(bridged_tools) or []
+    for spec in bridged_tools_specs:
+        validate_mcp_server_name(spec.name)
+
+    _refuse_duplicate_names(
+        [s.name for s in mcp_servers or []] + [s.name for s in bridged_tools_specs]
+    )
 
     async def execute(state: AgentState) -> AgentState:
         refuse_sandbox_identity("deepseek_harness()", sandbox)
@@ -212,20 +229,23 @@ def deepseek_harness(
         # of the dsh agent that made it. See _events/consumer.py.
         consumer = DshConsumer()
 
-        async with sandbox_agent_bridge(
-            state,
-            model=bridge_model,
-            model_aliases=aliases,
-            filter=build_dsh_filter(filter, consumer),
-            sandbox=sandbox,
-            retry_refusals=retry_refusals,
-            port=port,
-            bridged_tools=bridged_tools_specs,
-            # serves the model request behind dsh's web_search tool
-            # (providers with internal search)
-            web_search=True,
-            model_event_sink=consumer,
-        ) as bridge:
+        async with (
+            host_mcp_tools(host_mcp_servers) as host_specs,
+            sandbox_agent_bridge(
+                state,
+                model=bridge_model,
+                model_aliases=aliases,
+                filter=build_dsh_filter(filter, consumer),
+                sandbox=sandbox,
+                retry_refusals=retry_refusals,
+                port=port,
+                bridged_tools=[*bridged_tools_specs, *host_specs] or None,
+                # serves the model request behind dsh's web_search tool
+                # (providers with internal search)
+                web_search=True,
+                model_event_sink=consumer,
+            ) as bridge,
+        ):
             # resolve sandbox
             sbox = sandbox_env(sandbox)
             agent_cwd = await resolve_agent_cwd(sbox, user, cwd)
@@ -235,8 +255,10 @@ def deepseek_harness(
                 deepseek_harness_binary_source(), version, user, sbox
             )
 
-            # combine static mcp configs with bridged tools' mcp servers
-            all_mcp_servers = list(mcp_servers or []) + list(bridge.mcp_server_configs)
+            # the servers dsh connects to itself: the caller's sandbox-side
+            # ones, and the bridge's endpoints (bridged tools, and the tools
+            # of servers connected from the host)
+            all_mcp_servers = sandbox_mcp_servers + list(bridge.mcp_server_configs)
 
             # detect sandbox home directory
             home_result = await sbox.exec(["sh", "-c", "echo $HOME"], user=user)
@@ -250,8 +272,8 @@ def deepseek_harness(
 
             # per-run profile patch (model route, telemetry, mcp servers).
             # dsh's tools run as dsh's own user, so nothing dsh can read is
-            # hidden from the model: the patch holds no credential (see
-            # `_validate_mcp_server`)
+            # hidden from the model: no credential goes into the patch (see
+            # mcp.py)
             patch_file = f"{dsh_home}/inspect.patch.yml"
             await sbox.write_file(
                 patch_file,
@@ -506,49 +528,15 @@ def _reasoning_unset(model: Model, config: GenerateConfig) -> bool:
     )
 
 
-def _validate_mcp_server_name(name: str) -> None:
-    if not _MCP_SERVER_NAME_RE.fullmatch(name):
+def _refuse_duplicate_names(names: Sequence[str]) -> None:
+    # every MCP server reaches dsh under its name, wherever it is connected
+    # from, and dsh loads only the first of two with the same one
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
         raise ValueError(
-            f"MCP server {name!r}: deepseek_harness requires server names "
-            "of 1-32 letters, digits, '_' or '-'."
+            f"MCP server names must be unique across mcp_servers and "
+            f"bridged_tools: {', '.join(duplicates)}."
         )
-
-
-def _validate_mcp_server(server: MCPServerConfig) -> None:
-    _validate_mcp_server_name(server.name)
-    if server.tools != "all":
-        raise ValueError(
-            f"MCP server {server.name!r}: deepseek_harness does not support "
-            "per-server tool filtering (dsh exposes every tool a server lists)."
-        )
-    if isinstance(server, MCPServerConfigHTTP) and server.type != "http":
-        raise ValueError(
-            f"MCP server {server.name!r}: deepseek_harness supports only stdio "
-            "and Streamable HTTP MCP servers (not SSE)."
-        )
-    # dsh's bash tool runs as dsh's own user, so it can read whatever dsh
-    # reads its MCP configuration from (a file, an inherited descriptor
-    # through /proc/<pid>/fd, the environment). A header sent to dsh would be
-    # a credential the model can print.
-    if isinstance(server, MCPServerConfigHTTP) and (
-        server.headers or _url_has_credentials(server.url)
-    ):
-        raise ValueError(
-            f"MCP server {server.name!r}: deepseek_harness does not accept MCP "
-            "servers with headers or with a user or password in their URL. "
-            "dsh's own tools can read anything dsh can, so a credential (e.g. "
-            "an Authorization token) placed in the sandbox would be readable "
-            "by the model. Connect to the server on the host and pass its "
-            "tools with bridged_tools instead."
-        )
-
-
-def _url_has_credentials(url: str) -> bool:
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return False
-    return bool(parts.username or parts.password)
 
 
 def _resolve_context_window(*, model: Model, context_window: int | None) -> int | None:
@@ -653,8 +641,8 @@ def _mcp_row(server: MCPServerConfig) -> dict[str, Any]:
         if server.cwd is not None:
             config["cwd"] = str(server.cwd)
     elif isinstance(server, MCPServerConfigHTTP):
-        # no headers: `_validate_mcp_server` rejects a caller's, and the
-        # bridge's own endpoints have none
+        # only a server without credentials is wired in here (the others
+        # reach dsh as bridge endpoints, which have none)
         config = {
             "serverName": server.name,
             "transport": "streamable-http",

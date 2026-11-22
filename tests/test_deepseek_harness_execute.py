@@ -49,6 +49,7 @@ from tests.dsh_shapes import (
 
 # the package re-exports the agent function under the module's name
 dsh_module = importlib.import_module("inspect_swe._deepseek_harness.deepseek_harness")
+mcp_module = importlib.import_module("inspect_swe._deepseek_harness.mcp")
 
 # embedded double quotes, blank lines, a leading dash, no trailing newline
 PROMPT = '--help me write the opposite of the word "left".\n\nAnswer with one word'
@@ -267,34 +268,357 @@ def test_system_messages_are_sent_once_and_the_session_is_resumed(run: Run) -> N
 # ---------------------------------------------------------------------------
 
 
+@tool
+def lookup() -> Tool:
+    async def execute(query: str) -> str:
+        """Look something up.
+
+        Args:
+            query: What to look up.
+        """
+        return query
+
+    return execute
+
+
+@tool
+def purge() -> Tool:
+    async def execute() -> str:
+        """Delete everything."""
+        return "gone"
+
+    return execute
+
+
+class FakeHostServer:
+    """Stands in for inspect_ai's host-side MCP client (the `mcp` package)."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.created_with: dict[str, Any] = {}
+        self.entered = 0
+        self.exited = 0
+
+    async def __aenter__(self) -> "FakeHostServer":
+        self.entered += 1
+        if self.error is not None:
+            raise self.error
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        self.exited += 1
+
+    async def tools(self) -> list[Tool]:
+        return [lookup(), purge()]
+
+
+def _host_servers(
+    monkeypatch: pytest.MonkeyPatch, error: Exception | None = None
+) -> dict[str, FakeHostServer]:
+    """Replace the host-side client factories; servers created, by transport."""
+    created: dict[str, FakeHostServer] = {}
+
+    def factory(transport: str) -> Callable[..., FakeHostServer]:
+        def create(**kwargs: Any) -> FakeHostServer:
+            server = FakeHostServer(error)
+            server.created_with = kwargs
+            created[transport] = server
+            return server
+
+        return create
+
+    monkeypatch.setattr(mcp_module, "mcp_server_http", factory("http"))
+    monkeypatch.setattr(mcp_module, "mcp_server_sse", factory("sse"))
+    return created
+
+
+SECRET = "sk-live-secret-0123456789"
+
+# every way a credential rides in an HTTP MCP server's configuration
+CREDENTIALED_SERVERS = {
+    "headers": MCPServerConfigHTTP(
+        name="vault",
+        type="http",
+        url="https://mcp.example.com/mcp",
+        headers={"Authorization": f"Bearer {SECRET}"},
+    ),
+    "url-user-and-password": MCPServerConfigHTTP(
+        name="vault", type="http", url=f"https://user:{SECRET}@mcp.example.com/mcp"
+    ),
+    "url-query-token": MCPServerConfigHTTP(
+        name="vault", type="http", url=f"https://mcp.example.com/mcp?api_key={SECRET}"
+    ),
+    "url-query-any-name": MCPServerConfigHTTP(
+        name="vault", type="http", url=f"https://mcp.example.com/mcp?x={SECRET}"
+    ),
+}
+
+
+def _placed_in_sandbox(run: Run) -> str:
+    """Everything the agent wrote into, or ran in, the sandbox."""
+    call = run.sbox.exec_remote_calls[-1]
+    return json.dumps(
+        {
+            "env": call["options"].env,
+            "argv": call["cmd"],
+            "files": run.sbox.written,
+            "execs": run.sbox.execs,
+        }
+    )
+
+
+@pytest.mark.parametrize("form", sorted(CREDENTIALED_SERVERS))
+def test_credentialed_http_server_is_connected_from_the_host(
+    run: Run, monkeypatch: pytest.MonkeyPatch, form: str
+) -> None:
+    """Dsh's bash tool can read anything dsh can, including /proc/<pid>/fd.
+
+    A credential handed to dsh is one the model can print, however it is
+    delivered. So a server whose configuration carries one is never given to
+    dsh: the host connects to it and dsh gets its tools through the bridge.
+    """
+    created = _host_servers(monkeypatch)
+    server = CREDENTIALED_SERVERS[form]
+    run([ChatMessageUser(content=PROMPT)], mcp_servers=[server])
+
+    # the host-side client got the configuration as given
+    host = created["http"]
+    assert host.created_with == {
+        "name": "vault",
+        "url": server.url,
+        "headers": server.headers,
+    }
+    # one connection for the run, closed after it
+    assert (host.entered, host.exited) == (1, 1)
+
+    # dsh sees a bridge endpoint with the server's name and tools
+    [spec] = run.bridges[-1].kwargs["bridged_tools"]
+    assert spec.name == "vault"
+    assert [ToolDef(t).name for t in spec.tools] == ["lookup", "purge"]
+    [row] = next(row["insert"] for row in run.patch if "insert" in row)
+    assert row["config"] == {
+        "serverName": "vault",
+        "transport": "streamable-http",
+        "url": "http://localhost:3201/mcp/vault",
+        "failOnStartupError": True,
+    }
+
+    # and nothing of the server's own configuration is in the sandbox
+    placed = _placed_in_sandbox(run)
+    assert SECRET not in placed
+    assert "mcp.example.com" not in placed
+    assert "authorization" not in placed.lower()
+
+
+def test_host_side_server_keeps_its_allowlist_and_transport(
+    run: Run, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inspect's client filters tools and speaks SSE, which dsh's own can't."""
+    created = _host_servers(monkeypatch)
+    run(
+        [ChatMessageUser(content=PROMPT)],
+        mcp_servers=[
+            MCPServerConfigHTTP(
+                name="vault",
+                type="sse",
+                url="https://mcp.example.com/sse",
+                headers={"X-Api-Key": SECRET},
+                tools=["look*"],
+            )
+        ],
+    )
+    assert list(created) == ["sse"]
+    [spec] = run.bridges[-1].kwargs["bridged_tools"]
+    assert [ToolDef(t).name for t in spec.tools] == ["lookup"]
+
+
+def test_host_side_connection_failure_says_where_it_was_tried(
+    run: Run, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A server only the sandbox can reach can't be connected from the host."""
+    created = _host_servers(monkeypatch, error=ConnectionError("no route to host"))
+    with pytest.raises(RuntimeError, match="from the Inspect host") as error:
+        run(
+            [ChatMessageUser(content=PROMPT)],
+            mcp_servers=[CREDENTIALED_SERVERS["headers"]],
+        )
+    assert "no route to host" in str(error.value)
+    assert "headers" in str(error.value)
+    assert SECRET not in str(error.value)
+    assert created["http"].entered == 1
+    # nothing was launched
+    assert run.sbox.exec_remote_calls == []
+
+
+@pytest.mark.parametrize("form", ["url-user-and-password", "url-query-token"])
+@pytest.mark.parametrize("grouped", [False, True], ids=["plain", "in-a-group"])
+def test_host_side_connection_failure_keeps_url_credentials_out(
+    run: Run, monkeypatch: pytest.MonkeyPatch, form: str, grouped: bool
+) -> None:
+    """An HTTP client's error names the URL it requested, credentials and all."""
+    server = CREDENTIALED_SERVERS[form]
+    cause: Exception = RuntimeError(
+        f"Client error '401 Unauthorized' for url '{server.url}'"
+    )
+    if grouped:
+        cause = ExceptionGroup("unhandled errors in a TaskGroup", [cause])
+    _host_servers(monkeypatch, error=cause)
+    with pytest.raises(RuntimeError, match="401 Unauthorized") as error:
+        run([ChatMessageUser(content=PROMPT)], mcp_servers=[server])
+    assert SECRET not in str(error.value)
+    assert "mcp.example.com" in str(error.value)
+    # and not in the traceback the eval log keeps, through the error's cause
+    assert error.value.__cause__ is None and error.value.__suppress_context__
+
+
 @pytest.mark.parametrize(
     "server",
     [
-        MCPServerConfigHTTP(
-            name="secrets",
-            type="http",
-            url="https://mcp.example.com/mcp",
-            headers={"Authorization": "Bearer sk-live-secret"},
+        MCPServerConfigStdio(
+            name="github", command="gh-mcp", env={"GITHUB_TOKEN": SECRET}
         ),
-        MCPServerConfigHTTP(
-            name="secrets",
-            type="http",
-            url="https://user:sk-live-secret@mcp.example.com/mcp",
+        MCPServerConfigStdio(name="github", command="gh-mcp", env={"FOO": SECRET}),
+        MCPServerConfigStdio(
+            name="github", command="gh-mcp", args=["--api-key", SECRET]
         ),
-        MCPServerConfigHTTP(
-            name="secrets", type="http", url="https://sk-live-secret@mcp.example.com/"
+        MCPServerConfigStdio(
+            name="github", command="gh-mcp", args=[f"--token={SECRET}"]
+        ),
+        MCPServerConfigStdio(
+            name="github", command="env", args=[f"GITHUB_TOKEN={SECRET}", "gh-mcp"]
+        ),
+        MCPServerConfigStdio(
+            name="github",
+            command="mcp-remote",
+            args=["https://x/mcp", "--header", f"Authorization: Bearer {SECRET}"],
+        ),
+        MCPServerConfigStdio(name="github", command="gh-mcp", args=[SECRET]),
+    ],
+    ids=[
+        "env-named-token",
+        "env-key-shaped-value",
+        "flag-then-value",
+        "flag-with-value",
+        "assignment-argument",
+        "header-argument",
+        "key-shaped-argument",
+    ],
+)
+def test_stdio_server_credentials_are_refused(server: MCPServerConfigStdio) -> None:
+    """A stdio server runs in the sandbox: its env and command line are readable there.
+
+    There is nowhere in the sandbox to hide a credential for it, so a server
+    configured with one is refused before anything is written.
+    """
+    with pytest.raises(ValueError, match="does not pass credentials") as error:
+        dsh_module.deepseek_harness(mcp_servers=[server])
+    assert SECRET not in str(error.value)
+
+
+PLAIN_SECRET = "hunter2hunter2"
+
+
+@pytest.mark.parametrize(
+    ("server", "named"),
+    [
+        (
+            MCPServerConfigStdio(
+                name="db", command="pg-mcp", env={"PGPASSWORD": PLAIN_SECRET}
+            ),
+            "env PGPASSWORD",
+        ),
+        (
+            MCPServerConfigStdio(
+                name="db", command="mysql-mcp", env={"MYSQL_PWD": PLAIN_SECRET}
+            ),
+            "env MYSQL_PWD",
+        ),
+        (
+            MCPServerConfigStdio(
+                name="db", command="ngrok-mcp", env={"AUTHTOKEN": PLAIN_SECRET}
+            ),
+            "env AUTHTOKEN",
+        ),
+        (
+            MCPServerConfigStdio(
+                name="gh",
+                command="docker",
+                args=["run", f"--env=GITHUB_TOKEN={PLAIN_SECRET}", "gh-mcp"],
+            ),
+            "argument --env",
+        ),
+        (
+            MCPServerConfigStdio(
+                name="remote",
+                command="mcp-remote",
+                args=[f"https://mcp.example.com/mcp?api_key={PLAIN_SECRET}"],
+            ),
+            "an argument that looks like a credential",
+        ),
+        (
+            MCPServerConfigStdio(
+                name="remote",
+                command="curl-mcp",
+                args=[f"-HAuthorization: Bearer {PLAIN_SECRET}"],
+            ),
+            "argument -H",
+        ),
+        (
+            MCPServerConfigStdio(
+                name="remote", command="srv", args=[f"--token:{PLAIN_SECRET}"]
+            ),
+            "argument --token",
         ),
     ],
-    ids=["headers", "url-user-and-password", "url-user"],
+    ids=[
+        "run-together-password",
+        "pwd-suffix",
+        "run-together-token",
+        "assignment-in-a-flag",
+        "url-query-argument",
+        "short-flag-with-header",
+        "flag-with-colon",
+    ],
 )
-def test_mcp_credentials_never_enter_the_sandbox(server: MCPServerConfigHTTP) -> None:
-    """Dsh's bash tool can read anything dsh can, including /proc/<pid>/fd.
-
-    A credential given to dsh is therefore one the model can print, however
-    it is delivered: the agent refuses it instead, before anything runs.
-    """
-    with pytest.raises(ValueError, match="does not accept MCP servers with headers"):
+def test_stdio_credentials_under_other_names_and_forms(
+    server: MCPServerConfigStdio, named: str
+) -> None:
+    """Values that aren't key-shaped, so found by name or form, never echoed."""
+    with pytest.raises(ValueError, match="does not pass credentials") as error:
         dsh_module.deepseek_harness(mcp_servers=[server])
+    assert f"({named})" in str(error.value)
+    assert PLAIN_SECRET not in str(error.value)
+
+
+def test_stdio_settings_that_only_look_like_credentials_pass() -> None:
+    dsh_module.deepseek_harness(
+        mcp_servers=[
+            MCPServerConfigStdio(
+                name="files",
+                command="files-mcp",
+                args=["--root", "/srv", "https://docs.example.com/mcp?project=acme"],
+                env={"PWD": "/srv", "MAX_TOKENS": "1000", "AUTHOR": "me"},
+            )
+        ]
+    )
+
+
+def test_mcp_server_names_must_be_unique_wherever_they_are_served(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _host_servers(monkeypatch)
+    with pytest.raises(ValueError, match="must be unique.*: vault"):
+        dsh_module.deepseek_harness(
+            mcp_servers=[
+                CREDENTIALED_SERVERS["headers"],
+                MCPServerConfigStdio(name="vault", command="vault-mcp"),
+            ]
+        )
+    with pytest.raises(ValueError, match="must be unique.*: tools"):
+        dsh_module.deepseek_harness(
+            mcp_servers=[MCPServerConfigStdio(name="tools", command="srv")],
+            bridged_tools=[lookup()],
+        )
 
 
 def test_nothing_placed_in_the_sandbox_carries_a_credential(
@@ -304,23 +628,16 @@ def test_nothing_placed_in_the_sandbox_carries_a_credential(
     for name in ("DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.setenv(name, "sk-live-host-secret")
 
-    @tool
-    def lookup() -> Tool:
-        async def execute(query: str) -> str:
-            """Look something up.
-
-            Args:
-                query: What to look up.
-            """
-            return query
-
-        return execute
-
     run(
         [ChatMessageUser(content=PROMPT)],
         mcp_servers=[
             MCPServerConfigHTTP(name="docs", type="http", url="http://docs:8080/mcp"),
-            MCPServerConfigStdio(name="memory", command="memory-server"),
+            MCPServerConfigStdio(
+                name="memory",
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-memory"],
+                env={"MEMORY_FILE_PATH": "/tmp/memory.json", "MAX_TOKENS": "1000"},
+            ),
         ],
         bridged_tools=[lookup()],
     )

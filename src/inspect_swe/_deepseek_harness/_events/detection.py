@@ -14,7 +14,10 @@ against upstream):
 - **Delegation.** `subagent` and `subagent_fork` start a child and return
   `started subagent <name>` at once; the child's answer comes back later as a
   user-role settlement notice whose first block is
-  `Background subagent <name> finished ...` (`continuation-messages.ts`).
+  `Background subagent <name> finished ...`, followed by
+  `Its closing message:` and the child's final text blocks
+  (`continuation-messages.ts`). `send_message` gives a child more work; the
+  recipient sees `Agent <sender> sent a message: ` and the message blocks.
 - **Compaction.** dsh's summarizer request is the span of conversation being
   condensed followed by one final user block opening with
   `COMPACTION_INSTRUCTION_PREAMBLE` (`compaction-basic/src/summarizer.ts`).
@@ -35,9 +38,11 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 from inspect_ai.model import (
     ChatMessage,
+    ChatMessageAssistant,
     ChatMessageTool,
     ChatMessageUser,
     ContentText,
@@ -69,12 +74,14 @@ _CHILD_IDENTITY_RE = re.compile(
 
 _STARTED_RE = re.compile(r"started subagent (\S+)")
 
+SEND_MESSAGE_TOOL = "send_message"
+
 # every ending `settlementSummary` writes: a notice means the child's run is
-# over however it ended
+# over however it ended. The first two are a run that completed.
 _SETTLED_RE = re.compile(
     r"Background subagent (\S+) (?:"
-    r"finished and will do no further work unless you send it more\."
-    r"|finished\. It cannot receive follow-up messages\."
+    r"(?P<completed>finished and will do no further work unless you send it more\."
+    r"|finished\. It cannot receive follow-up messages\.)"
     r"|was stopped before it finished\."
     r"|ran out of room before it finished\."
     r"|declined the task\."
@@ -82,6 +89,10 @@ _SETTLED_RE = re.compile(
     r"|ended abnormally \(.*\) before it finished\."
     r")"
 )
+
+_CLOSING_MESSAGE = "Its closing message:"
+_CLOSING_OMITTED_PREFIX = "It sent you a message just before finishing"
+_AGENT_MESSAGE_RE = re.compile(r"Agent (\S+) sent a message:")
 
 COMPACTION_INSTRUCTION_PREAMBLE = (
     "You are now acting as a compaction engine for this AI coding assistant."
@@ -115,6 +126,20 @@ class Delegation:
     """The call's `name` argument; dsh picks `agent-N` when it is omitted."""
     prompt: str
     description: str | None
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class Settlement:
+    """A settlement notice: one run of a child, over."""
+
+    name: str
+    """The child's name in dsh's subagent tree."""
+    result: str
+    """What the run produced, as its parent was told: the child's closing
+    message (or, when dsh left that out because the child had just messaged
+    its parent, that message). Never empty: a run that left nothing, or
+    didn't complete, is described by the notice's own sentences."""
 
 
 def _text_blocks(message: ChatMessageUser) -> list[str]:
@@ -196,6 +221,7 @@ def find_delegations(tool_calls: list[ToolCall] | None) -> list[Delegation]:
                     if isinstance(description, str) and description
                     else None
                 ),
+                arguments=dict(arguments),
             )
         )
     return found
@@ -213,21 +239,121 @@ def started_name(message: ChatMessageTool) -> str | None:
     return match.group(1) if match is not None else None
 
 
-def settled_children(messages: list[ChatMessage]) -> Counter[str]:
-    """How many settlement notices a request carries, per child name.
+def _starts_harness_text(block: str) -> bool:
+    """Whether a block opens text of dsh's own, ending whatever came before it."""
+    stripped = block.strip()
+    return (
+        _SETTLED_RE.fullmatch(stripped) is not None
+        or _AGENT_MESSAGE_RE.fullmatch(stripped) is not None
+        or block.startswith("<system-reminder>")
+        or block.startswith(COMPACTION_INSTRUCTION_PREAMBLE)
+    )
+
+
+def settlements(messages: list[ChatMessage]) -> list[Settlement]:
+    """The settlement notices a request carries, in order.
 
     A notice is delivered to the child's direct parent and stays in its
-    history, so only a count above the last one seen is a new settlement.
+    history until compaction cuts it, so the same notice turns up in request
+    after request (the consumer takes each once). dsh merges adjacent user-role messages, so a notice's blocks
+    run up to the next block of dsh's own (another notice, a message from an
+    agent, a session reminder, the compaction instruction) or the end of the
+    user message.
     """
-    settled: Counter[str] = Counter()
+    found: list[Settlement] = []
+    # sender → its latest message to the requester, for a notice that omits
+    # the closing message because the child had just sent one
+    last_message: dict[str, str] = {}
     for message in messages:
         if not isinstance(message, ChatMessageUser):
             continue
+        blocks = _text_blocks(message)
+        index = 0
+        while index < len(blocks):
+            header = blocks[index].strip()
+            index += 1
+            settled = _SETTLED_RE.fullmatch(header)
+            sent = _AGENT_MESSAGE_RE.fullmatch(header)
+            if settled is None and sent is None:
+                continue
+            body: list[str] = []
+            while index < len(blocks) and not _starts_harness_text(blocks[index]):
+                body.append(blocks[index])
+                index += 1
+            if sent is not None:
+                last_message[sent.group(1)] = "\n\n".join(body)
+                continue
+            assert settled is not None
+            name = settled.group(1)
+            if body[:1] == [_CLOSING_MESSAGE]:
+                body = body[1:]
+            elif body and body[0].startswith(_CLOSING_OMITTED_PREFIX):
+                body = [last_message.get(name) or body[0], *body[1:]]
+            result = "\n\n".join(body)
+            if settled.group("completed") is None:
+                # stopped, failed, declined, out of room: say so first
+                result = f"{header}\n\n{result}" if result else header
+            found.append(Settlement(name=name, result=result or header))
+    return found
+
+
+@dataclass(frozen=True)
+class Restart:
+    """A child's request that is the first of a new run."""
+
+    closing: str
+    """The final answer its previous run ended with."""
+    key: tuple[int, str]
+    """Where the new run begins in the child's history, so a repeat of the
+    same request isn't taken for another restart."""
+
+
+def restarted(messages: list[ChatMessage], parent: str | None) -> Restart | None:
+    """Whether a child's request begins a new run, after its last one ended.
+
+    A run ends with an answer that calls no tools. dsh restarts a finished
+    child when it is sent a message, which arrives as a user turn opening
+    with `Agent <sender> sent a message:` straight after that answer. Only a
+    message from the child's parent counts here: an agent waiting on children
+    of its own can also write an answer without tool calls and then hear from
+    one of them, with its run still going.
+    """
+    if parent is None:
+        return None
+    for index in range(len(messages) - 1, -1, -1):
+        answer = messages[index]
+        if isinstance(answer, ChatMessageAssistant):
+            break
+    else:
+        return None
+    if answer.tool_calls:
+        return None
+    restart = False
+    for message in messages[index + 1 :]:
+        if not isinstance(message, ChatMessageUser):
+            continue
         for block in _text_blocks(message):
-            match = _SETTLED_RE.fullmatch(block.strip())
-            if match is not None:
-                settled[match.group(1)] += 1
-    return settled
+            if _SETTLED_RE.fullmatch(block.strip()) is not None:
+                # one of its own children finished: it was waiting on them
+                return None
+            sent = _AGENT_MESSAGE_RE.fullmatch(block.strip())
+            restart = restart or (sent is not None and sent.group(1) == parent)
+    return Restart(closing=answer.text, key=(index, answer.text)) if restart else None
+
+
+def settled_children(messages: list[ChatMessage]) -> Counter[str]:
+    """How many settlement notices a request carries, per child name."""
+    return Counter(settlement.name for settlement in settlements(messages))
+
+
+def find_messages(tool_calls: list[ToolCall] | None) -> list[ToolCall]:
+    """The `send_message` calls in an assistant message that name a recipient."""
+    return [
+        call
+        for call in tool_calls or []
+        if call.function == SEND_MESSAGE_TOOL
+        and isinstance((call.arguments or {}).get("agent"), str)
+    ]
 
 
 def is_compaction_request(messages: list[ChatMessage]) -> bool:
