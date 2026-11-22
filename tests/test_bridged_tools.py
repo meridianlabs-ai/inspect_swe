@@ -18,6 +18,7 @@ from inspect_swe import codex_cli
 
 from tests.conftest import (
     run_example,
+    skip_if_github_rate_limited,
     skip_if_no_anthropic,
     skip_if_no_docker,
     skip_if_no_google,
@@ -104,6 +105,7 @@ def _run_codex_code_mode(
         sandbox="docker",
     )
     log = eval(task, model="mockllm/model", limit=1, time_limit=300)[0]
+    skip_if_github_rate_limited(log.error.message if log.error else None)
     return log, capture
 
 

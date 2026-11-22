@@ -15,6 +15,8 @@ from inspect_swe import (
 from inspect_swe._util.download import download_file
 from inspect_swe._util.sandbox import SandboxPlatform
 
+from tests.conftest import skip_if_github_rate_limited
+
 
 @pytest.mark.slow
 def test_claude_code_binary_download() -> None:
@@ -43,7 +45,11 @@ def test_codex_cli_binary_download() -> None:
     - Checksum verification passes (implicit - raises on failure)
     - Binary is cached locally
     """
-    download_agent_binary("codex_cli", "stable", "linux-x64")
+    try:
+        download_agent_binary("codex_cli", "stable", "linux-x64")
+    except httpx.HTTPStatusError as ex:
+        skip_if_github_rate_limited(str(ex))
+        raise
 
     cached = cached_agent_binaries("codex_cli")
     assert len(cached) >= 1

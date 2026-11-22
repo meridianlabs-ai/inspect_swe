@@ -339,6 +339,18 @@ def assert_eval_completed(log: EvalLog) -> list[EvalSample]:
     return log.samples
 
 
+# inspect_swe asks api.github.com for Codex and OpenCode releases, with a token
+# only if GITHUB_TOKEN or GH_TOKEN is set; unauthenticated calls are limited to
+# 60 per hour per IP, which a shared runner can use up
+_GITHUB_RATE_LIMIT = "'403 rate limit exceeded' for url 'https://api.github.com/"
+
+
+def skip_if_github_rate_limited(message: str | None) -> None:
+    """Skip the test if `message` (an error message) is a GitHub API rate limit."""
+    if message and _GITHUB_RATE_LIMIT in message:
+        pytest.skip(f"GitHub API rate limit: {message}")
+
+
 # --- Wheels cache utilities ---
 
 

@@ -15,7 +15,7 @@ from inspect_swe._opencode import agentbinary
 from inspect_swe._opencode.agentbinary import ensure_opencode_setup
 from inspect_swe._util.sandbox import SandboxPlatform
 
-from tests.conftest import skip_if_no_docker
+from tests.conftest import skip_if_github_rate_limited, skip_if_no_docker
 
 # mirrors the real anomalyco/opencode release shape: every x64 platform ships
 # both an AVX2-optimized default build and a "-baseline" build without it;
@@ -305,6 +305,7 @@ def test_install_opencode_in_docker_sandbox() -> None:
 
     assert len(logs) == 1
     log = logs[0]
+    skip_if_github_rate_limited(log.error.message if log.error else None)
     assert log.status == "success", f"Task failed: {log.error}"
     assert log.samples and log.samples[0].scores
 

@@ -57,7 +57,7 @@ from inspect_swe._opencode.opencode import (
 )
 from inspect_swe._util.agentcontext import ModelFilter
 
-from tests.conftest import skip_if_no_docker
+from tests.conftest import skip_if_github_rate_limited, skip_if_no_docker
 
 # the package re-exports the `opencode` agent *function* under the same name
 # as the module, so reach the module itself for monkeypatching/logger access
@@ -666,5 +666,6 @@ def test_default_models_are_accepted_by_current_opencode() -> None:
     )
     log = eval(task, model="mockllm/model", limit=1, time_limit=300)[0]
 
+    skip_if_github_rate_limited(log.error.message if log.error else None)
     assert log.status == "success", log.error
     assert "subagent" in capture.kinds, capture.kinds
