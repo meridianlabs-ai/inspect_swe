@@ -40,6 +40,7 @@ from inspect_swe import codex_cli
 from inspect_swe._codex_cli.agentbinary import codex_version_models_catalog
 
 from tests.conftest import (
+    skip_if_github_rate_limited,
     skip_if_no_anthropic,
     skip_if_no_docker,
     skip_if_no_openai,
@@ -109,6 +110,7 @@ def _run_codex_log(
         sandbox=("docker", _DOCKERFILE),
     )
     log = eval(task, model=model, limit=1)[0]
+    skip_if_github_rate_limited(log.error.message if log.error else None)
     return log, capture
 
 
