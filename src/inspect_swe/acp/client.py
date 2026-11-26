@@ -14,10 +14,8 @@ from acp.client.connection import ClientSideConnection
 from acp.interfaces import Client
 from acp.schema import (
     AllowedOutcome,
-    ConnectMcpResponse,
     CreateElicitationResponse,
     CreateTerminalResponse,
-    DisconnectMcpResponse,
     ElicitationMode,
     EnvVariable,
     KillTerminalResponse,
@@ -140,21 +138,15 @@ class DefaultClient(Client):
     async def complete_elicitation(self, elicitation_id: str, **kwargs: Any) -> None:
         pass
 
-    async def connect_mcp(self, server_id: str, **kwargs: Any) -> ConnectMcpResponse:
+    # These MCP stubs type-check against agent-client-protocol 1.0 and 1.1.
+    # Only 1.0 has connect_mcp and disconnect_mcp, and mcp_message differs.
+    async def connect_mcp(self, server_id: str, **kwargs: Any) -> Any:
         raise _unsupported_capability_request("mcp/connect")
 
-    async def disconnect_mcp(
-        self, connection_id: str, **kwargs: Any
-    ) -> DisconnectMcpResponse:
+    async def disconnect_mcp(self, connection_id: str, **kwargs: Any) -> Any:
         raise _unsupported_capability_request("mcp/disconnect")
 
-    async def mcp_message(
-        self,
-        connection_id: str,
-        method: str,
-        params: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> Any:
+    async def mcp_message(self, *args: Any, **kwargs: Any) -> Any:
         raise _unsupported_capability_request("mcp/message")
 
     async def notify_mcp(
@@ -163,6 +155,11 @@ class DefaultClient(Client):
         method: str,
         params: dict[str, Any] | None = None,
         **kwargs: Any,
+    ) -> None:
+        pass
+
+    async def auth_status_update(
+        self, state: str, accounts: list[Any] | None = None, **kwargs: Any
     ) -> None:
         pass
 
