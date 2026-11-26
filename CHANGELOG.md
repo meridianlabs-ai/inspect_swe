@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.3](https://github.com/meridianlabs-ai/inspect_swe/compare/0.3.2...0.3.3) (2026-11-26)
+
+
+### Bug Fixes
+
+* claude_code compaction events have no pre-compaction token count ([#267](https://github.com/meridianlabs-ai/inspect_swe/issues/267)) ([88f5e8c](https://github.com/meridianlabs-ai/inspect_swe/commit/88f5e8cc0e2ace245d967f40b5623952cdcb6480))
+* importing inspect_swe fails on agent-client-protocol 1.1.0 ([#275](https://github.com/meridianlabs-ai/inspect_swe/issues/275)) ([f8debf6](https://github.com/meridianlabs-ai/inspect_swe/commit/f8debf6c9a9dc6c8b43a2fa07d7bceb91573a49f))
+
 ## [0.3.2](https://github.com/meridianlabs-ai/inspect_swe/compare/0.3.1...0.3.2) (2026-11-19)
 
 
