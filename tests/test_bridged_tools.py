@@ -144,15 +144,6 @@ def test_gemini_cli_bridged_tools() -> None:
     )
 
 
-@pytest.mark.xfail(
-    raises=pytest.RaisesExc(
-        AssertionError,
-        match=r"^(Expected \S+ tool call|secret_lookup did not return the secret)",
-    ),
-    strict=True,
-    reason="Kimi Code 2.6 registers MCP tools but leaves them out of the model's "
-    "tool list: https://github.com/MoonshotAI/kimi-code/issues/4904",
-)
 @skip_if_no_anthropic
 @skip_if_no_docker
 def test_kimi_code_bridged_tools() -> None:
