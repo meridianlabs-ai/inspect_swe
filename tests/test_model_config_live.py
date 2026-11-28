@@ -85,15 +85,15 @@ def _run_claude(model: str, model_config: str | None = None) -> _CaptureDisplay:
 @skip_if_no_anthropic
 @skip_if_no_docker
 def test_claude_code_presents_genuine_model_native() -> None:
-    capture = _run_claude("anthropic/claude-sonnet-4-5")
+    capture = _run_claude("anthropic/claude-sonnet-5-5")
     sp = capture.prompt or ""
     # Recognized model → genuine catalog identity (friendly name + exact id),
     # NOT the bridge sentinel and NOT a degraded raw echo.
-    assert "powered by the model named Sonnet 4.5" in sp, sp
-    assert "exact model ID is claude-sonnet-4-5" in sp, sp
+    assert "powered by the model named Sonnet 5.5" in sp, sp
+    assert "exact model ID is claude-sonnet-5-5" in sp, sp
     assert "powered by the model inspect" not in sp
     # bridged routing still resolves to the served model
-    assert capture.resolved_model == "anthropic/claude-sonnet-4-5"
+    assert capture.resolved_model == "anthropic/claude-sonnet-5-5"
 
 
 @skip_if_no_anthropic
@@ -102,11 +102,11 @@ def test_claude_code_normalizes_dated_anthropic_id() -> None:
     # A dated Anthropic id is canonicalized by Claude Code internally (substring
     # match), so the genuine friendly name still appears with no normalization on
     # our side; the exact-id line echoes the real dated snapshot.
-    capture = _run_claude("anthropic/claude-sonnet-4-5-20250929")
+    capture = _run_claude("anthropic/claude-haiku-4-5-20251001")
     sp = capture.prompt or ""
-    assert "powered by the model named Sonnet 4.5" in sp, sp
-    assert "exact model ID is claude-sonnet-4-5-20250929" in sp, sp
-    assert capture.resolved_model == "anthropic/claude-sonnet-4-5-20250929"
+    assert "powered by the model named Haiku 4.5" in sp, sp
+    assert "exact model ID is claude-haiku-4-5-20251001" in sp, sp
+    assert capture.resolved_model == "anthropic/claude-haiku-4-5-20251001"
 
 
 @skip_if_no_openai
@@ -125,9 +125,9 @@ def test_claude_code_cross_provider_honest_degrade() -> None:
 @skip_if_no_docker
 def test_claude_code_model_config_override() -> None:
     # model_config overrides the presented identity without changing routing:
-    # serve gpt-5 but present (genuinely) as Claude Sonnet 4.5.
-    capture = _run_claude("openai/gpt-5", model_config="claude-sonnet-4-5")
+    # serve gpt-5 but present (genuinely) as Claude Sonnet 5.5.
+    capture = _run_claude("openai/gpt-5", model_config="claude-sonnet-5-5")
     sp = capture.prompt or ""
-    assert "powered by the model named Sonnet 4.5" in sp, sp
+    assert "powered by the model named Sonnet 5.5" in sp, sp
     # routing still goes to the real served model, not the presented identity
     assert capture.resolved_model == "openai/gpt-5"
