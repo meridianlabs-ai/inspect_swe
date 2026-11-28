@@ -22,7 +22,7 @@ def test_claude_code_mcp() -> None:
 @skip_if_no_openai
 @skip_if_no_docker
 def test_codex_cli_mcp() -> None:
-    check_mcp("codex_cli", "openai/gpt-5", "create_entities")
+    check_mcp("codex_cli", "openai/gpt-5.2", "create_entities")
 
 
 @skip_if_no_google

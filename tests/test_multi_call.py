@@ -86,7 +86,7 @@ def _env_block_counts(sample: EvalSample) -> list[int]:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_codex_cli_multi_call(sandbox: str) -> None:
-    check_multi_call("codex_cli", "openai/gpt-5", sandbox)
+    check_multi_call("codex_cli", "openai/gpt-6-luna", sandbox)
 
 
 @skip_if_no_google
@@ -100,7 +100,7 @@ def test_gemini_cli_multi_call(sandbox: str) -> None:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_mini_swe_agent_multi_call_openai(sandbox: str) -> None:
-    check_multi_call("mini_swe_agent", "openai/gpt-5-mini", sandbox)
+    check_multi_call("mini_swe_agent", "openai/gpt-5.4-mini", sandbox)
 
 
 @skip_if_no_anthropic

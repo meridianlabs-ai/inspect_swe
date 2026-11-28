@@ -36,7 +36,7 @@ def test_codex_cli_image_input(sandbox: str) -> None:
     """
     log = eval(
         "examples/image_input",
-        model="openai/gpt-5",
+        model="openai/gpt-6-luna",
         limit=1,
         task_args={"sandbox": sandbox},
         time_limit=600,

@@ -24,7 +24,7 @@ def test_claude_code_attempts(sandbox: str) -> None:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_codex_cli_attempts(sandbox: str) -> None:
-    check_attempts("codex_cli", "openai/gpt-5", sandbox)
+    check_attempts("codex_cli", "openai/gpt-6-luna", sandbox)
 
 
 @skip_if_no_google
@@ -38,7 +38,7 @@ def test_gemini_cli_attempts(sandbox: str) -> None:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_mini_swe_attempts(sandbox: str) -> None:
-    check_attempts("mini_swe_agent", "openai/gpt-5-mini", sandbox)
+    check_attempts("mini_swe_agent", "openai/gpt-5.4-mini", sandbox)
 
 
 @skip_if_no_anthropic
