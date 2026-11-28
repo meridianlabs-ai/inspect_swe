@@ -29,14 +29,13 @@ def run_coroutine(coroutine: Coroutine[None, None, T]) -> T:
         try:
             # this will throw if there is no running loop
             asyncio.get_running_loop()
-
-            # initialiase nest_asyncio then we are clear to run
-            init_nest_asyncio()
-            return asyncio.run(coroutine)
-
         except RuntimeError:
             # No running event loop so we are clear to run
             return asyncio.run(coroutine)
+
+        # initialiase nest_asyncio then we are clear to run
+        init_nest_asyncio()
+        return asyncio.run(coroutine)
 
 
 _initialised_nest_asyncio: bool = False

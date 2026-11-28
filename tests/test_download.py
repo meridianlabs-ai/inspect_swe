@@ -74,6 +74,26 @@ def test_opencode_download_routes_to_opencode_source() -> None:
     assert platform == "linux-x64"
 
 
+def test_download_agent_binary_preserves_runtime_error_with_running_loop() -> None:
+    # an error raised by the download must reach the caller, not be replaced
+    # by a second attempt to run the already awaited coroutine
+    from inspect_swe._tools import download as download_tool
+    from inspect_swe._util import _async
+
+    async def fail(*args: object) -> object:
+        raise RuntimeError("inner failure")
+
+    # simulate a caller inside a running event loop without applying
+    # nest_asyncio to the rest of the test session
+    with (
+        patch.object(download_tool, "download_agent_binary_async", new=fail),
+        patch("asyncio.get_running_loop"),
+        patch.object(_async, "init_nest_asyncio"),
+    ):
+        with pytest.raises(RuntimeError, match="inner failure"):
+            download_agent_binary("opencode", "1.14.30", "linux-x64")
+
+
 def test_cached_agent_binaries_lists_opencode(tmp_path: Path) -> None:
     from inspect_swe._opencode import agentbinary as opencode_agentbinary
 
