@@ -7,6 +7,8 @@ from inspect_ai.tool import MCPServerConfig
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
 
+from inspect_swe._util.toml import quote_toml_key
+
 MCP_STARTUP_TIMEOUT_SEC = 300
 
 CodexWebSearch = Literal["live", "cached", "disabled"]
@@ -427,7 +429,7 @@ def codex_mcp_servers_toml(
     the wrong server class, fails a unit test instead of only a live run.
     """
     return {
-        f"mcp_servers.{mcp_server.name}": (
+        f"mcp_servers.{quote_toml_key(mcp_server.name)}": (
             codex_mcp_server_toml(
                 codex_mcp_server_config(
                     mcp_server, bridged_server_names, bridged_startup_timeout
