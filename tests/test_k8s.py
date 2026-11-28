@@ -18,7 +18,7 @@ def t() -> Task:
 def test_k8s() -> None:
     log = eval(
         t(),
-        model=["anthropic/claude-sonnet-4-20250514"],
+        model=["anthropic/claude-sonnet-5-5"],
         token_limit=5000,
     )[0]
     assert log.status == "success"

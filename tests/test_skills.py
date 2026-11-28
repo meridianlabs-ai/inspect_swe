@@ -12,7 +12,7 @@ from tests.conftest import (
 @skip_if_no_anthropic
 @skip_if_no_docker
 def test_claude_code_skills() -> None:
-    check_skills("claude_code", "anthropic/claude-sonnet-4-5")
+    check_skills("claude_code", "anthropic/claude-sonnet-5-5")
 
 
 @skip_if_no_openai
@@ -33,7 +33,7 @@ def test_gemini_cli_skills() -> None:
 @skip_if_no_anthropic
 @skip_if_no_docker
 def test_opencode_skills() -> None:
-    check_skills("opencode", "anthropic/claude-sonnet-4-5")
+    check_skills("opencode", "anthropic/claude-sonnet-5-5")
 
 
 def check_skills(
