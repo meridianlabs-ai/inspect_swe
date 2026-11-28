@@ -369,7 +369,22 @@ async def ensure_agent_binary_installed(
             resolved_version = version
             origin = "cache"
 
-        # write it into the container and return it
+        # Hash under the cache lock so a replacement cannot leave a stale digest.
+        if checksum is None:
+            cache_path = (
+                source.cached_package_path(resolved_version, platform)
+                if package and source.cached_package_path is not None
+                else source.cached_binary_path(resolved_version, platform)
+            )
+            checksum = _artifact_checksums.get(cache_path)
+            if checksum is None:
+                checksum = await anyio.to_thread.run_sync(sha256_checksum, binary_bytes)
+                _artifact_checksums[cache_path] = checksum
+
+    # Serialize installs into the same sandbox without blocking other sandboxes.
+    async with concurrency(
+        f"{source.binary}-sandbox-install-{id(sandbox)}", 1, visible=False
+    ):
         install_path = (
             f"{SANDBOX_INSTALL_DIR}/{source.binary}-{resolved_version}-{platform}"
         )
@@ -416,21 +431,7 @@ async def ensure_agent_binary_installed(
             await sandbox_exec(
                 sandbox, f"{binary_path} {source.post_install}", user=user
             )
-        # recorded only once the install has actually landed, and against the
-        # bytes that landed rather than the upstream manifest digest: an agent
-        # with a post_download transform installs something other than what it
-        # downloaded. bytes verified against the resolved digest reuse it;
-        # the rest are hashed once per artifact, not once per sample.
-        if checksum is None:
-            cache_path = (
-                source.cached_package_path(resolved_version, platform)
-                if package and source.cached_package_path is not None
-                else source.cached_binary_path(resolved_version, platform)
-            )
-            checksum = _artifact_checksums.get(cache_path)
-            if checksum is None:
-                checksum = await anyio.to_thread.run_sync(sha256_checksum, binary_bytes)
-                _artifact_checksums[cache_path] = checksum
+        # Record only after the install has landed.
         record_agent_binary_install(
             source,
             requested=requested,
