@@ -1,6 +1,7 @@
 """Codex CLI agent via the ``codex-acp`` ACP adapter."""
 
 import logging
+import tomllib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -50,6 +51,15 @@ from inspect_swe.acp.agent import ACPAgentParams
 from .agentbinary import ensure_codex_acp_setup
 
 logger = logging.getLogger(__name__)
+
+
+def _config_override_line(key: str, value: str) -> str:
+    try:
+        if len(tomllib.loads(f"value = {value}")) == 1:
+            return f"{key} = {value}"
+    except tomllib.TOMLDecodeError:
+        pass
+    return to_toml({key: value})
 
 
 def build_codex_acp_filter(
@@ -201,11 +211,18 @@ class CodexCli(ACPAgent):
                     "stream_idle_timeout_ms": 3_600_000,
                 },
             }
-            toml_config.update(self._config_overrides)
-            toml_config.update(
-                codex_config_options(self._web_search, self._goals, self._auto_review)
+            options = codex_config_options(
+                self._web_search, self._goals, self._auto_review
             )
-            await sbox.write_file(config_toml_path, to_toml(toml_config))
+            override_lines = []
+            for key, value in self._config_overrides.items():
+                if key not in options:
+                    toml_config.pop(key, None)
+                    override_lines.append(_config_override_line(key, value))
+            toml_config.update(options)
+            await sbox.write_file(
+                config_toml_path, "\n".join([*override_lines, to_toml(toml_config)])
+            )
 
             # Environment variables (same as the non-ACP codex agent).
             agent_env = {

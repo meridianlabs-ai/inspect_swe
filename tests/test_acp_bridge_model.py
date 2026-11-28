@@ -10,10 +10,12 @@ the bridge's own resolver with the options the agent passed. No sandbox, no
 Docker, no API keys.
 """
 
+import tomllib
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from types import ModuleType
+from contextlib import asynccontextmanager, nullcontext
+from types import ModuleType, SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import anyio
 import pytest
@@ -155,6 +157,60 @@ def test_acp_codex_serves_every_name_with_the_agent_instance(
     for name, model in served.items():
         assert model is agent_model, name
     assert options.get("model") is None
+
+
+def test_acp_codex_preserves_typed_config_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import inspect_swe.acp.agent as acp_agent_mod
+
+    sandbox = AsyncMock()
+    monkeypatch.setattr(acp_agent_mod, "sample_active", lambda: object())
+    monkeypatch.setattr(acp_codex_cli, "sandbox_env", lambda name: sandbox)
+    monkeypatch.setattr(acp_codex_cli, "sandbox_exec", AsyncMock(return_value="/work"))
+    monkeypatch.setattr(
+        acp_codex_cli,
+        "ensure_codex_acp_setup",
+        AsyncMock(return_value=("codex", "node")),
+    )
+    monkeypatch.setattr(
+        acp_codex_cli,
+        "sandbox_agent_bridge",
+        lambda *a, **kw: nullcontext(SimpleNamespace(port=1234)),
+    )
+
+    async def run() -> None:
+        init_subtask_store(Store())
+        agent = CodexCli(
+            model=EVAL_MODEL,
+            cwd="/work",
+            config_overrides={
+                "sandbox_workspace_write.writable_roots": '["/data"]',
+                "sandbox_workspace_write.network_access": "false",
+                "model_context_window": "4096",
+                "model_reasoning_effort": '"high"',
+                "sandbox_mode": "workspace-write",
+                "items": '[{ path = { root = "/data" } }]',
+                "web_search": '"disabled"',
+                "description": "42\nother = true",
+            },
+        )
+        async with agent._start_agent(AgentState(messages=[])):
+            pass
+
+    anyio.run(run)
+    path, content = sandbox.write_file.await_args.args
+    assert path == "/work/.codex/config.toml"
+    config = tomllib.loads(content)
+    assert config["sandbox_workspace_write"]["writable_roots"] == ["/data"]
+    assert config["sandbox_workspace_write"]["network_access"] is False
+    assert config["model_context_window"] == 4096
+    assert config["model_reasoning_effort"] == "high"
+    assert config["sandbox_mode"] == "workspace-write"
+    assert config["items"] == [{"path": {"root": "/data"}}]
+    assert config["web_search"] == "live"
+    assert config["description"] == "42\nother = true"
+    assert "other" not in config
 
 
 def test_acp_codex_keeps_a_configured_guardian_model(
