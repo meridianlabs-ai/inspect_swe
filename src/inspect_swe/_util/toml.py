@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 # TOML basic strings forbid all unescaped control characters; those without a
 # shorthand escape (\n, \r, \t handle the common ones) must use \uXXXX
 _TOML_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_TOML_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def to_toml(data: Dict[str, Any]) -> str:
@@ -65,6 +66,11 @@ def _format_value(value: Any) -> str:
         raise ValueError("TOML doesn't support null values")
     else:
         raise TypeError(f"Unsupported type: {type(value)}")
+
+
+def quote_toml_key(key: str) -> str:
+    """Format one TOML key segment, quoting it unless it is a valid bare key."""
+    return key if _TOML_BARE_KEY.fullmatch(key) else _format_value(key)
 
 
 def _write_table(lines: List[str], data: Dict[str, Any]) -> None:

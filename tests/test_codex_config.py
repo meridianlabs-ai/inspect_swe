@@ -695,3 +695,14 @@ def test_codex_mcp_servers_toml_gates_on_force_approve() -> None:
         == "approve"
     )
     assert bridged_toml["mcp_servers.bridged-tools"]["required"] is True
+
+
+@pytest.mark.parametrize("name", ["foo bar", "foo.bar", "acme/tools", 'foo"bar'])
+def test_codex_mcp_servers_toml_quotes_server_names(name: str) -> None:
+    server = MCPServerConfigHTTP(type="http", name=name, url="http://localhost")
+
+    toml = to_toml(codex_mcp_servers_toml([server], set(), "never", False, None))
+
+    assert tomllib.loads(toml) == {
+        "mcp_servers": {name: {"type": "http", "url": "http://localhost"}}
+    }
