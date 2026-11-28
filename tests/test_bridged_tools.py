@@ -37,7 +37,7 @@ def test_claude_code_bridged_tools() -> None:
 @skip_if_no_openai
 @skip_if_no_docker
 def test_codex_cli_bridged_tools() -> None:
-    check_bridged_tools("codex_cli", "openai/gpt-5", "secret_lookup")
+    check_bridged_tools("codex_cli", "openai/gpt-5.2", "secret_lookup")
 
 
 @tool

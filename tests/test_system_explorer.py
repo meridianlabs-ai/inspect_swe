@@ -39,7 +39,7 @@ def test_gemini_cli_system_explorer(sandbox: str) -> None:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_mini_swe_agent_system_explorer(sandbox: str) -> None:
-    check_system_explorer_example("mini_swe_agent", "openai/gpt-5-mini", sandbox)
+    check_system_explorer_example("mini_swe_agent", "openai/gpt-5.4-mini", sandbox)
 
 
 @skip_if_no_anthropic

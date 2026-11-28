@@ -30,7 +30,7 @@ def test_claude_code_web_search(sandbox: str) -> None:
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
 def test_codex_cli_web_search(sandbox: str) -> None:
-    log = run_example("web_search", "codex_cli", "openai/gpt-5", sandbox=sandbox)[0]
+    log = run_example("web_search", "codex_cli", "openai/gpt-5.2", sandbox=sandbox)[0]
     assert log.samples
     assistant_messages = [
         m for m in log.samples[0].messages if isinstance(m, ChatMessageAssistant)

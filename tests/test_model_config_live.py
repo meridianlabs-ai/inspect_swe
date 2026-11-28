@@ -115,19 +115,19 @@ def test_claude_code_cross_provider_honest_degrade() -> None:
     # A non-Anthropic served model isn't in Claude Code's catalog, so it honestly
     # degrades to the raw-id block (no fabricated Claude identity) and still routes
     # to the served model via the bridge.
-    capture = _run_claude("openai/gpt-5")
+    capture = _run_claude("openai/gpt-6-luna")
     sp = capture.prompt or ""
-    assert "powered by the model gpt-5" in sp, sp
-    assert capture.resolved_model == "openai/gpt-5"
+    assert "powered by the model gpt-6-luna" in sp, sp
+    assert capture.resolved_model == "openai/gpt-6-luna"
 
 
 @skip_if_no_openai
 @skip_if_no_docker
 def test_claude_code_model_config_override() -> None:
     # model_config overrides the presented identity without changing routing:
-    # serve gpt-5 but present (genuinely) as Claude Sonnet 4.5.
-    capture = _run_claude("openai/gpt-5", model_config="claude-sonnet-4-5")
+    # serve gpt-6-luna but present (genuinely) as Claude Sonnet 4.5.
+    capture = _run_claude("openai/gpt-6-luna", model_config="claude-sonnet-4-5")
     sp = capture.prompt or ""
     assert "powered by the model named Sonnet 4.5" in sp, sp
     # routing still goes to the real served model, not the presented identity
-    assert capture.resolved_model == "openai/gpt-5"
+    assert capture.resolved_model == "openai/gpt-6-luna"
