@@ -37,8 +37,20 @@ def test_opencode_mcp() -> None:
     check_mcp("opencode", "anthropic/claude-sonnet-5-5", "memory_create_entities")
 
 
+@skip_if_no_anthropic
+@skip_if_no_docker
+def test_deepseek_harness_mcp() -> None:
+    check_mcp(
+        "deepseek_harness",
+        "anthropic/claude-sonnet-4-5",
+        "mcp__memory__create_entities",
+    )
+
+
 def check_mcp(
-    agent: Literal["claude_code", "codex_cli", "gemini_cli", "opencode"],
+    agent: Literal[
+        "claude_code", "codex_cli", "deepseek_harness", "gemini_cli", "opencode"
+    ],
     model: str,
     expected_tool: str | None,
 ) -> None:

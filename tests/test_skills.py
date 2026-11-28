@@ -36,8 +36,17 @@ def test_opencode_skills() -> None:
     check_skills("opencode", "anthropic/claude-sonnet-5-5")
 
 
+@skip_if_no_anthropic
+@skip_if_no_docker
+def test_deepseek_harness_skills() -> None:
+    check_skills("deepseek_harness", "anthropic/claude-sonnet-4-5")
+
+
 def check_skills(
-    agent: Literal["claude_code", "codex_cli", "gemini_cli", "opencode"], model: str
+    agent: Literal[
+        "claude_code", "codex_cli", "deepseek_harness", "gemini_cli", "opencode"
+    ],
+    model: str,
 ) -> None:
     log = run_example("skills", agent, model)[0]
     assert log.samples

@@ -14,6 +14,7 @@ inspect-docs:
       contents:
         - href: claude_code.qmd
         - href: codex_cli.qmd
+        - href: deepseek_harness.qmd
         - href: gemini_cli.qmd
         - href: kimi_code.qmd
         - href: opencode.qmd

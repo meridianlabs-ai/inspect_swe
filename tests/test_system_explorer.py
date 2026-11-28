@@ -26,6 +26,15 @@ def test_codex_cli_system_explorer(sandbox: str) -> None:
     check_system_explorer_example("codex_cli", "openai/gpt-5.4", sandbox)
 
 
+@skip_if_no_anthropic
+@skip_if_no_docker
+@pytest.mark.parametrize("sandbox", get_available_sandboxes())
+def test_deepseek_harness_system_explorer(sandbox: str) -> None:
+    check_system_explorer_example(
+        "deepseek_harness", "anthropic/claude-sonnet-4-5", sandbox
+    )
+
+
 @skip_if_no_google
 @skip_if_no_docker
 @pytest.mark.parametrize("sandbox", get_available_sandboxes())
@@ -51,7 +60,12 @@ def test_opencode_system_explorer(sandbox: str) -> None:
 
 def check_system_explorer_example(
     agent: Literal[
-        "claude_code", "codex_cli", "gemini_cli", "mini_swe_agent", "opencode"
+        "claude_code",
+        "codex_cli",
+        "deepseek_harness",
+        "gemini_cli",
+        "mini_swe_agent",
+        "opencode",
     ],
     model: str,
     sandbox: str | None = None,

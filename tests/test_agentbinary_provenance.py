@@ -664,3 +664,38 @@ def test_replaced_cache_file_is_hashed_again(tmp_path: Path) -> None:
     assert [e.checksum for e in before] == [hashlib.sha256(corrupt).hexdigest()]
     assert [e.origin for e in downloaded] == ["download"]
     assert [e.checksum for e in after] == [hashlib.sha256(clean).hexdigest()]
+
+
+def test_converted_package_records_the_upstream_artifact_digest(tmp_path: Path) -> None:
+    # deepseek_harness ships as a wheel that is converted to tar.gz on the way
+    # into the sandbox. the record names the wheel that was downloaded and
+    # verified (what the PyPI digest describes), not the repacked archive.
+    wheel = b"wheel-bytes"
+    resolved = AgentBinaryVersion(
+        "0.2.2rc2",
+        hashlib.sha256(wheel).hexdigest(),
+        "https://example.com/runtime.whl",
+        True,
+    )
+    source = _source(tmp_path, "dsh-prov-converted", resolved, package_capable=True)
+    source.agent = "deepseek harness"
+    source.package_to_tar_gz = lambda data: b"repacked:" + data
+    written: dict[str, bytes] = {}
+
+    class _CapturingSandbox(_FakeSandbox):
+        async def write_file(self, path: str, data: bytes) -> None:
+            written[path] = data
+
+    with patch.object(agentbinary, "download_file", AsyncMock(return_value=wheel)):
+        _, events = _install(source, "stable", _CapturingSandbox())
+        # a pinned version is read from the cache with no digest resolved, so
+        # the artifact is hashed: still the wheel, not what was extracted
+        agentbinary._artifact_checksums.clear()
+        _, pinned = _install(source, "0.2.2rc2", _CapturingSandbox())
+
+    assert list(written.values()) == [b"repacked:wheel-bytes"]
+    for install in (*events, *pinned):
+        assert install.agent == "deepseek_harness"
+        assert install.version == "0.2.2rc2"
+        assert install.checksum == hashlib.sha256(wheel).hexdigest()
+    assert [install.origin for install in (*events, *pinned)] == ["download", "cache"]

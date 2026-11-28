@@ -69,6 +69,8 @@ class AgentBinaryInstall(BaseModel):
 
     Two caveats. It is not always the digest published upstream: an agent that transforms its download (`codex_cli` extracting a single binary from a tarball on pre-`rust-v0.133.0` releases) installs bytes the manifest never described, while a package archive is cached and extracted verbatim and so does match when a manifest was resolved at all.
 
+    An agent whose package is published in another format (`deepseek_harness`, a wheel) records the digest of that downloaded artifact, which does match the one published upstream; the archive extracted into the sandbox is repacked from it.
+
     And it describes the artifact on the host, not a re-read of the sandbox. When a package for this version is already extracted in the sandbox the write and extract are skipped, so the digest is of the cached archive that install came from rather than of bytes this call placed there.
     """
 
@@ -123,6 +125,9 @@ class AgentBinarySource:
     # archives. required when resolve_version can return package=True.
     package_entrypoint: str | None = None
     cached_package_path: Callable[[str, SandboxPlatform], Path] | None = None
+    # converts a package archive in another format (e.g. a wheel) to tar.gz at
+    # install time, so the cache keeps the checksum-verifiable original
+    package_to_tar_gz: Callable[[bytes], bytes] | None = None
 
 
 def _agent_event_name(source: AgentBinarySource) -> str:
@@ -378,12 +383,27 @@ async def ensure_agent_binary_installed(
                 f"{source.agent} resolved a package archive but the source "
                 "does not define a package_entrypoint"
             )
+
+        async def package_archive() -> bytes:
+            # the archive extracted in the sandbox: the package itself, or its
+            # tar.gz form when the source ships another format. `binary_bytes`
+            # stays the artifact the download digest describes (hashed below).
+            if source.package_to_tar_gz is None:
+                return binary_bytes
+            # cpu-bound, so keep it off the event loop
+            return await anyio.to_thread.run_sync(
+                source.package_to_tar_gz, binary_bytes
+            )
+
         if scoped:
             # inside a sandbox identity scope every member runs this binary,
             # so it is installed and verified as a shared artifact
             entrypoint = source.package_entrypoint if package else None
             await install_shared_artifact(
-                sandbox, install_path, binary_bytes, entrypoint
+                sandbox,
+                install_path,
+                await package_archive() if package else binary_bytes,
+                entrypoint,
             )
             binary_path = f"{install_path}/{entrypoint}" if entrypoint else install_path
         elif package:
@@ -399,7 +419,7 @@ async def ensure_agent_binary_installed(
                 # archive (e.g. bin/*, codex-resources/*) stay executable; only
                 # the entrypoint is chmod'd as a belt-and-suspenders measure
                 archive_path = f"{install_path}.tar.gz"
-                await sandbox.write_file(archive_path, binary_bytes)
+                await sandbox.write_file(archive_path, await package_archive())
                 await sandbox_exec(
                     sandbox,
                     f"mkdir -p {install_path} && "
