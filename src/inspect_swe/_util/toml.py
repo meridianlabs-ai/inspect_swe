@@ -61,6 +61,13 @@ def _format_value(value: Any) -> str:
     elif isinstance(value, list):
         formatted_items = [_format_value(item) for item in value]
         return f"[{', '.join(formatted_items)}]"
+    elif isinstance(value, dict):
+        # inline table; keys are quoted so any string is a valid key
+        formatted_pairs = [
+            f"{_format_value(str(key))} = {_format_value(item)}"
+            for key, item in value.items()
+        ]
+        return f"{{{', '.join(formatted_pairs)}}}"
     elif value is None:
         raise ValueError("TOML doesn't support null values")
     else:
@@ -70,5 +77,4 @@ def _format_value(value: Any) -> str:
 def _write_table(lines: List[str], data: Dict[str, Any]) -> None:
     """Write table contents."""
     for key, value in data.items():
-        if not isinstance(value, dict):
-            lines.append(f"{key} = {_format_value(value)}")
+        lines.append(f"{key} = {_format_value(value)}")
